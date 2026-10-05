@@ -70,6 +70,14 @@ test("PWA form login protects APIs and sockets, keeps sessions after restart, an
     expect(loginPage.status).toBe(200); expect(await loginPage.text()).toContain('form action="/auth/login"');
     expect(loginPage.headers.get("cache-control")).toBe("no-store");
     expect(loginPage.headers.get("referrer-policy")).toBe("same-origin");
+    expect(loginPage.headers.get("content-security-policy")).toContain("style-src 'self'");
+    for (const [path, type] of [["/pwa-shell.js", "javascript"], ["/pwa-shell.css", "text/css"]]) {
+      const shell = await fetch(base() + path, { headers });
+      expect(shell.status).toBe(200);
+      expect(shell.headers.get("content-type")).toContain(type);
+      expect(shell.headers.get("cache-control")).toBe("no-cache");
+      expect((await fetch(base() + path, { headers: { ...headers, origin: "https://evil.test" } })).status).toBe(403);
+    }
     expect((await fetch(base() + "/api/read", { headers })).status).toBe(401);
     const enroll = "/auth/passkey/register/options";
     expect((await fetch(base() + enroll, { method: "POST", headers })).status).toBe(401);

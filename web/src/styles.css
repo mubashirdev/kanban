@@ -144,26 +144,9 @@ kbd {
 .model-options small { display: block; margin-top: 3px; color: var(--muted); }
 
 /* Installed apps scroll inside boards, dialogs and chat, not the document. */
-.pwa-status-anchor { display: none; }
-@media (display-mode: standalone) {
-  html, body { overflow: hidden; overscroll-behavior: none; background: var(--surface); }
-  #root { position: fixed; inset: 0; overflow: hidden; }
-  .app > .topbar { position: sticky; top: 0; background: var(--surface); padding-top: calc(16px + env(safe-area-inset-top)); }
-}
-
-/* Safari samples fixed DOM elements at the viewport edge for status-bar tint.
-   Keep this outside the inset app root and above drawers; it never catches taps.
-   The 12px height also accommodates live light/dark theme sampling.
-   See https://github.com/andesco/safari-color-tinting and
-   https://febbbi.com/en/article/safari-26-status-bar-tinting-how-it-actually-works */
-@supports (-webkit-touch-callout: none) {
-  @media (display-mode: standalone) {
-    .pwa-status-anchor {
-      display: block; position: fixed; top: 0; left: 0; right: 0; height: 12px;
-      background-color: var(--surface); z-index: 1000; pointer-events: none;
-    }
-  }
-}
+html[data-standalone], html[data-standalone] body { overflow: hidden; overscroll-behavior: none; }
+:root[data-standalone] #root { position: fixed; inset: 0; overflow: hidden; }
+:root[data-standalone] .app > .topbar { position: sticky; top: 0; background: var(--surface); padding-top: calc(16px + env(safe-area-inset-top)); }
 .banner .icon-btn:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
 .banner.warn { background: var(--warn-soft); color: var(--warn); }
 .banner.info { background: var(--info-soft); color: var(--info); }
@@ -1329,17 +1312,24 @@ button.pill:hover { color: var(--text); }
 /* Leave an empty strip under iOS's native status-bar blur in installed apps.
    Fixed workspaces share the offset and lose the same height, including when
    the keyboard opens, so their bottom controls remain inside the viewport. */
-@media (display-mode: standalone) and (pointer: coarse) and (max-width: 900px) {
-  :root { --standalone-top-gap: 32px; }
-  #root { top: var(--standalone-top-gap); height: auto; }
-  .app { height: calc(var(--viewport-height, 100dvh) - var(--standalone-top-gap)); }
-  .drawer-wrap, .overlay, .dock {
+@media (pointer: coarse) and (max-width: 900px) {
+  :root[data-standalone] #root {
+    top: calc(var(--viewport-top, 0px) + var(--standalone-top-gap)); bottom: auto;
+    height: calc(var(--viewport-height, 100dvh) - var(--standalone-top-gap));
+  }
+  :root[data-standalone] .app { height: 100%; }
+  :root[data-standalone] .app > .topbar, :root[data-standalone] .panel-head { padding-top: 8px; }
+  :root[data-standalone] .drawer-wrap, :root[data-standalone] .overlay, :root[data-standalone] .dock {
     top: calc(var(--viewport-top, 0px) + var(--standalone-top-gap));
     height: calc(var(--viewport-height, 100dvh) - var(--standalone-top-gap));
   }
-  .dock { height: calc(var(--viewport-height, 100dvh) - var(--standalone-top-gap)) !important; }
-  .modal, .modal.wide {
-    max-height: calc(var(--viewport-height, 100dvh) - var(--standalone-top-gap) - max(24px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
+  :root[data-standalone] .dock {
+    position: fixed; left: 0; right: 0; bottom: auto; z-index: 30; border-top: 0; padding-top: 0;
+    height: calc(var(--viewport-height, 100dvh) - var(--standalone-top-gap)) !important;
   }
-  .app > .topbar .inbox > .inbox-menu { top: calc(76px + var(--standalone-top-gap) + env(safe-area-inset-top)); }
+  :root[data-standalone] .overlay { padding-top: 12px; }
+  :root[data-standalone] .modal, :root[data-standalone] .modal.wide {
+    max-height: calc(var(--viewport-height, 100dvh) - var(--standalone-top-gap) - max(24px, 12px + env(safe-area-inset-bottom)));
+  }
+  :root[data-standalone] .app > .topbar .inbox > .inbox-menu { top: calc(var(--viewport-top, 0px) + 68px + var(--standalone-top-gap)); }
 }

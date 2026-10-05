@@ -46,6 +46,11 @@ export function createPublicProxy(options: PublicProxyOptions) {
       const socket = req.headers.get("upgrade")?.toLowerCase() === "websocket";
       if (!allowed(req, socket)) return new Response("Forbidden", { status: 403, headers: { "cache-control": "no-store" } });
       const incoming = new URL(req.url);
+      if (["/pwa-shell.js", "/pwa-shell.css"].includes(incoming.pathname) && ["GET", "HEAD"].includes(req.method)) {
+        return new Response(Bun.file(new URL(`../../web/public${incoming.pathname}`, import.meta.url)), {
+          headers: { "content-type": incoming.pathname.endsWith(".js") ? "application/javascript" : "text/css", "cache-control": "no-cache", "x-content-type-options": "nosniff" },
+        });
+      }
       if (auth) {
         if (incoming.pathname === "/auth/passkeys.js" && req.method === "GET") return new Response(Bun.file(new URL("../../web/public/passkeys.js", import.meta.url)), { headers: { "content-type": "application/javascript", "cache-control": "no-store" } });
         if (incoming.pathname.startsWith("/auth/passkey/") && req.method === "POST" && passkeys) return passkeys.handle(req, incoming.pathname.slice("/auth/passkey/".length), auth.hasSession(req) ? auth.sessionID(req) : "", () => auth.cookie());

@@ -68,7 +68,7 @@ test("PWA static files have update and manifest headers in disk and embedded bui
       expect(manifest.headers.get("content-type")).toContain("application/manifest+json");
       expect(await manifest.json()).toEqual({ name: "Kanban" });
       expect((await fetch(base)).headers.get("cache-control")).toBe("no-cache");
-      for (const path of ["/assets/missing.js", "/icons/missing.png", "/offline.html"]) expect((await fetch(base + path)).status).toBe(404);
+      for (const path of ["/assets/missing.js", "/icons/missing.png", "/offline.html", "/pwa-shell.js", "/pwa-shell.css"]) expect((await fetch(base + path)).status).toBe(404);
     } finally { server.stop(true); }
   }
 });

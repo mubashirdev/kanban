@@ -1,0 +1,26 @@
+:root { --standalone-top-gap: 0px; }
+.pwa-status-anchor { display: none; }
+html[data-standalone], html[data-standalone] body { background-color: var(--surface); }
+
+@media (pointer: coarse) and (max-width: 900px) {
+  :root[data-standalone] { --standalone-top-gap: 32px; }
+}
+
+@supports (-webkit-touch-callout: none) {
+  /* WebKit reads the declared color, even when an empty text clip paints nothing.
+     Keep a real, full-width box above every dialog, with no opacity or transforms.
+     https://zenn.dev/uakihir0/articles/260920-ios27-pwa-blur */
+  :root[data-standalone] .pwa-status-anchor {
+    display: block; position: fixed; top: 0; left: 0; right: 0; height: 12px;
+    background-color: var(--surface); -webkit-background-clip: text; background-clip: text;
+    z-index: 2147483647; pointer-events: none;
+  }
+  @media (pointer: coarse) and (max-width: 900px) {
+    /* Some standalone versions report a zero top inset despite the native blur.
+       Reserve a portrait status area plus breathing room; inset it only once. */
+    :root[data-standalone] { --standalone-top-gap: calc(max(48px, env(safe-area-inset-top, 0px)) + 32px); }
+  }
+  @media (pointer: coarse) and (max-width: 900px) and (orientation: landscape) {
+    :root[data-standalone] { --standalone-top-gap: calc(env(safe-area-inset-top, 0px) + 24px); }
+  }
+}

@@ -1,9 +1,24 @@
 import { expect, test } from "bun:test";
 import { runInNewContext } from "node:vm";
 import { serviceWorkerSource } from "../web/pwa";
+import { readFileSync } from "node:fs";
 
 const origin = "https://kanban.example";
 const files = ["/offline.html", "/icons/icon-192.png", "/assets/app-abcd.js", "/assets/app-abcd.css"];
+
+test("PWA layout detects Safari's standalone flag before render and follows display-mode changes", () => {
+  const source = readFileSync(new URL("../web/public/pwa-shell.js", import.meta.url), "utf8");
+  for (const [media, safari, expected] of [[false, false, false], [true, false, true], [false, true, true]]) {
+    let active = false, changed: () => void = () => {};
+    const mode = { matches: media, addEventListener: (_: string, fn: () => void) => { changed = fn; } };
+    runInNewContext(source, { matchMedia: () => mode, navigator: { standalone: safari }, document: {
+      documentElement: { toggleAttribute: (_: string, value: boolean) => { active = value; } },
+    } });
+    expect(active).toBe(expected);
+    mode.matches = !media; changed();
+    expect(active).toBe(!media || safari);
+  }
+});
 
 function worker() {
   const handlers: Record<string, (event: any) => void> = {};
@@ -61,7 +76,7 @@ test("PWA installs only versioned UI files; activation waits for user or closed 
 
 test("PWA never intercepts API, SSE, login pages, mutations, query tokens or foreign origins", async () => {
   const w = worker(); await w.lifecycle("install");
-  for (const path of ["/api/profiles", "/api/events", "/api/profiles/x/shell", "/auth/login", "/auth/setup", "/auth/passkeys.js", "/lan/sign-in", "/lan?token=secret", "/icons/icon-192.png?token=secret", "https://other.example/assets/app-abcd.js"])
+  for (const path of ["/api/profiles", "/api/events", "/api/profiles/x/shell", "/auth/login", "/auth/setup", "/auth/passkeys.js", "/pwa-shell.js", "/pwa-shell.css", "/lan/sign-in", "/lan?token=secret", "/icons/icon-192.png?token=secret", "https://other.example/assets/app-abcd.js"])
     expect(w.fetch(path)).toBeUndefined();
   expect(w.fetch("/", { method: "POST" })).toBeUndefined();
   expect(w.fetch("/assets/unknown.js")).toBeUndefined();

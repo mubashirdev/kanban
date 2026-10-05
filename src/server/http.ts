@@ -778,11 +778,12 @@ export function createServer(deps: ServerDeps) {
         headers["content-type"] = "application/manifest+json; charset=utf-8";
         headers["cache-control"] = "no-cache";
       } else if (path.endsWith(".html")) headers["cache-control"] = "no-cache";
+      else if (["/pwa-shell.js", "/pwa-shell.css"].includes(path)) headers["cache-control"] = "no-cache";
       return new Response(Bun.file(file), { headers });
     };
     // A missing script/icon/manifest must not become an HTML response or be cached as one.
     const requiredAsset = url.pathname.startsWith("/assets/") || url.pathname.startsWith("/icons/") ||
-      ["/sw.js", "/manifest.webmanifest", "/offline.html"].includes(url.pathname);
+      ["/sw.js", "/manifest.webmanifest", "/offline.html", "/pwa-shell.js", "/pwa-shell.css"].includes(url.pathname);
     const assets = deps.assets ?? {};
     if (Object.keys(assets).length) {
       const exact = assets[url.pathname];
