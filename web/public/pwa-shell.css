@@ -18,7 +18,7 @@ html[data-standalone], html[data-standalone] body { background-color: var(--surf
   @media (pointer: coarse) and (max-width: 900px) {
     /* Some standalone versions report a zero top inset despite the native blur.
        Reserve a portrait status area plus breathing room; inset it only once. */
-    :root[data-standalone] { --standalone-top-gap: calc(max(48px, env(safe-area-inset-top, 0px)) + 32px); }
+    :root[data-standalone] { --standalone-top-gap: calc(max(48px, env(safe-area-inset-top, 0px)) + 16px); }
   }
   @media (pointer: coarse) and (max-width: 900px) and (orientation: landscape) {
     :root[data-standalone] { --standalone-top-gap: calc(env(safe-area-inset-top, 0px) + 24px); }
