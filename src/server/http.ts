@@ -16,7 +16,7 @@ import { AttachmentError, attachmentFile, attachmentType, IMAGE_TYPES, saveAttac
 import { FileError, listDir, openWithSystem, readFileForView } from "./files";
 import { McpError, McpManager } from "./mcp";
 import { AGENT_IDS, AgentError, AgentRegistry, type AgentId } from "./agents";
-import { SessionCache } from "./session";
+import { SessionCache, mergeCommandEntries } from "./session";
 import { ptySupported, ShellManager, type PtyKind, type Shell } from "./shell";
 import type { TerminalWatcher } from "./terminals";
 import { UpdateChecker } from "./update";
@@ -25,6 +25,7 @@ import type { Store } from "./store";
 import { STATUSES, type Profile, type ScheduleEditor, type Status, type Ticket } from "./types";
 import { nowIso, slugify } from "./util";
 import { authorizeLan, createLanSignIn, type LanAccess } from "./lan";
+import { ClaudeCommands } from "./commands";
 
 export interface ServerDeps {
   store: Store;
@@ -50,6 +51,7 @@ export interface ServerDeps {
   gh?: GhRunner;
   /** Claude plan usage for the header pill (tests pass a fake). */
   usage?: () => Promise<UsageResult>;
+  commands?: Pick<ClaudeCommands, "get">;
 }
 
 interface ShellSocket {
@@ -123,6 +125,7 @@ export function createServer(deps: ServerDeps) {
   const scheduler = deps.scheduler ?? new Scheduler(board, store, bus);
   const agents = deps.agents ?? new AgentRegistry();
   const questions = deps.questions ?? new Questions(store, board);
+  const commands = deps.commands ?? new ClaudeCommands(process.env.CKANBAN_CLAUDE_BIN ?? "claude");
 
   const profileOr404 = (slug: string): Profile => {
     const p = store.getProfile(slug);
@@ -589,6 +592,13 @@ export function createServer(deps: ServerDeps) {
     }
 
     const action = parts[4];
+    if (action === "commands" && parts.length === 5 && m === "GET") {
+      const ticket = store.getTicket(slug, id)!;
+      const cwd = ticket.workdir ?? ticket.worktree ?? profile.path;
+      try {
+        return json({ commands: await commands.get(cwd, ticket.status === "backlog" || ticket.status === "planning", url.searchParams.get("refresh") === "1") });
+      } catch (error) { throw new HttpError(503, (error as Error).message); }
+    }
     if (action === "activity" && m === "GET") return json(store.readActivity(slug, id));
     if (action === "outputs" && m === "GET") {
       if (parts.length === 5) return json(store.listOutputs(slug, id));
@@ -609,7 +619,7 @@ export function createServer(deps: ServerDeps) {
       // Read-only view of the ticket's Claude session file (terminal chat + board runs), newest last.
       const t = store.getTicket(slug, id)!;
       const parsed = t.sessionId ? sessions.get(t.sessionId) : null;
-      const all = parsed?.entries ?? [];
+      const all = mergeCommandEntries(parsed?.entries ?? [], store.readCommandEntries(slug, id).filter((entry) => entry.sessionId === t.sessionId));
       const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 100));
       const before = url.searchParams.has("before") ? Number(url.searchParams.get("before")) : all.length;
       const end = Math.max(0, Math.min(all.length, before));

@@ -54,6 +54,14 @@ export interface SessionEntry {
   peer?: { dir: "in" | "out"; ticketId: string | null };
 }
 
+/** Claude does not save every built-in's synthetic reply to its session file. */
+export function mergeCommandEntries(entries: SessionEntry[], commands: SessionEntry[]): SessionEntry[] {
+  const extra = commands.filter((command) => !entries.some((entry) => entry.uuid === command.uuid ||
+    entry.role === command.role && entry.kind === "text" && entry.text === command.text && Math.abs(Date.parse(entry.at) - Date.parse(command.at)) < 10_000));
+  if (!extra.length) return entries;
+  return [...entries, ...extra].sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
+}
+
 export type BlockKind = "questions" | "proposal" | "tickets";
 
 /** Marker Claude adds when a Review message only asked for planning; the board moves the card. */
@@ -274,6 +282,8 @@ function userText(content: unknown): { kind: "text" | "board"; text: string; fro
     return { kind: "board", text: note || "Board sent instructions to Claude" };
   }
   const t = content.trim();
+  const command = /^<command-message>[\s\S]*?<\/command-message>\s*<command-name>(\/[\w:./@-]+)<\/command-name>(?:\s*<command-args>([\s\S]*?)<\/command-args>)?/.exec(t);
+  if (command) return { kind: "text", text: `${command[1]}${command[2] ? ` ${command[2]}` : ""}` };
   // Slash-command wrappers, hook output and skill preambles are stored as user messages too.
   if (!t || t.startsWith("<") || /^(Base directory for this skill|Caveat:|\[Request interrupted)/.test(t)) return null;
   return { kind: "text", text: t };

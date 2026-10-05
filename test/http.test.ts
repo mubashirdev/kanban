@@ -26,6 +26,23 @@ const json = (method: string, body?: unknown) => ({
   method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined,
 });
 
+test("ticket command discovery uses the linked working directory and returns a retryable failure", async () => {
+  const localStore = new Store(tempDir()), localBus = new Bus();
+  localStore.saveProfile({ name: "Commands", slug: "commands", path: tempDir(), baseBranch: "main", maxParallel: 1, createdAt: new Date().toISOString() });
+  const ticket = localStore.createTicket("commands", { title: "Linked", body: "", status: "backlog" });
+  const linked = tempDir(); localStore.updateTicket("commands", ticket.id, { workdir: linked });
+  let fail = false, observed: unknown;
+  const localServer = createServer({ store: localStore, bus: localBus, board: new Board(localStore, localBus, { claudeBin: "/bin/false" }), port: 0, webDir: tempDir(),
+    commands: { async get(cwd, plan, refresh) { observed = { cwd, plan, refresh }; if (fail) throw new Error("Try again"); return []; } } });
+  try {
+    const endpoint = `http://127.0.0.1:${localServer.port}/api/profiles/commands/tickets/${ticket.id}/commands?refresh=1`;
+    expect(await (await fetch(endpoint)).json()).toEqual({ commands: [] });
+    expect(observed).toEqual({ cwd: linked, plan: true, refresh: true });
+    fail = true; expect((await fetch(endpoint)).status).toBe(503);
+    expect((await fetch(endpoint.replace(ticket.id, "missing"))).status).toBe(404);
+  } finally { localServer.stop(true); }
+});
+
 test("isAllowedRequest", () => {
   expect(isAllowedRequest(new Request("http://localhost:7777/api/x"), 7777)).toBe(true);
   expect(isAllowedRequest(new Request("http://127.0.0.1:7777/api/x"), 7777)).toBe(true);

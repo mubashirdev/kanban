@@ -6,6 +6,17 @@ import { tempDir } from "./helpers";
 
 const FAKE = join(import.meta.dir, "fixtures", "fake-claude.ts");
 
+test("built-in command completion without a replay closes stdin and acknowledges exact input", async () => {
+  process.env.FAKE_MODE = "command";
+  try {
+    const h = startRun({ bin: FAKE, cwd: tempDir(), args: buildArgs("command-test", false, null, "plan"), input: "/context", onEvent: () => {} });
+    const out = await h.done;
+    expect(out.code).toBe(0);
+    expect(h.stopped).toBe(false);
+    expect(out.events.find((event) => event.isReplay)?.message.content[0].text).toBe("/context");
+  } finally { delete process.env.FAKE_MODE; }
+});
+
 function withMode(mode: string, fn: () => Promise<void>) {
   return async () => {
     process.env.FAKE_MODE = mode;

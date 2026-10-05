@@ -10,6 +10,45 @@ import { makeRepo, tempDir } from "./helpers";
 
 const FAKE = join(import.meta.dir, "fixtures", "fake-claude.ts");
 
+test("slash chat dispatches exact arguments separately from refine context", async () => {
+  await setup({ git: false });
+  const ticket = await board.createTicket("p", { title: "Discuss", body: "Keep context", status: "backlog" });
+  await board.chat("p", ticket.id, "/model sonnet");
+  await board.whenIdle();
+  const call = readArgs().at(-1)!;
+  expect(call.prompt).toBe("/model sonnet");
+  expect(call.args[call.args.indexOf("--permission-mode") + 1]).toBe("plan");
+  expect(call.args[call.args.indexOf("--append-system-prompt") + 1]).toContain("Do not modify files");
+  expect(call.args[call.args.indexOf("--append-system-prompt") + 1]).toContain("Keep context");
+  expect(store.getTicket("p", ticket.id)!.status).toBe("backlog");
+});
+
+test("session commands preserve Review status and run count without a ticket result line", async () => {
+  await setup({ git: false });
+  process.env.FAKE_MODE = "command";
+  const ticket = await board.createTicket("p", { title: "Finished work", body: "", status: "review" });
+  await board.chat("p", ticket.id, "/context");
+  await board.whenIdle();
+  const got = store.getTicket("p", ticket.id)!;
+  expect(got.status).toBe("review"); expect(got.runCount).toBe(0); expect(got.outcome).toBeNull();
+  expect(store.readCommandEntries("p", ticket.id).map((entry) => entry.text)).toEqual(["/context", "Command finished"]);
+});
+
+test("a command sent during a reply waits for its own turn and leaves the queue", async () => {
+  await setup({ git: false });
+  process.env.FAKE_STEP_MS = "100";
+  try {
+    const ticket = await board.createTicket("p", { title: "Discuss", body: "", status: "backlog" });
+    await board.chat("p", ticket.id, "Explain this ticket");
+    await board.chat("p", ticket.id, "/context");
+    expect(store.getTicket("p", ticket.id)!.queued?.[0].text).toBe("/context");
+    await board.whenIdle();
+    expect(readArgs().map((call) => call.prompt).at(-1)).toBe("/context");
+    expect(readArgs().length).toBe(2);
+    expect(store.getTicket("p", ticket.id)!.queued).toEqual([]);
+  } finally { delete process.env.FAKE_STEP_MS; }
+});
+
 let store: Store;
 let bus: Bus;
 let board: Board;

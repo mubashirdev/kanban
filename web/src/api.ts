@@ -59,6 +59,14 @@ export interface QuickChat {
   title: string | null;
 }
 
+export interface ClaudeCommand {
+  name: string;
+  description: string;
+  argumentHint: string;
+  aliases: string[];
+  builtin: boolean;
+}
+
 export type AttentionKind = "failed" | "blocked" | "questions" | "proposal" | "review" | "reply";
 
 export interface Profile {
@@ -378,6 +386,7 @@ const t = (slug: string, id?: string) =>
   `/api/profiles/${encodeURIComponent(slug)}/tickets${id ? `/${encodeURIComponent(id)}` : ""}`;
 
 export const api = {
+  commands: (slug: string, id: string, refresh = false) => req<{ commands: ClaudeCommand[] }>("GET", `${t(slug, id)}/commands${refresh ? "?refresh=1" : ""}`),
   claudeProjects: () => req<ClaudeProject[]>("GET", "/api/claude/projects"),
   claudeDefaults: () => req<{ model: string | null }>("GET", "/api/claude/defaults"),
   pickFolder: () => req<{ path: string | null }>("POST", "/api/pick-folder"),

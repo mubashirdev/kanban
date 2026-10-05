@@ -1,3 +1,5 @@
+import { isSlashCommand } from "./commands";
+
 export interface RunOutput {
   code: number;
   stderr: string;
@@ -31,6 +33,7 @@ export function buildArgs(
   permissionMode: "bypassPermissions" | "plan" = "bypassPermissions",
   /** Inline MCP config (see mcpConfig) so every run has the board's tools. */
   mcp?: string,
+  appendSystemPrompt?: string,
 ): string[] {
   // Prompts go in on stdin (see startRun) so more messages can follow while Claude works;
   // --replay-user-messages echoes each one back when Claude picks it up.
@@ -40,6 +43,7 @@ export function buildArgs(
   args.push(resume ? "--resume" : "--session-id", sessionId);
   if (model) args.push("--model", model);
   if (mcp) args.push("--mcp-config", mcp);
+  if (appendSystemPrompt) args.push("--append-system-prompt", appendSystemPrompt);
   return args;
 }
 
@@ -62,6 +66,7 @@ export function startRun(opts: {
   let stdin: import("bun").FileSink | null = null;
   // Messages written but not yet picked up by Claude (no replay seen).
   let unread = 0;
+  let pendingCommand = opts.input && isSlashCommand(opts.input) ? opts.input : null;
   const closeInput = () => {
     const s = stdin;
     stdin = null;
@@ -108,6 +113,18 @@ export function startRun(opts: {
           ev = JSON.parse(line);
         } catch {
           return;
+        }
+        if (ev?.type === "user" && ev.isReplay && pendingCommand) {
+          // Skills can replay their expanded body instead of the typed command.
+          ev = { ...ev, message: { ...ev.message, content: [{ type: "text", text: pendingCommand }] } };
+          pendingCommand = null;
+        }
+        if (ev?.type === "result" && pendingCommand) {
+          // Built-ins can complete without replaying a user message. Acknowledge
+          // the command so stdin closes and queued messages do not stay busy.
+          const replay = { type: "user", isReplay: true, message: { role: "user", content: [{ type: "text", text: pendingCommand }] } };
+          events.push(replay); opts.onEvent(replay);
+          pendingCommand = null; unread = Math.max(0, unread - 1);
         }
         // Partial-message deltas are only for the live view; don't keep thousands of them in memory.
         if (ev?.type !== "stream_event") events.push(ev);

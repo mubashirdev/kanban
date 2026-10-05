@@ -2,11 +2,25 @@ import { expect, test } from "bun:test";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Bus, type BusEvent } from "../src/server/events";
-import { SessionCache, findSessionFile, parseSession, pollSessions } from "../src/server/session";
+import { SessionCache, findSessionFile, parseSession, pollSessions, mergeCommandEntries, type SessionEntry } from "../src/server/session";
 import { Store } from "../src/server/store";
 import { tempDir } from "./helpers";
 
 const L = (o: unknown) => JSON.stringify(o);
+
+test("synthetic command replies are visible alongside saved messages without duplicating commands", () => {
+  const entry: SessionEntry = { uuid: "saved", at: "2026-10-05T12:00:00Z", role: "user", kind: "text", text: "/context" };
+  const reply: SessionEntry = { uuid: "reply", at: "2026-10-05T12:00:02Z", role: "assistant", kind: "text", text: "Context usage" };
+  expect(mergeCommandEntries([entry], [{ ...entry, uuid: "local", at: "2026-10-05T12:00:01Z" }, reply])).toEqual([entry, reply]);
+});
+
+test("slash command wrappers show typed commands, while skill instructions stay hidden", () => {
+  const parsed = parseSession([
+    L({ type: "user", message: { content: "<command-message>review</command-message><command-name>/plugin:review</command-name><command-args>src</command-args>" } }),
+    L({ type: "user", message: { content: "Base directory for this skill: /private/skill\nInstructions" } }),
+  ].join("\n"));
+  expect(parsed.entries.map((entry) => entry.text)).toEqual(["/plugin:review src"]);
+});
 const user = (text: any, at: string, extra: object = {}) =>
   L({ type: "user", uuid: `u${at}`, timestamp: at, message: { role: "user", content: text }, ...extra });
 const asst = (content: any[], at: string, extra: object = {}) =>

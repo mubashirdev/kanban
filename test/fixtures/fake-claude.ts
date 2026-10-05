@@ -20,6 +20,18 @@ if (streamIn) {
     const line = (l: string) => {
       if (!l.trim()) return;
       const m = JSON.parse(l);
+      if (m.type === "control_request" && m.request?.subtype === "initialize") {
+        if (process.env.FAKE_COMMAND_LOG) appendFileSync(process.env.FAKE_COMMAND_LOG, JSON.stringify({ cwd: process.cwd(), args }) + "\n");
+        const respond = () => emit({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response: { commands: [
+          { name: "context", description: "Show context usage", builtin: true },
+          { name: "model", description: "Switch model", argumentHint: "<model>", builtin: true },
+          { name: "qa:review", description: "Review the current project", argumentHint: "[scope]" },
+          { name: "commit-files", description: "Commit selected files" },
+        ] } } });
+        const delay = Number(process.env.FAKE_COMMAND_DELAY ?? 0);
+        if (delay) setTimeout(respond, delay); else respond();
+        return;
+      }
       inbox.push(m.message.content.map((c: any) => c.text ?? "").join(""));
     };
     for await (const chunk of Bun.stdin.stream()) {
@@ -71,7 +83,13 @@ if (mode === "fail") {
 }
 
 emit({ type: "system", subtype: "init", session_id: sessionId, cwd: process.cwd() });
-if (first !== null) take(first);
+if (first !== null && mode !== "command") take(first);
+if (mode === "command") {
+  emit({ type: "assistant", message: { model: "<synthetic>", content: [{ type: "text", text: "Command finished" }] } });
+  emit({ type: "result", subtype: "success", result: "Command finished" });
+  while (streamIn && !eof) await new Promise<void>((resolve) => (wake = resolve));
+  process.exit(0);
+}
 
 // one event split across two chunks to exercise line buffering
 const split = JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Edit", input: { file_path: `${process.cwd()}/src/app.ts` } }] } }) + "\n";

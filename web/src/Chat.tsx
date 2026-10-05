@@ -11,6 +11,7 @@ import { fullTime, timeAgo, useNow } from "./time";
 import { toast } from "./toast";
 import { Markdown } from "./Transcript";
 import { usePersistentState } from "./usePersistentState";
+import { useSlashCommands } from "./SlashCommands";
 
 type Block = { kind: "entry"; e: SessionEntry; index: number } | { kind: "tools"; items: SessionEntry[] };
 
@@ -101,6 +102,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const queued = ticket.queued ?? [];
   // Unsent text survives closing the drawer, switching tickets and reloads.
   const [draft, setDraft] = usePersistentState(draftKey(slug, ticket.id), () => "", (v) => !v.trim(), (v) => typeof v === "string");
+  const commands = useSlashCommands({ slug, id: ticket.id, draft, setDraft, composer });
   const images = useImagePaste(setDraft);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   // Text Claude is writing right now (from the run's partial-message stream); not yet in the session file.
@@ -194,6 +196,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     const t = text.trim();
     if (!t || stopping || images.uploading) return;
     images.clearError();
+    commands.close();
     stickToBottom.current = true;
     setPending((ps) => [...ps, { text: t, steer: running }]);
     setDraft("");
@@ -475,10 +478,13 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
         </div>
       )}
       <div className="composer">
-        <textarea ref={composer} rows={2} value={draft} disabled={stopping} className={images.dragOver ? "drop-target" : undefined} {...images.handlers}
+        {commands.popup}
+        <textarea ref={composer} rows={2} value={draft} disabled={stopping} className={images.dragOver ? "drop-target" : undefined} {...images.handlers} {...commands.aria} role="combobox" aria-label="Message Claude"
           placeholder={running ? "Steer Claude: it reads this at its next step, no restart…" : refine ? "Describe your idea or answer Claude…" : "Ask Claude to change or continue something…"}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => { setDraft(e.target.value); commands.select(e.target.value, e.target.selectionStart); }}
+          onSelect={(e) => commands.select(e.currentTarget.value, e.currentTarget.selectionStart)}
           onKeyDown={(e) => {
+            if (commands.keyDown(e)) return;
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !window.matchMedia("(pointer: coarse)").matches) {
               e.preventDefault();
               send(draft);
@@ -491,6 +497,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             <span className="composer-keys"> Enter to send · Shift+Enter for a new line</span>
           </span>
           <span className="composer-actions">
+            <button type="button" className="btn small slash-trigger" aria-label="Browse Claude commands" aria-expanded={commands.opened} disabled={stopping} onClick={commands.toggle}><span aria-hidden="true">/</span><span className="slash-trigger-label">Commands</span></button>
             {running && <button className="btn danger small" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop"}</button>}
             <button className="btn primary small" disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? "Uploading…" : "Send"}</button>
           </span>

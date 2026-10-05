@@ -4,6 +4,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import YAML from "yaml";
+import type { SessionEntry } from "./session";
 import type {
   ActivityEntry, Comment, Config, OutputFile, Profile, Schedule, ScheduleHistoryEntry, Status, Ticket, TicketMode, TicketQuestion,
 } from "./types";
@@ -232,6 +233,14 @@ export class Store {
 
   readActivity(slug: string, id: string): ActivityEntry[] {
     return readJsonl<ActivityEntry>(join(this.ticketDir(slug, id), "activity.jsonl"));
+  }
+
+  appendCommandEntry(slug: string, id: string, entry: SessionEntry & { sessionId: string }): void {
+    appendFileSync(join(this.ticketDir(slug, id), "commands.jsonl"), JSON.stringify(entry) + "\n");
+  }
+
+  readCommandEntries(slug: string, id: string): (SessionEntry & { sessionId: string })[] {
+    return readJsonl(join(this.ticketDir(slug, id), "commands.jsonl"));
   }
 
   private schedulesDir(slug: string) {

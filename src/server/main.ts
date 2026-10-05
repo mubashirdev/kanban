@@ -15,6 +15,7 @@ import { defaultRoot, Store } from "./store";
 import { VERSION } from "./version";
 import { WEB_ASSETS } from "./web-assets.gen";
 import { isPrivateIPv4 } from "./lan";
+import { ClaudeCommands } from "./commands";
 
 export async function startDaemon(): Promise<void> {
   const store = new Store(defaultRoot());
@@ -43,7 +44,8 @@ export async function startDaemon(): Promise<void> {
   const scheduler = new Scheduler(board, store, bus);
   // launchd (KeepAlive) starts the daemon again once it exits.
   const restart = () => board.requestRestart(() => void shutdown());
-  const server = createServer({ store, bus, board, port, webDir, lan, sessions, terminals, shells, mcp, scheduler, assets: WEB_ASSETS, restart });
+  const commands = new ClaudeCommands(process.env.CKANBAN_CLAUDE_BIN ?? "claude");
+  const server = createServer({ store, bus, board, port, webDir, lan, sessions, terminals, shells, mcp, scheduler, commands, assets: WEB_ASSETS, restart });
   console.log(`ckanban v${VERSION} listening on http://localhost:${server.port} (data: ${store.root})`);
   if (lan?.trustedNetwork) console.log(`Wi-Fi preview: http://${lan.host}:${server.port}/`);
   else if (lan) {

@@ -1,0 +1,87 @@
+import { mcpConfig } from "./agents";
+
+export interface ClaudeCommand {
+  name: string;
+  description: string;
+  argumentHint: string;
+  aliases: string[];
+  builtin: boolean;
+}
+const validName = (name: unknown): name is string => typeof name === "string" && /^[\w][\w:./@-]{0,199}$/.test(name) && !name.startsWith("__");
+export function commandMetadata(value: unknown): ClaudeCommand[] {
+  if (!Array.isArray(value)) throw new Error("Claude did not return its command list");
+  const names = new Set<string>();
+  return value.flatMap((entry) => {
+    if (!entry || !validName(entry.name) || names.has(entry.name)) return [];
+    names.add(entry.name);
+    return [{ name: entry.name, description: String(entry.description ?? "").slice(0, 1000), argumentHint: String(entry.argumentHint ?? "").slice(0, 200),
+      aliases: Array.isArray(entry.aliases) ? entry.aliases.filter(validName) : [], builtin: entry.builtin === true }];
+  }).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Ask Claude for its actual command registry without sending a prompt or using a model turn. */
+export async function discoverCommands(bin: string, cwd: string, plan: boolean, timeoutMs = 20_000): Promise<ClaudeCommand[]> {
+  const { CLAUDECODE, CLAUDE_CODE_ENTRYPOINT, CKANBAN_TICKET, ...env } = process.env;
+  const proc = Bun.spawn([bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+    "--permission-mode", plan ? "plan" : "bypassPermissions", "--mcp-config", mcpConfig()],
+    { cwd, env, stdin: "pipe", stdout: "pipe", stderr: "ignore", detached: true });
+  const requestId = crypto.randomUUID();
+  proc.stdin.write(JSON.stringify({ type: "control_request", request_id: requestId, request: { subtype: "initialize" } }) + "\n");
+  proc.stdin.flush();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const read = (async () => {
+      const decoder = new TextDecoder();
+      let buffer = "", total = 0;
+      for await (const chunk of proc.stdout) {
+        total += chunk.length;
+        if (total > 4 * 1024 * 1024) throw new Error("Claude's command response was too large");
+        buffer += decoder.decode(chunk, { stream: true });
+        let newline: number;
+        while ((newline = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+          let event: any;
+          try { event = JSON.parse(line); } catch { continue; }
+          if (event?.type !== "control_response" || event.response?.request_id !== requestId) continue;
+          if (event.response.subtype !== "success") throw new Error("Claude could not load commands. Check its connections and try again.");
+          return commandMetadata(event.response.response?.commands);
+        }
+      }
+      throw new Error("Claude exited before loading commands. Check that Claude is installed and signed in.");
+    })();
+    return await Promise.race([read, new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => reject(new Error("Loading Claude commands timed out. Try again.")), timeoutMs);
+    })]);
+  } finally {
+    clearTimeout(timeout);
+    // Discovery may start MCP children: terminate the entire isolated process group.
+    const kill = (signal: "TERM" | "KILL") => {
+      const result = Bun.spawnSync(["kill", `-${signal}`, "--", `-${proc.pid}`], { stdout: "ignore", stderr: "ignore" });
+      if (result.exitCode !== 0 && proc.exitCode === null) proc.kill(signal === "TERM" ? "SIGTERM" : "SIGKILL");
+    };
+    kill("TERM");
+    await Promise.race([proc.exited, Bun.sleep(500)]);
+    kill("KILL");
+  }
+}
+
+/** Bounded, short-lived cache: many drawers can share one discovery process. */
+export class ClaudeCommands {
+  private cache = new Map<string, { until: number; pending: Promise<ClaudeCommand[]>; loading: boolean }>();
+  constructor(private bin = "claude", private discover = discoverCommands) {}
+  get(cwd: string, plan: boolean, refresh = false): Promise<ClaudeCommand[]> {
+    const key = `${plan}:${cwd}`;
+    const previous = this.cache.get(key);
+    if (previous && (previous.loading || (!refresh && previous.until > Date.now()))) return previous.pending;
+    if (!previous && this.cache.size >= 64) this.cache.delete(this.cache.keys().next().value!);
+    const entry = { until: Date.now() + 120_000, pending: Promise.resolve([] as ClaudeCommand[]), loading: true };
+    entry.pending = this.discover(this.bin, cwd, plan).then((commands) => { entry.loading = false; entry.until = Date.now() + 120_000; return commands; }, (error) => {
+      if (this.cache.get(key) === entry) this.cache.delete(key);
+      throw error;
+    });
+    this.cache.set(key, entry);
+    return entry.pending;
+  }
+}
+
+export const isSlashCommand = (text: string) => /^\/[\w][\w:./@-]*(?:\s|$)/.test(text.trimStart());

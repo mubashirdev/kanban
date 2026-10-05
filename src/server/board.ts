@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { extractFinalText, summarizeEvent } from "./activity";
+import { isSlashCommand } from "./commands";
 import { deleteAttachments, localizeImages, referencedAttachments } from "./attachments";
 import type { Bus } from "./events";
 import { isSessionLive as psSessionLive, sessionTitle } from "./claude";
@@ -85,7 +86,7 @@ export function chatModeFor(status: Status): ChatMode {
 /** How a chat run handles a queued message: a peer message (from another ticket's Claude) is sent as-is, quietly. */
 function chatFor(t: Pick<Ticket, "status" | "outcome">, msg: { text: string; peer?: boolean }): NonNullable<ActiveRun["chat"]> {
   const mode = chatModeFor(t.status);
-  return msg.peer ? { text: msg.text, mode, raw: true, quiet: true } : { text: msg.text, mode, from: { status: t.status, outcome: t.outcome } };
+  return msg.peer ? { text: msg.text, mode, raw: true, quiet: true } : { text: msg.text, mode, quiet: isSlashCommand(msg.text), from: { status: t.status, outcome: t.outcome } };
 }
 
 const ACTIVITY_THROTTLE_MS = 1000;
@@ -217,7 +218,10 @@ export class Board {
   /** Hand a queued message to the live claude process; false when there is none to take it yet. */
   private steer(run: ActiveRun, msg: QueuedMessage): boolean {
     if (run.inFlight.has(msg.id) || run.promptMsgId === msg.id) return true;
-    const text = localizeImages(msg.peer ? msg.text : steerPrompt(msg.text), this.store.attachmentsDir);
+    // A command gets its own turn after the current reply, so its result can be
+    // acknowledged independently (built-ins do not always replay input).
+    if (!msg.peer && isSlashCommand(msg.text)) return false;
+    const text = localizeImages(msg.peer || isSlashCommand(msg.text) ? msg.text : steerPrompt(msg.text), this.store.attachmentsDir);
     if (!run.handle?.send(text)) return false;
     run.inFlight.set(msg.id, text);
     return true;
@@ -355,8 +359,11 @@ export class Board {
     const runNo = t.runCount + 1;
     const newComments = this.store.listComments(slug, id).filter((c) => c.author === "user" && (!t.lastRunAt || c.at > t.lastRunAt));
     const outputDir = this.store.outputsDir(slug, id);
-    const prompt = localizeImages(run.chat?.raw
-      ? run.chat.text
+    const command = run.chat && !run.chat.raw && isSlashCommand(run.chat.text);
+    const commandEntry = command ? { uuid: crypto.randomUUID(), at: nowIso(), role: "user" as const, kind: "text" as const, text: run.chat!.text, sessionId: session.sessionId } : null;
+    if (commandEntry) this.store.appendCommandEntry(slug, id, commandEntry);
+    const prompt = localizeImages(run.chat?.raw || command
+      ? run.chat!.text
       : run.chat
       ? chatPrompt(t, run.chat.text, run.chat.mode, outputDir)
       : t.runCount === 0
@@ -380,11 +387,21 @@ export class Board {
     run.handle = startRun({
       bin: this.opts.claudeBin,
       cwd: session.dir,
-      args: buildArgs(session.sessionId, session.existed, profile.model, refine ? "plan" : "bypassPermissions", mcpConfig()),
+      args: buildArgs(session.sessionId, session.existed, profile.model, refine ? "plan" : "bypassPermissions", mcpConfig(), command ? chatPrompt(t, "", run.chat!.mode, outputDir) : undefined),
       input: prompt,
       // CKANBAN_TICKET marks board runs: the ckanban MCP/CLI refuses board changes there (no runs starting runs).
       env: { CKANBAN_OUTPUT_DIR: outputDir, CKANBAN_TICKET: `${slug}/${id}` },
       onEvent: (ev) => {
+        if (command && ev?.type === "assistant" && ev.message?.model === "<synthetic>" && !ev.parent_tool_use_id) {
+          const text = ev.message.content?.filter((block: any) => block.type === "text").map((block: any) => block.text).join("\n");
+          if (text) this.store.appendCommandEntry(slug, id, { uuid: ev.uuid ?? crypto.randomUUID(), at: nowIso(), role: "assistant", kind: "text", text, sessionId: ev.session_id ?? session.sessionId });
+        }
+        // /clear can rotate Claude's session. Keep the ticket attached to the
+        // session returned by Claude, so the next reply resumes the right one.
+        if (command && ev?.type === "result" && typeof ev.session_id === "string" && /^[a-f0-9-]{36}$/i.test(ev.session_id) && ev.session_id !== session.sessionId) {
+          if (commandEntry) this.store.appendCommandEntry(slug, id, { ...commandEntry, sessionId: ev.session_id });
+          this.patch(slug, id, { sessionId: ev.session_id });
+        }
         const changed = draft.feed(ev);
         if (changed !== null) {
           // Clears go out at once; growing text is batched (~8 updates/s).
