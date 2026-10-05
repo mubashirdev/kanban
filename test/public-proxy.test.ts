@@ -1,5 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { createPublicProxy } from "../src/server/public-proxy";
+import { tempDir } from "./helpers";
 
 const token = "b".repeat(64);
 const publicOrigin = "https://kanban.example.test";
@@ -58,4 +59,43 @@ test("tools WebSocket streams text and binary; foreign origins cannot reach the 
   const bad = new WebSocket(`ws://127.0.0.1:${port}/socket`, { headers: { ...headers, origin: "https://evil.test" } });
   await new Promise<void>((resolve) => { bad.onerror = () => resolve(); bad.onclose = () => resolve(); });
   expect(upgrades).toBe(before);
+});
+
+test("PWA form login protects APIs and sockets, keeps sessions after restart, and gates passkey registration", async () => {
+  const options = { publicOrigin, gatewayToken: token, upstream: `http://127.0.0.1:${backend.port}`, port: 0, login: { username: "owner", password: "test-only" }, passkeyFile: `${tempDir()}/passkeys.json` };
+  let secured = createPublicProxy(options);
+  try {
+    const base = () => `http://127.0.0.1:${secured.port}`;
+    const loginPage = await fetch(base(), { headers });
+    expect(loginPage.status).toBe(200); expect(await loginPage.text()).toContain('form action="/auth/login"');
+    expect(loginPage.headers.get("cache-control")).toBe("no-store");
+    expect(loginPage.headers.get("referrer-policy")).toBe("same-origin");
+    expect((await fetch(base() + "/api/read", { headers })).status).toBe(401);
+    const enroll = "/auth/passkey/register/options";
+    expect((await fetch(base() + enroll, { method: "POST", headers })).status).toBe(401);
+    expect((await fetch(base() + "/auth/login", { method: "POST", headers: { ...headers, origin: "https://evil.test" }, body: new URLSearchParams({ username: "owner", password: "test-only" }) })).status).toBe(403);
+    const loggedIn = await fetch(base() + "/auth/login", { method: "POST", headers, body: new URLSearchParams({ username: "owner", password: "test-only" }), redirect: "manual" });
+    expect(loggedIn.status).toBe(303);
+    const cookie = loggedIn.headers.get("set-cookie")!.split(";")[0], signed = { ...headers, cookie };
+    expect((await fetch(base() + "/api/read", { headers: signed })).status).toBe(200);
+    const optionsResponse = await fetch(base() + enroll, { method: "POST", headers: signed });
+    const registration = await optionsResponse.json() as any;
+    expect(registration.authenticatorSelection.userVerification).toBe("required");
+    expect(registration.authenticatorSelection.residentKey).toBe("required");
+    expect(registration.rp.id).toBe("kanban.example.test");
+    const challenge = optionsResponse.headers.get("set-cookie")!.split(";")[0];
+    const verify = () => fetch(base() + "/auth/passkey/register/verify", { method: "POST", headers: { ...signed, cookie: cookie + "; " + challenge, "content-type": "application/json" }, body: JSON.stringify({ id: "forged" }) });
+    expect((await verify()).status).toBe(400); expect((await verify()).status).toBe(400);
+    secured.stop(true); secured = createPublicProxy(options);
+    expect((await fetch(base() + "/api/read", { headers: signed })).status).toBe(200);
+    const before = upgrades;
+    const denied = new WebSocket(`ws://127.0.0.1:${secured.port}/socket`, { headers });
+    await new Promise<void>((resolve) => { denied.onerror = () => resolve(); denied.onclose = () => resolve(); });
+    expect(upgrades).toBe(before);
+    const ws = new WebSocket(`ws://127.0.0.1:${secured.port}/socket`, { headers: signed });
+    await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = reject; });
+    expect(upgrades).toBe(before + 1); ws.close();
+    const logout = await fetch(base() + "/auth/logout", { method: "POST", headers: signed, redirect: "manual" });
+    expect(logout.headers.get("set-cookie")).toContain("Max-Age=0");
+  } finally { secured.stop(true); }
 });

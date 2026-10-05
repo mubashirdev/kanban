@@ -61,7 +61,7 @@ test("PWA installs only versioned UI files; activation waits for user or closed 
 
 test("PWA never intercepts API, SSE, login pages, mutations, query tokens or foreign origins", async () => {
   const w = worker(); await w.lifecycle("install");
-  for (const path of ["/api/profiles", "/api/events", "/api/profiles/x/shell", "/lan/sign-in", "/lan?token=secret", "/icons/icon-192.png?token=secret", "https://other.example/assets/app-abcd.js"])
+  for (const path of ["/api/profiles", "/api/events", "/api/profiles/x/shell", "/auth/login", "/auth/setup", "/auth/passkeys.js", "/lan/sign-in", "/lan?token=secret", "/icons/icon-192.png?token=secret", "https://other.example/assets/app-abcd.js"])
     expect(w.fetch(path)).toBeUndefined();
   expect(w.fetch("/", { method: "POST" })).toBeUndefined();
   expect(w.fetch("/assets/unknown.js")).toBeUndefined();

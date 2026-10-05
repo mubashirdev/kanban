@@ -1,10 +1,14 @@
 import { timingSafeEqual } from "node:crypto";
+import { PublicAuth, loginPage, type PublicLogin } from "./public-auth";
+import { PublicPasskeys } from "./public-passkeys";
 
 export interface PublicProxyOptions {
   publicOrigin: string;
   gatewayToken: string;
   upstream: string;
   port?: number;
+  login?: PublicLogin;
+  passkeyFile?: string;
 }
 interface Relay {
   upstream: WebSocket;
@@ -24,6 +28,8 @@ export function createPublicProxy(options: PublicProxyOptions) {
   if (upstream.protocol !== "http:" || upstream.hostname !== "127.0.0.1") throw new Error("Upstream must be loopback HTTP");
   if (!/^[a-f0-9]{64}$/.test(options.gatewayToken)) throw new Error("Gateway token must be 256-bit hex");
   const token = Buffer.from(options.gatewayToken);
+  const auth = options.login ? new PublicAuth(options.login, options.gatewayToken) : null;
+  const passkeys = auth && options.passkeyFile ? new PublicPasskeys(origin.origin, options.login!.username, options.passkeyFile) : null;
   function allowed(req: Request, socket: boolean) {
     const supplied = Buffer.from(req.headers.get("x-kanban-gateway") ?? "");
     if (supplied.length !== token.length || !timingSafeEqual(supplied, token)) return false;
@@ -40,9 +46,23 @@ export function createPublicProxy(options: PublicProxyOptions) {
       const socket = req.headers.get("upgrade")?.toLowerCase() === "websocket";
       if (!allowed(req, socket)) return new Response("Forbidden", { status: 403, headers: { "cache-control": "no-store" } });
       const incoming = new URL(req.url);
+      if (auth) {
+        if (incoming.pathname === "/auth/passkeys.js" && req.method === "GET") return new Response(Bun.file(new URL("../../web/public/passkeys.js", import.meta.url)), { headers: { "content-type": "application/javascript", "cache-control": "no-store" } });
+        if (incoming.pathname.startsWith("/auth/passkey/") && req.method === "POST" && passkeys) return passkeys.handle(req, incoming.pathname.slice("/auth/passkey/".length), auth.hasSession(req) ? auth.sessionID(req) : "", () => auth.cookie());
+        if (incoming.pathname === "/auth/login" && req.method === "POST") return auth.signIn(req);
+        if (incoming.pathname === "/auth/logout" && req.method === "POST") return new Response(null, { status: 303, headers: { location: "/", "set-cookie": auth.clearCookie(), "cache-control": "no-store" } });
+        if (incoming.pathname === "/auth/login" && ["GET", "HEAD"].includes(req.method)) return loginPage();
+        if (incoming.pathname === "/auth/setup" && ["GET", "HEAD"].includes(req.method)) return loginPage("", 200, {}, auth.hasSession(req));
+        if (!auth.hasSession(req)) {
+          if (!socket && ["GET", "HEAD"].includes(req.method) && ["/", "/index.html"].includes(incoming.pathname)) return loginPage();
+          return Response.json({ error: "Sign in to Esa Kanban", loginUrl: "/auth/login" }, { status: 401, headers: { "cache-control": "no-store" } });
+        }
+      }
       // Only the path/query come from the client; the upstream is fixed loopback.
       const target = `${upstream.origin}${incoming.pathname}${incoming.search}`;
       const headers = new Headers(req.headers);
+      auth?.stripCookie(headers);
+      passkeys?.stripCookie(headers);
       for (const key of ["x-kanban-gateway", "authorization", "proxy-authorization", "connection", "upgrade", "sec-websocket-key", "sec-websocket-version", "sec-websocket-extensions", "sec-websocket-protocol"]) headers.delete(key);
       headers.set("host", upstream.host);
       if (headers.has("origin")) headers.set("origin", upstream.origin);
@@ -98,9 +118,10 @@ export function createPublicProxy(options: PublicProxyOptions) {
 if (import.meta.main) {
   const { readFileSync } = await import("node:fs");
   const { homedir } = await import("node:os");
-  const { join } = await import("node:path");
-  const config = JSON.parse(readFileSync(process.env.CKANBAN_ACCESS_CONFIG ?? join(homedir(), ".config/kanban-access/credentials.json"), "utf8"));
-  const server = createPublicProxy({ publicOrigin: `https://${config.domain}`, gatewayToken: config.gatewayToken, upstream: "http://127.0.0.1:7777" });
+  const { join, dirname } = await import("node:path");
+  const configPath = process.env.CKANBAN_ACCESS_CONFIG ?? join(homedir(), ".config/kanban-access/credentials.json");
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  const server = createPublicProxy({ publicOrigin: `https://${config.domain}`, gatewayToken: config.gatewayToken, upstream: "http://127.0.0.1:7777", login: { username: config.username, password: config.password }, passkeyFile: join(dirname(configPath), "passkeys.json") });
   console.log(`Protected bridge for https://${config.domain} listening on loopback:${server.port}`);
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => { server.stop(true); process.exit(0); });
 }

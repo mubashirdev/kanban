@@ -377,6 +377,7 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   });
   if (r.status === 204) return undefined as T;
   const data = await r.json().catch(() => ({}));
+  if (r.status === 401 && (data as any).loginUrl === "/auth/login") location.assign("/auth/login");
   if (!r.ok) throw new Error((data as any).error ?? `${r.status} ${r.statusText}`);
   return data as T;
 }
