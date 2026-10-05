@@ -12,6 +12,7 @@ import { toast } from "./toast";
 import { Markdown } from "./Transcript";
 import { usePersistentState } from "./usePersistentState";
 import { useSlashCommands } from "./SlashCommands";
+import { ModelPicker } from "./ModelPicker";
 
 type Block = { kind: "entry"; e: SessionEntry; index: number } | { kind: "tools"; items: SessionEntry[] };
 
@@ -102,7 +103,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const queued = ticket.queued ?? [];
   // Unsent text survives closing the drawer, switching tickets and reloads.
   const [draft, setDraft] = usePersistentState(draftKey(slug, ticket.id), () => "", (v) => !v.trim(), (v) => typeof v === "string");
-  const commands = useSlashCommands({ slug, id: ticket.id, draft, setDraft, composer });
+  const [modelOpen, setModelOpen] = useState(false);
+  const commands = useSlashCommands({ slug, id: ticket.id, draft, setDraft, composer, onModel: () => setModelOpen(true) });
   const images = useImagePaste(setDraft);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   // Text Claude is writing right now (from the run's partial-message stream); not yet in the session file.
@@ -195,6 +197,16 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const send = async (text: string) => {
     const t = text.trim();
     if (!t || stopping || images.uploading) return;
+    if (t === "/model") { commands.close(); setModelOpen(true); return; }
+    if (/^\/model\s+\S/.test(t)) {
+      try {
+        const model = t.slice(6).trim();
+        await api.setModel(slug, ticket.id, model);
+        commands.close(); setDraft((current) => current.trim() === t ? "" : current);
+        toast(`This ticket will use ${model} for its next reply.`, { tone: "ok" });
+      } catch (failure: any) { onError(failure.message); }
+      return;
+    }
     images.clearError();
     commands.close();
     stickToBottom.current = true;
@@ -497,12 +509,18 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             <span className="composer-keys"> Enter to send · Shift+Enter for a new line</span>
           </span>
           <span className="composer-actions">
+            <button type="button" className="btn small" aria-label="Choose Claude model" title={ticket.model ? `Model: ${ticket.model}` : "Use board model"} disabled={stopping} onClick={() => setModelOpen(true)}>Model</button>
             <button type="button" className="btn small slash-trigger" aria-label="Browse Claude commands" aria-expanded={commands.opened} disabled={stopping} onClick={commands.toggle}><span aria-hidden="true">/</span><span className="slash-trigger-label">Commands</span></button>
             {running && <button className="btn danger small" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop"}</button>}
             <button className="btn primary small" disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? "Uploading…" : "Send"}</button>
           </span>
         </div>
       </div>
+      {modelOpen && <ModelPicker slug={slug} id={ticket.id} current={ticket.model ?? null} onClose={() => setModelOpen(false)} onSaved={(model) => {
+        if (draft.trim() === "/model") setDraft("");
+        setModelOpen(false);
+        toast(model ? `This ticket will use ${model} for its next reply.` : "This ticket will use the board’s model.", { tone: "ok" });
+      }} />}
     </div>
   );
 }

@@ -6,6 +6,8 @@ Local kanban board for [Claude Code](https://claude.com/claude-code). Drop a tic
 
 - **Ticket chat commands:** type `/` or tap the `/` button to browse Claude's available built-ins, project/user skills, plugin commands, and MCP prompts. Search names and descriptions, choose a command, add its arguments, then Send. Arrow keys, Enter/Tab, and Escape work on desktop. Reload picks up newly installed commands. The list comes from Claude for the ticket's working folder; terminal-only commands remain available in the Quick Claude terminal. Commands sent during a reply wait for their own turn, and Refine mode stays read-only.
 
+- **Ticket model picker:** choose `/model` or tap **Model** in chat to select from Claude's live model list. Selection applies to this ticket's next reply/run and persists across restarts; it does not start a model turn or change Claude's global defaults. **Board default** clears the ticket override. Other terminal command dialogs remain in Quick Claude.
+
 - Responsive interface: phones get a compact action menu and swipeable columns with direct column navigation; tablets keep wider cards, and desktop keeps the full board. Ticket details and chat use separate panes on smaller screens. Touch drag handles keep scrolling independent from moving cards; dialogs, the file viewer, and terminal panels adapt to small screens, safe areas, and the onscreen keyboard.
 
 - **Profiles**: one board per folder. *New profile* lists the folders you've recently run Claude Code in (from `~/.claude.json`), or *Browse…* opens the macOS folder picker. Base branch is auto-detected; model defaults to your Claude Code setting (`~/.claude/settings.json`); max parallel defaults to 5.

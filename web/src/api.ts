@@ -66,6 +66,7 @@ export interface ClaudeCommand {
   aliases: string[];
   builtin: boolean;
 }
+export interface ClaudeModel { value: string; displayName: string; description: string }
 
 export type AttentionKind = "failed" | "blocked" | "questions" | "proposal" | "review" | "reply";
 
@@ -85,6 +86,7 @@ export interface Ticket {
   id: string;
   title: string;
   status: Status;
+  model?: string | null;
   mode?: TicketMode;
   interviewed?: boolean;
   sessionStarted?: boolean;
@@ -386,7 +388,8 @@ const t = (slug: string, id?: string) =>
   `/api/profiles/${encodeURIComponent(slug)}/tickets${id ? `/${encodeURIComponent(id)}` : ""}`;
 
 export const api = {
-  commands: (slug: string, id: string, refresh = false) => req<{ commands: ClaudeCommand[] }>("GET", `${t(slug, id)}/commands${refresh ? "?refresh=1" : ""}`),
+  commands: (slug: string, id: string, refresh = false) => req<{ commands: ClaudeCommand[]; models: ClaudeModel[] }>("GET", `${t(slug, id)}/commands${refresh ? "?refresh=1" : ""}`),
+  setModel: (slug: string, id: string, model: string | null) => req<Ticket>("POST", `${t(slug, id)}/model`, { model }),
   claudeProjects: () => req<ClaudeProject[]>("GET", "/api/claude/projects"),
   claudeDefaults: () => req<{ model: string | null }>("GET", "/api/claude/defaults"),
   pickFolder: () => req<{ path: string | null }>("POST", "/api/pick-folder"),

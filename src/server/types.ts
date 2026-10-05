@@ -19,6 +19,8 @@ export interface Ticket {
   id: string;
   title: string;
   status: Status;
+  /** Ticket-only override; missing/null inherits the board's model. */
+  model?: string | null;
   /** Missing on tickets created before modes existed: treated as "auto". */
   mode?: TicketMode;
   /** True once Claude has asked the user a round of questions on this ticket. */

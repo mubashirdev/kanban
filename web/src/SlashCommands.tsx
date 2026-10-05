@@ -10,8 +10,9 @@ export function slashToken(text: string, caret: number): { query: string; start:
   return caret > start && caret <= end ? { query: match[2], start, end } : null;
 }
 
-export function useSlashCommands({ slug, id, draft, setDraft, composer }: {
+export function useSlashCommands({ slug, id, draft, setDraft, composer, onModel }: {
   slug: string; id: string; draft: string; setDraft: (text: string) => void; composer: RefObject<HTMLTextAreaElement>;
+  onModel: () => void;
 }) {
   const listId = useId();
   const [token, setToken] = useState<ReturnType<typeof slashToken>>(null);
@@ -78,6 +79,7 @@ export function useSlashCommands({ slug, id, draft, setDraft, composer }: {
   }, [opened]);
 
   const pick = (command: ClaudeCommand) => {
+    if (command.name === "model" && command.builtin) { close(); onModel(); return; }
     const current = token ?? slashToken(draft, composer.current?.selectionStart ?? draft.length);
     const prefix = `/${command.name} `;
     const before = current ? draft.slice(0, current.start) : "";

@@ -51,7 +51,7 @@ export interface ServerDeps {
   gh?: GhRunner;
   /** Claude plan usage for the header pill (tests pass a fake). */
   usage?: () => Promise<UsageResult>;
-  commands?: Pick<ClaudeCommands, "get">;
+  commands?: Pick<ClaudeCommands, "get"> & Partial<Pick<ClaudeCommands, "catalog">>;
 }
 
 interface ShellSocket {
@@ -596,8 +596,20 @@ export function createServer(deps: ServerDeps) {
       const ticket = store.getTicket(slug, id)!;
       const cwd = ticket.workdir ?? ticket.worktree ?? profile.path;
       try {
-        return json({ commands: await commands.get(cwd, ticket.status === "backlog" || ticket.status === "planning", url.searchParams.get("refresh") === "1") });
+        const plan = ticket.status === "backlog" || ticket.status === "planning", refresh = url.searchParams.get("refresh") === "1";
+        return json(commands.catalog ? await commands.catalog(cwd, plan, refresh) : { commands: await commands.get(cwd, plan, refresh), models: [] });
       } catch (error) { throw new HttpError(503, (error as Error).message); }
+    }
+    if (action === "model" && parts.length === 5 && m === "POST") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "model selection is only available outside a board run");
+      const b = await body(req), ticket = store.getTicket(slug, id)!;
+      if (b.model !== null) {
+        let catalog;
+        try { catalog = await commands.catalog?.(ticket.workdir ?? ticket.worktree ?? profile.path, ticket.status === "backlog" || ticket.status === "planning"); }
+        catch (error) { throw new HttpError(503, (error as Error).message); }
+        if (typeof b.model !== "string" || !catalog?.models.some((model) => model.value === b.model)) throw new HttpError(400, "Choose an available Claude model");
+      }
+      return json(view(profile, await board.updateTicket(slug, id, { model: b.model })));
     }
     if (action === "activity" && m === "GET") return json(store.readActivity(slug, id));
     if (action === "outputs" && m === "GET") {

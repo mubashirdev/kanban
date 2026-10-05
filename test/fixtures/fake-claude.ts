@@ -27,7 +27,7 @@ if (streamIn) {
           { name: "model", description: "Switch model", argumentHint: "<model>", builtin: true },
           { name: "qa:review", description: "Review the current project", argumentHint: "[scope]" },
           { name: "commit-files", description: "Commit selected files" },
-        ] } } });
+        ], models: [{ value: "sonnet", displayName: "Sonnet", description: "Daily coding" }] } } });
         const delay = Number(process.env.FAKE_COMMAND_DELAY ?? 0);
         if (delay) setTimeout(respond, delay); else respond();
         return;

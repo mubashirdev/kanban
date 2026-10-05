@@ -26,6 +26,30 @@ const json = (method: string, body?: unknown) => ({
   method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined,
 });
 
+test("model picker validates live choices, changes only its ticket, and never starts a run", async () => {
+  const store = new Store(tempDir()), bus = new Bus();
+  store.saveProfile({ name: "Models", slug: "models", path: tempDir(), baseBranch: "main", maxParallel: 1, model: "opus", createdAt: new Date().toISOString() });
+  const ticket = store.createTicket("models", { title: "Choose model", body: "", status: "backlog" });
+  const sibling = store.createTicket("models", { title: "Other", body: "", status: "backlog" });
+  const board = new Board(store, bus, { claudeBin: "/bin/false" });
+  const catalog = { commands: [], models: [{ value: "sonnet", displayName: "Sonnet", description: "Daily coding" }] };
+  const server = createServer({ store, bus, board, port: 0, webDir: tempDir(), commands: { get: async () => [], catalog: async () => catalog } });
+  const base = `http://127.0.0.1:${server.port}/api/profiles/models/tickets/${ticket.id}`;
+  try {
+    expect(await (await fetch(base + "/commands")).json()).toEqual(catalog);
+    expect((await fetch(base + "/model", json("POST", { model: "unknown" }))).status).toBe(400);
+    const chosen = await fetch(base + "/model", json("POST", { model: "sonnet" }));
+    expect(chosen.status).toBe(200); expect((await chosen.json() as any).model).toBe("sonnet");
+    expect(store.getProfile("models")!.model).toBe("opus");
+    expect(store.getTicket("models", sibling.id)!.model).toBeUndefined();
+    expect(store.getTicket("models", ticket.id)!.runCount).toBe(0);
+    expect(store.getTicket("models", ticket.id)!.sessionId).toBeNull();
+    expect((await fetch(base + "/model", { ...json("POST", { model: "sonnet" }), headers: { "content-type": "application/json", "x-ckanban-run": `models/${ticket.id}` } })).status).toBe(403);
+    await fetch(base + "/model", json("POST", { model: null }));
+    expect(store.getTicket("models", ticket.id)!.model).toBeNull();
+  } finally { server.stop(true); }
+});
+
 test("PWA static files have update and manifest headers in disk and embedded builds", async () => {
   const webDir = tempDir();
   const content = { "index.html": "<html>board</html>", "sw.js": "// worker", "manifest.webmanifest": '{"name":"Kanban"}' };
@@ -59,7 +83,7 @@ test("ticket command discovery uses the linked working directory and returns a r
     commands: { async get(cwd, plan, refresh) { observed = { cwd, plan, refresh }; if (fail) throw new Error("Try again"); return []; } } });
   try {
     const endpoint = `http://127.0.0.1:${localServer.port}/api/profiles/commands/tickets/${ticket.id}/commands?refresh=1`;
-    expect(await (await fetch(endpoint)).json()).toEqual({ commands: [] });
+    expect(await (await fetch(endpoint)).json()).toEqual({ commands: [], models: [] });
     expect(observed).toEqual({ cwd: linked, plan: true, refresh: true });
     fail = true; expect((await fetch(endpoint)).status).toBe(503);
     expect((await fetch(endpoint.replace(ticket.id, "missing"))).status).toBe(404);

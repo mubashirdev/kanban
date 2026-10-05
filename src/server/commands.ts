@@ -7,6 +7,17 @@ export interface ClaudeCommand {
   aliases: string[];
   builtin: boolean;
 }
+export interface ClaudeModel { value: string; displayName: string; description: string }
+export interface ClaudeCatalog { commands: ClaudeCommand[]; models: ClaudeModel[] }
+export function modelMetadata(value: unknown): ClaudeModel[] {
+  if (!Array.isArray(value)) return [];
+  const names = new Set<string>();
+  return value.flatMap((model) => {
+    if (!model || typeof model.value !== "string" || !/^[\w][\w.:/@\[\]-]{0,255}$/.test(model.value) || names.has(model.value)) return [];
+    names.add(model.value);
+    return [{ value: model.value, displayName: String(model.displayName ?? model.value).slice(0, 200), description: String(model.description ?? "").slice(0, 1000) }];
+  });
+}
 const validName = (name: unknown): name is string => typeof name === "string" && /^[\w][\w:./@-]{0,199}$/.test(name) && !name.startsWith("__");
 export function commandMetadata(value: unknown): ClaudeCommand[] {
   if (!Array.isArray(value)) throw new Error("Claude did not return its command list");
@@ -20,7 +31,7 @@ export function commandMetadata(value: unknown): ClaudeCommand[] {
 }
 
 /** Ask Claude for its actual command registry without sending a prompt or using a model turn. */
-export async function discoverCommands(bin: string, cwd: string, plan: boolean, timeoutMs = 20_000): Promise<ClaudeCommand[]> {
+export async function discoverCatalog(bin: string, cwd: string, plan: boolean, timeoutMs = 20_000): Promise<ClaudeCatalog> {
   const { CLAUDECODE, CLAUDE_CODE_ENTRYPOINT, CKANBAN_TICKET, ...env } = process.env;
   const proc = Bun.spawn([bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
     "--permission-mode", plan ? "plan" : "bypassPermissions", "--mcp-config", mcpConfig()],
@@ -44,7 +55,7 @@ export async function discoverCommands(bin: string, cwd: string, plan: boolean, 
           try { event = JSON.parse(line); } catch { continue; }
           if (event?.type !== "control_response" || event.response?.request_id !== requestId) continue;
           if (event.response.subtype !== "success") throw new Error("Claude could not load commands. Check its connections and try again.");
-          return commandMetadata(event.response.response?.commands);
+          return { commands: commandMetadata(event.response.response?.commands), models: modelMetadata(event.response.response?.models) };
         }
       }
       throw new Error("Claude exited before loading commands. Check that Claude is installed and signed in.");
@@ -64,17 +75,23 @@ export async function discoverCommands(bin: string, cwd: string, plan: boolean, 
     kill("KILL");
   }
 }
+export async function discoverCommands(bin: string, cwd: string, plan: boolean, timeoutMs = 20_000): Promise<ClaudeCommand[]> {
+  return (await discoverCatalog(bin, cwd, plan, timeoutMs)).commands;
+}
 
 /** Bounded, short-lived cache: many drawers can share one discovery process. */
 export class ClaudeCommands {
-  private cache = new Map<string, { until: number; pending: Promise<ClaudeCommand[]>; loading: boolean }>();
-  constructor(private bin = "claude", private discover = discoverCommands) {}
-  get(cwd: string, plan: boolean, refresh = false): Promise<ClaudeCommand[]> {
+  private cache = new Map<string, { until: number; pending: Promise<ClaudeCatalog>; loading: boolean }>();
+  constructor(private bin = "claude", private discover = discoverCatalog) {}
+  async get(cwd: string, plan: boolean, refresh = false): Promise<ClaudeCommand[]> {
+    return (await this.catalog(cwd, plan, refresh)).commands;
+  }
+  catalog(cwd: string, plan: boolean, refresh = false): Promise<ClaudeCatalog> {
     const key = `${plan}:${cwd}`;
     const previous = this.cache.get(key);
     if (previous && (previous.loading || (!refresh && previous.until > Date.now()))) return previous.pending;
     if (!previous && this.cache.size >= 64) this.cache.delete(this.cache.keys().next().value!);
-    const entry = { until: Date.now() + 120_000, pending: Promise.resolve([] as ClaudeCommand[]), loading: true };
+    const entry = { until: Date.now() + 120_000, pending: Promise.resolve({ commands: [], models: [] } as ClaudeCatalog), loading: true };
     entry.pending = this.discover(this.bin, cwd, plan).then((commands) => { entry.loading = false; entry.until = Date.now() + 120_000; return commands; }, (error) => {
       if (this.cache.get(key) === entry) this.cache.delete(key);
       throw error;

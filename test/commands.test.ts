@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
-import { ClaudeCommands, commandMetadata, discoverCommands, isSlashCommand } from "../src/server/commands";
+import { ClaudeCommands, commandMetadata, discoverCommands, discoverCatalog, modelMetadata, isSlashCommand } from "../src/server/commands";
 import { tempDir } from "./helpers";
 const fake = join(import.meta.dir, "fixtures/fake-claude.ts");
 
@@ -28,8 +28,8 @@ test("discovery timeout stops the process and remains retryable", async () => {
 
 test("cache shares in-flight requests, refreshes on demand and distinguishes folder/mode", async () => {
   let calls = 0;
-  const catalog = new ClaudeCommands("fake", async () => { calls++; await Bun.sleep(10); return []; });
-  await Promise.all([catalog.get("/a", true), catalog.get("/a", true, true)]);
+  const catalog = new ClaudeCommands("fake", async () => { calls++; await Bun.sleep(10); return { commands: [], models: [] }; });
+  await Promise.all([catalog.get("/a", true), catalog.catalog("/a", true, true)]);
   expect(calls).toBe(1);
   await catalog.get("/a", true); expect(calls).toBe(1);
   await catalog.get("/a", true, true); expect(calls).toBe(2);
@@ -38,7 +38,7 @@ test("cache shares in-flight requests, refreshes on demand and distinguishes fol
 
 test("a failed catalog can be retried, malformed and internal metadata stay out of the picker", async () => {
   let fail = true;
-  const catalog = new ClaudeCommands("fake", async () => { if (fail) throw new Error("offline"); return []; });
+  const catalog = new ClaudeCommands("fake", async () => { if (fail) throw new Error("offline"); return { commands: [], models: [] }; });
   await expect(catalog.get("/a", true)).rejects.toThrow("offline");
   fail = false; expect(await catalog.get("/a", true)).toEqual([]);
   expect(commandMetadata([{ name: "ok", aliases: ["alias", "bad name"] }, { name: "ok" }, { name: "__internal" }, { name: "bad name" }, null])).toEqual([
@@ -47,4 +47,10 @@ test("a failed catalog can be retried, malformed and internal metadata stay out 
   expect(isSlashCommand("/plugin:review arg")).toBe(true);
   expect(isSlashCommand("explain /model")).toBe(false);
   expect(isSlashCommand("/ model")).toBe(false);
+});
+
+test("live discovery returns model choices and excludes duplicate or malformed model IDs", async () => {
+  const catalog = await discoverCatalog(fake, tempDir(), true);
+  expect(catalog.models[0]).toEqual({ value: "sonnet", displayName: "Sonnet", description: "Daily coding" });
+  expect(modelMetadata([{ value: "opus[1m]" }, { value: "opus[1m]" }, { value: "bad model" }, null])).toEqual([{ value: "opus[1m]", displayName: "opus[1m]", description: "" }]);
 });

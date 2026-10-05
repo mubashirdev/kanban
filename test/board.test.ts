@@ -10,6 +10,22 @@ import { makeRepo, tempDir } from "./helpers";
 
 const FAKE = join(import.meta.dir, "fixtures", "fake-claude.ts");
 
+test("ticket model overrides survive storage and drive the next reply without changing board defaults", async () => {
+  await setup({ git: false });
+  const ticket = await board.createTicket("p", { title: "Discuss", body: "", status: "backlog" });
+  const original = store.getProfile("p")!.model;
+  await board.updateTicket("p", ticket.id, { model: "sonnet" });
+  expect(new Store(store.root).getTicket("p", ticket.id)!.model).toBe("sonnet");
+  await board.chat("p", ticket.id, "Explain this ticket"); await board.whenIdle();
+  const call = readArgs().at(-1)!;
+  expect(call.args[call.args.indexOf("--model") + 1]).toBe("sonnet");
+  expect(call.args[call.args.indexOf("--permission-mode") + 1]).toBe("plan");
+  expect(store.getProfile("p")!.model).toBe(original);
+  await board.updateTicket("p", ticket.id, { model: null });
+  await board.chat("p", ticket.id, "Explain again"); await board.whenIdle();
+  expect(readArgs().at(-1)!.args.includes("--model")).toBe(false);
+});
+
 test("slash chat dispatches exact arguments separately from refine context", async () => {
   await setup({ git: false });
   const ticket = await board.createTicket("p", { title: "Discuss", body: "Keep context", status: "backlog" });
