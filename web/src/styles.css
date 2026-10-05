@@ -143,8 +143,7 @@ kbd {
 .model-options button[aria-selected="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .model-options small { display: block; margin-top: 3px; color: var(--muted); }
 
-/* Keep installed Safari apps out of the document's native scroll-edge effect.
-   Scrolling remains inside boards, dialogs and chat; the status area is opaque. */
+/* Installed apps scroll inside boards, dialogs and chat, not the document. */
 @media (display-mode: standalone) {
   html, body { overflow: hidden; overscroll-behavior: none; background: var(--surface); }
   #root { position: fixed; inset: 0; overflow: hidden; }
@@ -1310,4 +1309,22 @@ button.pill:hover { color: var(--text); }
   .dock { position: fixed; inset: var(--viewport-top, 0px) 0 auto; height: var(--viewport-height, 100dvh) !important; z-index: 30; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); border-top: 0; }
   .dock-resize { display: none; }
   .dock-head { padding: 8px; }
+}
+
+/* Leave an empty strip under iOS's native status-bar blur in installed apps.
+   Fixed workspaces share the offset and lose the same height, including when
+   the keyboard opens, so their bottom controls remain inside the viewport. */
+@media (display-mode: standalone) and (pointer: coarse) and (max-width: 900px) {
+  :root { --standalone-top-gap: 32px; }
+  #root { top: var(--standalone-top-gap); height: auto; }
+  .app { height: calc(var(--viewport-height, 100dvh) - var(--standalone-top-gap)); }
+  .drawer-wrap, .overlay, .dock {
+    top: calc(var(--viewport-top, 0px) + var(--standalone-top-gap));
+    height: calc(var(--viewport-height, 100dvh) - var(--standalone-top-gap));
+  }
+  .dock { height: calc(var(--viewport-height, 100dvh) - var(--standalone-top-gap)) !important; }
+  .modal, .modal.wide {
+    max-height: calc(var(--viewport-height, 100dvh) - var(--standalone-top-gap) - max(24px, env(safe-area-inset-top) + env(safe-area-inset-bottom)));
+  }
+  .app > .topbar .inbox > .inbox-menu { top: calc(76px + var(--standalone-top-gap) + env(safe-area-inset-top)); }
 }
