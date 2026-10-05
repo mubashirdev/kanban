@@ -183,7 +183,7 @@ export function FilesView({ slug, refreshSignal }: { slug: string; refreshSignal
   const current = file && file !== "loading" && !("error" in file) ? file : null;
 
   return (
-    <div className="files-view">
+    <div className={`files-view${selected ? " has-file" : ""}`}>
       <div className="file-side">
         <div className="file-filter">
           <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter files…" aria-label="Filter files"
@@ -206,6 +206,7 @@ export function FilesView({ slug, refreshSignal }: { slug: string; refreshSignal
       <div className="file-viewer">
         {selected && (
           <div className="file-viewer-head">
+            <button className="btn ghost small file-back" onClick={() => setSelected(null)} aria-label="Back to files">← Files</button>
             <span className="file-viewer-path" title={selected}>{selected}</span>
             {current && <span className="muted">{formatSize(current.size)}</span>}
             <button className="icon-btn tiny" aria-label="Copy path" title="Copy path (relative to the folder)"

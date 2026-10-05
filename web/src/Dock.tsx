@@ -5,6 +5,8 @@ import { FilesView } from "./FilesView";
 import { CloseIcon, RefreshIcon } from "./icons";
 import { TerminalView } from "./TerminalView";
 import { toast } from "./toast";
+import { useFocusTrap, useLayer } from "./layers";
+import { useMediaQuery } from "./useMediaQuery";
 
 export type DockTab = "terminal" | "files" | "claude";
 const TAB_KEY = "ckanban.dock.tab";
@@ -47,6 +49,10 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
   onTabChange?: (tab: DockTab) => void;
   onOpenTicket?: (id: string) => void;
 }) {
+  const compact = useMediaQuery("(max-width: 767px), (max-height: 500px)");
+  const dockRef = useRef<HTMLElement>(null);
+  useFocusTrap(dockRef, true, compact);
+  useLayer(onClose, { active: compact, skipInInputs: true });
   const [tab, setTab] = useState<DockTab>(() => {
     const t = stored(TAB_KEY);
     return isTab(t) ? t : "terminal";
@@ -120,10 +126,11 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
   const onPointerUp = () => (drag.current = null);
 
   return (
-    <section className="dock" style={{ height }} aria-label="Terminal and files">
+    <section ref={dockRef} className="dock" style={{ height }} aria-label="Terminal and files"
+      role={compact ? "dialog" : undefined} aria-modal={compact ? true : undefined} tabIndex={-1}>
       <div className="dock-resize" role="separator" aria-orientation="horizontal" aria-label="Resize panel" tabIndex={0}
         aria-valuenow={height} aria-valuemin={MIN_HEIGHT}
-        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onKeyDown={onHandleKey}
+        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onKeyDown={onHandleKey}
         onDoubleClick={() => setHeight(clampHeight(320))} title="Drag (or ↑↓) to resize · double-click to reset" />
       <div className="dock-head">
         <div className="tabs" role="tablist" aria-label="Panel">

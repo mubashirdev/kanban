@@ -51,8 +51,9 @@ function focusables(el: HTMLElement): HTMLElement[] {
  * Keeps Tab inside `ref`, focuses it on open (unless something inside already has focus) and gives focus back on close.
  * `focusContainer`: focus the container itself, not its first control (e.g. so Esc still closes the panel).
  */
-export function useFocusTrap(ref: RefObject<HTMLElement | null>, focusContainer = false) {
+export function useFocusTrap(ref: RefObject<HTMLElement | null>, focusContainer = false, active = true) {
   useEffect(() => {
+    if (!active) return;
     const el = ref.current;
     if (!el) return;
     const prev = document.activeElement as HTMLElement | null;
@@ -80,5 +81,5 @@ export function useFocusTrap(ref: RefObject<HTMLElement | null>, focusContainer 
       el.removeEventListener("keydown", onKey);
       if (prev && prev.isConnected) prev.focus({ preventScroll: true });
     };
-  }, []);
+  }, [active]);
 }

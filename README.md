@@ -4,6 +4,8 @@ Local kanban board for [Claude Code](https://claude.com/claude-code). Drop a tic
 
 ## Features
 
+- Responsive interface: phones get a compact action menu and swipeable columns with direct column navigation; tablets keep wider cards, and desktop keeps the full board. Ticket details and chat use separate panes on smaller screens. Touch drag handles keep scrolling independent from moving cards; dialogs, the file viewer, and terminal panels adapt to small screens, safe areas, and the onscreen keyboard.
+
 - **Profiles**: one board per folder. *New profile* lists the folders you've recently run Claude Code in (from `~/.claude.json`), or *Browse…* opens the macOS folder picker. Base branch is auto-detected; model defaults to your Claude Code setting (`~/.claude/settings.json`); max parallel defaults to 5.
    Git repos get a worktree + branch per ticket (`ck/<id>-<title>`); plain folders are worked in place.
 - **Auto pickup**: moving a card to Ready starts a run immediately, up to `maxParallel` per profile. Extra cards wait their turn.

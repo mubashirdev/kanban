@@ -16,6 +16,8 @@ import { Select } from "./Select";
 import { QuickSwitcher, ShortcutsDialog } from "./Shortcuts";
 import { TicketDrawer } from "./TicketDrawer";
 import { toast, Toaster } from "./toast";
+import { useMediaQuery } from "./useMediaQuery";
+import { useViewport } from "./useViewport";
 
 import type { DockTab } from "./Dock";
 
@@ -86,6 +88,10 @@ function readLast(): string | null {
 }
 
 export function App() {
+  useViewport();
+  const compact = useMediaQuery("(max-width: 767px)");
+  const narrow = useMediaQuery("(max-width: 900px)");
+  const [usageRequest, setUsageRequest] = useState(0);
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
   const [slug, setSlug] = useState<string | null>(parseHash().slug ?? readLast());
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -453,7 +459,7 @@ export function App() {
             {running}/{profile.maxParallel} running
           </span>
         )}
-        <UsagePill />
+        <UsagePill compact={narrow} openRequest={usageRequest} />
         {restart.pending && (
           <span className="pill warn" title="The daemon restarts once every active run (on any board) has finished. Until then nothing new starts: queued tickets, chat replies and Planning interviews wait.">
             Restart pending{restart.waiting > 0 ? ` · waiting for ${restart.waiting} ${restart.waiting === 1 ? "run" : "runs"}` : ""}
@@ -464,21 +470,21 @@ export function App() {
           if (i.profile !== slug) setSlug(i.profile);
           openTicket(i.id, i.profile);
         }} />
-        {profile && (
+        {profile && !compact && (
           <button className={`btn ghost icon-label${dockOpen && !chatOpen ? " on" : ""}`}
             onClick={() => (chatOpen ? openDockOn("terminal") : setDockOpen((o) => !o))}
             aria-pressed={dockOpen && !chatOpen} title="Terminal and files for this folder (Ctrl+`)" aria-label="Terminal and files">
             <TerminalIcon /><span className="label">Terminal & files</span>
           </button>
         )}
-        {profile && (
+        {profile && !compact && (
           <button className={`btn ghost icon-label${chatOpen ? " on" : ""}`}
             onClick={() => (chatOpen ? setDockOpen(false) : openDockOn("claude"))}
             aria-pressed={chatOpen} title="Quick chat with Claude in this folder, no ticket needed (C)" aria-label="Quick Claude chat">
             <ChatIcon /><span className="label">Claude</span>
           </button>
         )}
-        {profile && (
+        {profile && !compact && (
           <button className="btn ghost icon-label" onClick={() => setSchedulesOpen(true)} aria-label="Schedules"
             title={scheduleErrors ? `${scheduleErrors} schedule${scheduleErrors === 1 ? "" : "s"} could not start their last run` : "Recurring tickets on a cron schedule"}>
             <ClockIcon /><span className="label">Schedules</span>
@@ -486,22 +492,37 @@ export function App() {
             {scheduleErrors > 0 && <span className="need-chip">{scheduleErrors}</span>}
           </button>
         )}
-        <button className="btn ghost icon-label" onClick={() => setConnections(true)} aria-label="Connections"
+        {!compact && <button className="btn ghost icon-label" onClick={() => setConnections(true)} aria-label="Connections"
           title={mcpAttention ? `${mcpAttention} MCP server${mcpAttention === 1 ? "" : "s"} failed or need you to log in again` : "Claude Code MCP servers"}>
           <PlugIcon /><span className="label">Connections</span>
           {mcpAttention > 0 && <span className="need-chip">{mcpAttention}</span>}
-        </button>
+        </button>}
         {profile && (
-          <button className="btn primary" onClick={() => setNewTicket(true)} title="New ticket (N)">
+          <button className="btn primary new-ticket-btn" onClick={() => setNewTicket(true)} title="New ticket (N)">
             New ticket
           </button>
         )}
         <HeaderMenu items={[
+          ...(narrow ? [{ label: "Usage & limits", icon: <ClockIcon />, onSelect: () => setUsageRequest((n) => n + 1) }] : []),
+          ...(compact ? [
+            ...(profile ? [
+              { label: "Terminal & files", icon: <TerminalIcon />, onSelect: () => openDockOn("terminal") },
+              { label: "Quick Claude chat", icon: <ChatIcon />, onSelect: () => openDockOn("claude") },
+              { label: `Schedules${scheduleErrors ? ` · ${scheduleErrors} need you` : ""}`, icon: <ClockIcon />, onSelect: () => setSchedulesOpen(true) },
+            ] : []),
+            { label: `Connections${mcpAttention ? ` · ${mcpAttention} need you` : ""}`, icon: <PlugIcon />, onSelect: () => setConnections(true) },
+          ] : []),
           ...(profile ? [{ label: "Board settings", icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
           { label: "Keyboard shortcuts", hint: "?", icon: <KeyboardIcon />, onSelect: () => setShortcuts(true) },
           { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
-        ]} footer={version && version.version !== "dev" ? `Claude Kanban v${version.version}` : null} />
+        ]} footer={narrow && profile ? `${running}/${profile.maxParallel} running` : version && version.version !== "dev" ? `Claude Kanban v${version.version}` : null} />
       </header>
+
+      {narrow && restart.pending && (
+        <div className="banner warn" role="status">
+          Restart pending. New runs wait until active runs finish{restart.waiting > 0 ? ` (${restart.waiting} still active)` : ""}.
+        </div>
+      )}
 
       {version?.updateAvailable && !dismissed.has(updateKey) && (
         <div className="banner info" role="status">

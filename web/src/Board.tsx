@@ -4,10 +4,11 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BOARD_COLUMNS, COLUMNS, type Status, type Ticket } from "./api";
 import { Card } from "./Card";
 import { CollapseIcon, PlusIcon, SparkIcon } from "./icons";
+import { useMediaQuery } from "./useMediaQuery";
 
 const COLLAPSED_KEY = "ckanban.collapsedColumns";
 
@@ -50,7 +51,8 @@ interface Props {
 
 /** Drag with the mouse, or focus a card: Enter opens it, Space picks it up (arrows move, Space drops, Esc cancels). */
 function SortableCard({ ticket, onOpen, queued, held }: { ticket: Ticket; onOpen: (id: string) => void; queued?: number; held?: boolean }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const touch = useMediaQuery("(pointer: coarse)");
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: ticket.id,
     data: { status: ticket.status },
   });
@@ -60,7 +62,7 @@ function SortableCard({ ticket, onOpen, queued, held }: { ticket: Ticket; onOpen
       className="sortable-card"
       style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.35 : 1 }}
       {...attributes}
-      {...listeners}
+      {...(touch ? {} : listeners)}
       aria-label={ticket.title}
       onKeyDown={(e) => {
         if (e.key === "Enter" && e.target === e.currentTarget) {
@@ -72,12 +74,18 @@ function SortableCard({ ticket, onOpen, queued, held }: { ticket: Ticket; onOpen
       }}
     >
       <Card ticket={ticket} onClick={() => onOpen(ticket.id)} queued={queued} held={held} />
+      {touch && <button ref={setActivatorNodeRef} className="icon-btn card-drag-handle" {...listeners}
+        aria-label={`Drag ${ticket.title}`} title="Drag to move ticket" onClick={(e) => e.stopPropagation()}>
+        <svg width="16" height="20" viewBox="0 0 16 20" fill="currentColor" aria-hidden>
+          {[5, 10, 15].map((y) => <g key={y}><circle cx="5" cy={y} r="1.4" /><circle cx="11" cy={y} r="1.4" /></g>)}
+        </svg>
+      </button>}
     </div>
   );
 }
 
 const EMPTY_HINT: Record<Status, string> = {
-  backlog: "No parked ideas. Press N or + to add one.",
+  backlog: "No parked ideas. Add a ticket to get started.",
   planning: "Drop a card here and Claude starts interviewing you",
   ready: "Drop a card here and Claude starts working on it",
   in_progress: "Drop a card here and Claude starts working on it (queued if all slots are busy)",
@@ -120,7 +128,7 @@ function Column({ id, label, hint, claude, tickets, queue = [], held = false, on
     );
   }
   return (
-    <section className={`column col-${id} ${claude ? "claude-zone" : ""} ${isOver ? "over" : ""}`} aria-label={label}>
+    <section id={`column-${id}`} className={`column col-${id} ${claude ? "claude-zone" : ""} ${isOver ? "over" : ""}`} aria-label={label}>
       <header className="column-head">
         <span className="column-title">{label}</span>
         {/* One badge: total count, turning amber with a dot while tickets wait on you. */}
@@ -189,6 +197,34 @@ const collision: CollisionDetection = (args) => {
 };
 
 export function Board({ tickets, onOpen, onMove, onAdd, filtered = false, restartPending = false }: Props) {
+  const compact = useMediaQuery("(max-width: 1023px)");
+  const boardRef = useRef<HTMLElement>(null);
+  const navRef = useRef<HTMLElement>(null);
+  const [activeColumn, setActiveColumn] = useState<Status>("backlog");
+  const syncColumn = () => {
+    const board = boardRef.current;
+    if (!board) return;
+    const left = board.getBoundingClientRect().left + parseFloat(getComputedStyle(board).paddingLeft);
+    const nearest = [...board.children].reduce<HTMLElement | null>((best, el) => {
+      const node = el as HTMLElement;
+      return !best || Math.abs(node.getBoundingClientRect().left - left) < Math.abs(best.getBoundingClientRect().left - left) ? node : best;
+    }, null);
+    const id = nearest?.id.replace("column-", "") as Status;
+    if (id) setActiveColumn(id);
+  };
+  const goToColumn = (id: Status) => {
+    const board = boardRef.current;
+    const column = document.getElementById(`column-${id}`);
+    if (!board || !column) return;
+    const motion = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    board.scrollTo({ left: board.scrollLeft + column.getBoundingClientRect().left - board.getBoundingClientRect().left - parseFloat(getComputedStyle(board).paddingLeft), behavior: motion });
+  };
+  useEffect(() => {
+    if (!compact) return;
+    const nav = navRef.current;
+    const button = nav?.querySelector<HTMLElement>(`[data-column="${activeColumn}"]`);
+    if (nav && button) nav.scrollTo({ left: button.offsetLeft - nav.offsetLeft - (nav.clientWidth - button.clientWidth) / 2 });
+  }, [activeColumn, compact]);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     // Enter is kept for opening the card, so only Space picks up / drops.
@@ -251,12 +287,24 @@ export function Board({ tickets, onOpen, onMove, onAdd, filtered = false, restar
 
   return (
     <DndContext sensors={sensors} collisionDetection={collision} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setDragId(null)}>
-      <main className="board">
-        {BOARD_COLUMNS.map((c) => (
-          <Column key={c.id} {...c} tickets={byColumn.get(c.id) ?? []} queue={c.id === "in_progress" ? byColumn.get("ready") : undefined} held={restartPending} onOpen={onOpen} onAdd={onAdd} filtered={filtered}
-            collapsed={collapsed.has(c.id)} onCollapse={(v) => setColumnCollapsed(c.id, v)} />
-        ))}
-      </main>
+      <div className={`board-layout${dragId ? " is-dragging" : ""}`}>
+        {compact && (
+          <nav ref={navRef} className="column-nav" aria-label="Board columns">
+            {BOARD_COLUMNS.map((c) => (
+              <button key={c.id} data-column={c.id} aria-controls={`column-${c.id}`}
+                aria-current={activeColumn === c.id ? "true" : undefined} onClick={() => goToColumn(c.id)}>
+                {c.label}<span className="count">{shownIn(byColumn, c.id).length}</span>
+              </button>
+            ))}
+          </nav>
+        )}
+        <main ref={boardRef} className="board" onScroll={compact ? syncColumn : undefined} aria-label="Kanban board">
+          {BOARD_COLUMNS.map((c) => (
+            <Column key={c.id} {...c} tickets={byColumn.get(c.id) ?? []} queue={c.id === "in_progress" ? byColumn.get("ready") : undefined} held={restartPending} onOpen={onOpen} onAdd={onAdd} filtered={filtered}
+              collapsed={!compact && collapsed.has(c.id)} onCollapse={(v) => setColumnCollapsed(c.id, v)} />
+          ))}
+        </main>
+      </div>
       <DragOverlay>{dragging ? <Card ticket={dragging} dragging /> : null}</DragOverlay>
     </DndContext>
   );

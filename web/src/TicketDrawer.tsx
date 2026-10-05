@@ -13,6 +13,7 @@ import { Select } from "./Select";
 import { SessionPicker, sessionLabel } from "./SessionPicker";
 import { TicketMenu } from "./TicketMenu";
 import { Markdown } from "./Transcript";
+import { useMediaQuery } from "./useMediaQuery";
 
 // v2: widths saved under the old 80% default are dropped once so the new default shows.
 const WIDTH_KEY = "ckanban.panelWidth.v2";
@@ -196,7 +197,11 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const images = useImagePaste(setBody);
   // Body the current edit started from; the server rejects the save if the file changed meanwhile.
   const [baseBody, setBaseBody] = useState(ticket.body);
-  const [tabPick, setTab] = useState<"chat" | "plan" | "outputs">("chat");
+  const [tabPick, setTabPick] = useState<"chat" | "plan" | "outputs">("chat");
+  const setTab = (next: "chat" | "plan" | "outputs") => {
+    setTabPick(next);
+    if (window.matchMedia("(max-width: 900px)").matches) setDetailsOpenState(false);
+  };
   // The Plan tab exists only while the ticket has children.
   const tab = tabPick === "plan" && !children.length ? "chat" : tabPick;
   const [outputCount, setOutputCount] = useState(0);
@@ -212,16 +217,25 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const [picking, setPicking] = useState(false);
   const [linked, setLinked] = useState<ClaudeSession | null>(null);
   const [detailsOpen, setDetailsOpenState] = useState(() => {
+    if (window.matchMedia("(max-width: 900px)").matches) return false;
     try {
       return localStorage.getItem("ckanban.detailsOpen") !== "0";
     } catch {
       return true;
     }
   });
+  const compact = useMediaQuery("(max-width: 900px)");
+  useEffect(() => {
+    try {
+      setDetailsOpenState(!compact && localStorage.getItem("ckanban.detailsOpen") !== "0");
+    } catch {
+      setDetailsOpenState(!compact);
+    }
+  }, [compact]);
   const setDetailsOpen = (fn: (v: boolean) => boolean) => setDetailsOpenState((v) => {
     const next = fn(v);
     try {
-      localStorage.setItem("ckanban.detailsOpen", next ? "1" : "0");
+      if (!window.matchMedia("(max-width: 900px)").matches) localStorage.setItem("ckanban.detailsOpen", next ? "1" : "0");
     } catch {}
     return next;
   });
@@ -333,7 +347,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
 
   return (
     <div className="drawer-wrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <aside ref={panelRef} className={`panel ${dragging ? "resizing" : ""} ${slideIn ? "" : "no-slide"}`} role="dialog" aria-modal="true" aria-label={ticket.title} style={{ width }} tabIndex={-1}>
+      <aside ref={panelRef} className={`panel ${detailsOpen ? "show-details" : ""} ${dragging ? "resizing" : ""} ${slideIn ? "" : "no-slide"}`} role="dialog" aria-modal="true" aria-label={ticket.title} style={{ width }} tabIndex={-1}>
         <div className="drawer-resize" role="separator" aria-orientation="vertical" aria-label="Resize panel" tabIndex={0}
           title="Drag to resize · double-click to reset" {...handle} />
 
@@ -346,6 +360,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
               <line x1="7" y1="3.5" x2="7" y2="14.5" stroke="currentColor" strokeWidth="1.5" />
               {detailsOpen && <rect x="2.75" y="3.75" width="3.5" height="10.5" rx="1.5" fill="currentColor" opacity="0.35" />}
             </svg>
+            <span className="sidebar-toggle-label">{detailsOpen ? (tab === "outputs" ? "Outputs" : tab === "plan" ? "Plan" : "Chat") : "Details"}</span>
           </button>
           <input ref={titleRef} className="title-input" value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
             onKeyDown={(e) => {

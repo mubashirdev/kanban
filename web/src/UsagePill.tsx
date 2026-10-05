@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { useLayer } from "./layers";
+import { Modal } from "./Modal";
 import { fullTime, timeAgo, useNow } from "./time";
 import { pillText, resetText, usageTone, worstTone, type UsageResult } from "./usage";
 
 /** Header pill with Claude plan usage; loads once on page open, then only on Refresh. */
-export function UsagePill() {
+export function UsagePill({ compact = false, openRequest = 0 }: { compact?: boolean; openRequest?: number }) {
   const [usage, setUsage] = useState<UsageResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -21,24 +22,56 @@ export function UsagePill() {
       .finally(() => setLoading(false));
   }, []);
   useEffect(load, [load]);
+  useEffect(() => { if (openRequest) setOpen(true); }, [openRequest]);
 
   useLayer(() => {
     setOpen(false);
     pill.current?.focus();
-  }, { active: open });
+  }, { active: open && !compact });
   useEffect(() => {
-    if (!open) return;
+    if (!open || compact) return;
     const onDown = (e: MouseEvent) => {
       if (!root.current?.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
+  }, [open, compact]);
 
   const failed = !!usage && "error" in usage;
   const windows = usage && !("error" in usage) ? usage.windows : [];
   const tone = failed || !windows.length ? "ok" : worstTone(windows);
   const label = !usage ? "Usage …" : failed ? "Usage unavailable" : windows.length ? pillText(windows) : "Usage · no data";
+
+  const content = (
+    <>
+      {usage && "error" in usage && <p className="usage-error">{usage.error}</p>}
+      {!usage && <p className="muted small">Loading…</p>}
+      {usage && !failed && !windows.length && <p className="muted small">No usage limits reported for this account.</p>}
+      {windows.map((w) => {
+        const t = usageTone(w.percent);
+        const reset = resetText(w.resetsAt, now);
+        return (
+          <div key={w.key} className="usage-row">
+            <div className="usage-top"><span>{w.label}</span><b>{Math.round(w.percent)}%</b></div>
+            <div className="usage-bar"><i className={t} style={{ width: `${w.percent}%` }} /></div>
+            {reset && <div className="usage-sub" title={w.resetsAt ? fullTime(w.resetsAt) : undefined}>{reset}</div>}
+          </div>
+        );
+      })}
+      <div className="usage-foot">
+        <span title={usage ? fullTime(usage.fetchedAt) : undefined}>
+          {usage ? `Updated ${timeAgo(usage.fetchedAt)}` : ""}
+        </span>
+        <button className="btn small" onClick={load} disabled={loading}>{loading ? "Refreshing…" : "↻ Refresh"}</button>
+      </div>
+    </>
+  );
+
+  if (compact) return open ? (
+    <Modal title="Claude plan usage" onClose={() => setOpen(false)}>
+      <div className="usage-content">{content}</div>
+    </Modal>
+  ) : null;
 
   return (
     <div className="usage" ref={root}>
@@ -49,26 +82,7 @@ export function UsagePill() {
       {open && (
         <div className="usage-pop" role="dialog" aria-label="Claude plan usage">
           <h4>Claude plan usage</h4>
-          {usage && "error" in usage && <p className="usage-error">{usage.error}</p>}
-          {!usage && <p className="muted small">Loading…</p>}
-          {usage && !failed && !windows.length && <p className="muted small">No usage limits reported for this account.</p>}
-          {windows.map((w) => {
-            const t = usageTone(w.percent);
-            const reset = resetText(w.resetsAt, now);
-            return (
-              <div key={w.key} className="usage-row">
-                <div className="usage-top"><span>{w.label}</span><b>{Math.round(w.percent)}%</b></div>
-                <div className="usage-bar"><i className={t} style={{ width: `${w.percent}%` }} /></div>
-                {reset && <div className="usage-sub" title={w.resetsAt ? fullTime(w.resetsAt) : undefined}>{reset}</div>}
-              </div>
-            );
-          })}
-          <div className="usage-foot">
-            <span title={usage ? fullTime(usage.fetchedAt) : undefined}>
-              {usage ? `Updated ${timeAgo(usage.fetchedAt)}` : ""}
-            </span>
-            <button className="btn small" onClick={load} disabled={loading}>{loading ? "Refreshing…" : "↻ Refresh"}</button>
-          </div>
+          {content}
         </div>
       )}
     </div>
