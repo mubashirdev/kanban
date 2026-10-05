@@ -49,7 +49,7 @@ export function pwaPlugin(): Plugin {
   return {
     name: "kanban-pwa", apply: "build",
     generateBundle(_options, bundle) {
-      const publicFiles = ["offline.html", "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png", "icons/kanban.svg"];
+      const publicFiles = ["offline.html", "icons/esa-192.png", "icons/esa-512.png", "icons/esa-apple-touch.png", "icons/esa-32.png"];
       const assets = Object.keys(bundle).filter((file) => file.startsWith("assets/") && /\.(js|css)$/.test(file));
       const hash = createHash("sha256");
       for (const output of Object.values(bundle)) hash.update(output.type === "chunk" ? output.code : output.source);

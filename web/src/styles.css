@@ -93,9 +93,7 @@ kbd {
 .topbar > .spacer { flex-shrink: 1; min-width: 0; }
 .topbar .profile-select { flex-shrink: 1; min-width: 120px; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; letter-spacing: -0.01em; }
-.logo { display: inline-flex; gap: 2px; align-items: flex-start; height: 16px; }
-.logo i { display: block; width: 4px; border-radius: 1px; background: var(--accent); }
-.logo i:nth-child(1) { height: 16px; } .logo i:nth-child(2) { height: 10px; } .logo i:nth-child(3) { height: 13px; }
+.brand-icon { display: block; flex: none; width: 28px; height: 28px; object-fit: cover; border-radius: 7px; }
 .pill { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--surface-2); color: var(--muted); }
 
 /* buttons */

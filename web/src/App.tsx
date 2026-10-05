@@ -246,7 +246,7 @@ export function App() {
 
   const needYou = inbox.length;
   useEffect(() => {
-    document.title = needYou ? `(${needYou}) Claude Kanban` : "Claude Kanban";
+    document.title = needYou ? `(${needYou}) Esa Kanban` : "Esa Kanban";
   }, [needYou]);
 
   useEffect(() => {
@@ -421,12 +421,8 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <span className="logo" aria-hidden>
-            <i />
-            <i />
-            <i />
-          </span>
-          <span className="brand-name">Claude Kanban</span>
+          <img className="brand-icon" src="/icons/esa-192.png" width="28" height="28" alt="" />
+          <span className="brand-name">Esa Kanban</span>
         </div>
         {profiles && profiles.length > 0 && (
           <Select
@@ -510,7 +506,7 @@ export function App() {
           </button>
         )}
         <HeaderMenu items={[
-          ...(!pwa.installed ? [{ label: "Install Kanban", icon: <CopyIcon />, onSelect: pwa.install }] : []),
+          ...(!pwa.installed ? [{ label: "Install Esa Kanban", icon: <CopyIcon />, onSelect: pwa.install }] : []),
           ...(pwa.waiting ? [{ label: "Reload app update", icon: <CheckIcon />, onSelect: pwa.update }] : []),
           ...(narrow ? [{ label: "Usage & limits", icon: <ClockIcon />, onSelect: () => setUsageRequest((n) => n + 1) }] : []),
           ...(compact ? [
@@ -524,7 +520,7 @@ export function App() {
           ...(profile ? [{ label: "Board settings", icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
           { label: "Keyboard shortcuts", hint: "?", icon: <KeyboardIcon />, onSelect: () => setShortcuts(true) },
           { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
-        ]} footer={narrow && profile ? `${running}/${profile.maxParallel} running` : version && version.version !== "dev" ? `Claude Kanban v${version.version}` : null} />
+        ]} footer={narrow && profile ? `${running}/${profile.maxParallel} running` : version && version.version !== "dev" ? `Esa Kanban v${version.version}` : null} />
       </header>
 
       {!pwa.online && <div className="banner warn" role="status"><span>You’re offline. Changes and messages need a connection to your Mac.</span></div>}
@@ -542,7 +538,7 @@ export function App() {
 
       {version?.updateAvailable && !dismissed.has(updateKey) && (
         <div className="banner info" role="status">
-          <span>Claude Kanban v{version.latest} is available (you have v{version.version}). Run <code>ckanban update</code> in a terminal.</span>
+          <span>Esa Kanban v{version.latest} is available (you have v{version.version}). Run <code>ckanban update</code> in a terminal.</span>
           <button className="icon-btn" aria-label="Dismiss" title="Hide until next time" onClick={() => dismiss(updateKey)}><CloseIcon size={12} /></button>
         </div>
       )}

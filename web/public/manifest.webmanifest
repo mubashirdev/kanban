@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Claude Kanban",
-  "short_name": "Kanban",
+  "name": "Esa Kanban",
+  "short_name": "Esa Kanban",
   "description": "Your boards, Claude chats, and terminal tools in one workspace.",
   "lang": "en",
   "start_url": "/",
@@ -10,7 +10,7 @@
   "background_color": "#f6f5f1",
   "theme_color": "#f6f5f1",
   "icons": [
-    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "/icons/esa-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/esa-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]
 }
