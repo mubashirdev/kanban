@@ -144,10 +144,25 @@ kbd {
 .model-options small { display: block; margin-top: 3px; color: var(--muted); }
 
 /* Installed apps scroll inside boards, dialogs and chat, not the document. */
+.pwa-status-anchor { display: none; }
 @media (display-mode: standalone) {
   html, body { overflow: hidden; overscroll-behavior: none; background: var(--surface); }
   #root { position: fixed; inset: 0; overflow: hidden; }
   .app > .topbar { position: sticky; top: 0; background: var(--surface); padding-top: calc(16px + env(safe-area-inset-top)); }
+}
+
+/* Safari samples fixed DOM elements at the viewport edge for status-bar tint.
+   Keep this outside the inset app root and above drawers; it never catches taps.
+   The 12px height also accommodates live light/dark theme sampling.
+   See https://github.com/andesco/safari-color-tinting and
+   https://febbbi.com/en/article/safari-26-status-bar-tinting-how-it-actually-works */
+@supports (-webkit-touch-callout: none) {
+  @media (display-mode: standalone) {
+    .pwa-status-anchor {
+      display: block; position: fixed; top: 0; left: 0; right: 0; height: 12px;
+      background-color: var(--surface); z-index: 1000; pointer-events: none;
+    }
+  }
 }
 .banner .icon-btn:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
 .banner.warn { background: var(--warn-soft); color: var(--warn); }
