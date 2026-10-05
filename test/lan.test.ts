@@ -17,6 +17,18 @@ test("LAN authorization uses the actual peer, not a forged localhost Host", () =
   expect(authorizeLan(req, undefined, lan)?.status).toBe(401);
 });
 
+test("trusted preview opens directly only for private peers on the configured subnet", () => {
+  const trusted = { ...lan, trustedNetwork: { address: "192.168.100.237", netmask: "255.255.255.0" } };
+  const req = new Request(`http://${lan.host}:7777/api/profiles`);
+  expect(authorizeLan(req, "192.168.100.42", trusted)).toBeUndefined();
+  expect(authorizeLan(req, "::ffff:192.168.100.42", trusted)).toBeUndefined();
+  for (const peer of ["192.168.101.42", "10.0.0.1", "8.8.8.8", "invalid", undefined]) {
+    expect(authorizeLan(req, peer, trusted)?.status).toBe(401);
+  }
+  expect(authorizeLan(req, "192.168.100.42", lan)?.status).toBe(401);
+  expect(authorizeLan(req, "192.168.100.42", { ...trusted, trustedNetwork: { address: "8.8.8.8", netmask: "255.255.255.0" } })?.status).toBe(401);
+});
+
 test("plain LAN address offers pairing; form signs in without a private URL", async () => {
   const pairedLan = { ...lan, pairingCode: "012345abcdef" };
   const store = new Store(tempDir("ck-pair-"));

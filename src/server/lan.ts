@@ -1,12 +1,36 @@
 import { timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
 
 export interface LanAccess {
   host: string;
   token: string;
   pairingCode?: string;
+  /** Explicit trusted Wi-Fi preview: only peers on this private interface's subnet. */
+  trustedNetwork?: { address: string; netmask: string };
 }
 
 const COOKIE = "ckanban_lan";
+
+function ipv4(value: string): number | null {
+  if (isIP(value) !== 4) return null;
+  return value.split(".").reduce((n, part) => (n << 8) | Number(part), 0);
+}
+
+export function isPrivateIPv4(value: string): boolean {
+  if (ipv4(value) === null) return false;
+  const [a, b] = value.split(".").map(Number);
+  return a === 10 || (a === 172 && b! >= 16 && b! <= 31) || (a === 192 && b === 168);
+}
+
+function trustedPeer(peer: string | undefined, network: LanAccess["trustedNetwork"]): boolean {
+  if (!peer || !network || !isPrivateIPv4(network.address)) return false;
+  const normalizedPeer = peer.replace(/^::ffff:/, "");
+  if (!isPrivateIPv4(normalizedPeer)) return false;
+  const address = ipv4(normalizedPeer);
+  const local = ipv4(network.address);
+  const mask = ipv4(network.netmask);
+  return address !== null && local !== null && mask !== null && mask !== 0 && (address & mask) === (local & mask);
+}
 
 function matches(value: string, token: string): boolean {
   const a = Buffer.from(value);
@@ -93,6 +117,7 @@ export function authorizeLan(req: Request, peer: string | undefined, lan: LanAcc
   const localPeer = peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
   const localHost = host === `localhost:${url.port}` || host === `127.0.0.1:${url.port}`;
   if (localPeer && localHost) return;
+  if (trustedPeer(peer, lan.trustedNetwork)) return;
 
   // Exchange the link for an HttpOnly cookie before serving any UI or assets.
   if (req.method === "GET" && url.pathname === "/" && matches(url.searchParams.get("access") ?? "", lan.token)) {

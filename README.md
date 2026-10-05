@@ -152,6 +152,8 @@ CKANBAN_LAN_HOST=192.168.1.10 bun run dev
 
 Open the **Phone pairing** address printed at startup on your phone and enter the short pairing code. You can also open the **Private LAN access** link to sign in automatically. Both methods sign that browser in with an HttpOnly cookie. The code and link grant access to the board and its terminals; keep them private. New credentials are generated at each daemon start. The computer must stay running and both devices must share a network. With this setting absent, the server listens only on localhost.
 
+For a preview on a trusted private Wi-Fi network, add `CKANBAN_LAN_TRUSTED=1`. Devices on that interface's subnet can then open the plain address directly, including board and terminal access. Other peers still require sign-in, and Host/Origin checks remain active.
+
 ## Development
 
 Requires [Bun](https://bun.sh) ≥ 1.3.5 (the embedded terminal uses Bun's built-in PTY; on older Bun everything else works and the terminal says to upgrade).

@@ -14,16 +14,23 @@ import { TerminalWatcher } from "./terminals";
 import { defaultRoot, Store } from "./store";
 import { VERSION } from "./version";
 import { WEB_ASSETS } from "./web-assets.gen";
+import { isPrivateIPv4 } from "./lan";
 
 export async function startDaemon(): Promise<void> {
   const store = new Store(defaultRoot());
   const config = store.config();
   const port = Number(process.env.CKANBAN_PORT) || config.port;
   const lanHost = process.env.CKANBAN_LAN_HOST;
-  if (lanHost && !Object.values(networkInterfaces()).flat().some((n) => n?.family === "IPv4" && !n.internal && n.address === lanHost)) {
+  const lanInterface = Object.values(networkInterfaces()).flat().find((n) => n?.family === "IPv4" && !n.internal && n.address === lanHost);
+  if (lanHost && !lanInterface) {
     throw new Error("CKANBAN_LAN_HOST must be an IPv4 address of this machine's network interface");
   }
-  const lan = lanHost ? { host: lanHost, token: randomBytes(32).toString("hex"), pairingCode: randomBytes(6).toString("hex") } : undefined;
+  const trusted = process.env.CKANBAN_LAN_TRUSTED === "1";
+  if (trusted && (!lanHost || !isPrivateIPv4(lanHost))) throw new Error("Trusted LAN preview requires a private CKANBAN_LAN_HOST address");
+  const lan = lanHost ? {
+    host: lanHost, token: randomBytes(32).toString("hex"), pairingCode: randomBytes(6).toString("hex"),
+    trustedNetwork: trusted && lanInterface ? { address: lanInterface.address, netmask: lanInterface.netmask } : undefined,
+  } : undefined;
   const bus = new Bus();
   const board = new Board(store, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   const webDir = join(import.meta.dir, "..", "..", "web", "dist");
@@ -38,8 +45,11 @@ export async function startDaemon(): Promise<void> {
   const restart = () => board.requestRestart(() => void shutdown());
   const server = createServer({ store, bus, board, port, webDir, lan, sessions, terminals, shells, mcp, scheduler, assets: WEB_ASSETS, restart });
   console.log(`ckanban v${VERSION} listening on http://localhost:${server.port} (data: ${store.root})`);
-  if (lan) console.log(`Private LAN access: http://${lan.host}:${server.port}/?access=${lan.token}`);
-  if (lan) console.log(`Phone pairing: http://${lan.host}:${server.port}/ — code ${lan.pairingCode.match(/.{4}/g)!.join("-")}`);
+  if (lan?.trustedNetwork) console.log(`Wi-Fi preview: http://${lan.host}:${server.port}/`);
+  else if (lan) {
+    console.log(`Private LAN access: http://${lan.host}:${server.port}/?access=${lan.token}`);
+    console.log(`Phone pairing: http://${lan.host}:${server.port}/ — code ${lan.pairingCode.match(/.{4}/g)!.join("-")}`);
+  }
   board.recover();
   const stopPoller = startPoller(board, store, config.prPollMinutes);
   // After recover(): a missed run's ticket must not be mistaken for an interrupted one.
