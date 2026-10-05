@@ -117,7 +117,7 @@ test("Safari installation metadata and app icons load without a session, while a
     for (const path of ["/", "/auth/login", "/auth/setup"]) {
       const page = await fetch(base + path, { headers: probe });
       const html = await page.text();
-      expect(html).toContain('rel="apple-touch-icon" sizes="180x180" href="/icons/esa-apple-touch.png?v=3"');
+      expect(html).toContain('rel="apple-touch-icon" sizes="180x180" href="/icons/esa-apple-touch.png?v=4"');
       expect(html).toContain('rel="manifest" href="/manifest.webmanifest"');
       expect(page.headers.get("content-security-policy")).toContain("img-src 'self'");
       expect(page.headers.get("content-security-policy")).toContain("manifest-src 'self'");
@@ -127,7 +127,7 @@ test("Safari installation metadata and app icons load without a session, while a
     expect(metadata.headers.get("content-type")).toContain("application/manifest+json");
     const manifest = await metadata.json() as { name: string; icons: { src: string }[] };
     expect(manifest.name).toBe("Esa Kanban");
-    for (const path of ["/icons/esa-apple-touch.png?v=3", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/icons/esa-32.png", ...manifest.icons.map((icon) => icon.src)]) {
+    for (const path of ["/icons/esa-apple-touch.png?v=4", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/icons/esa-32.png", ...manifest.icons.map((icon) => icon.src)]) {
       const icon = await fetch(base + path, { headers: probe });
       expect(icon.status).toBe(200);
       expect(icon.headers.get("content-type")).toBe("image/png");

@@ -171,7 +171,7 @@ Use separate LaunchAgents with `RunAtLoad` and `KeepAlive` for the board, bridge
 
 ## Install as an app
 
-Open Esa Kanban through your HTTPS address and sign in, then choose **More → Install Esa Kanban**. On iPhone/iPad, use Safari’s **Share → Add to Home Screen**. On Android, use Chrome’s **Install app** option. It opens in its own window with the custom Esa Kanban board icon; the existing responsive layout supports portrait, landscape, and the phone keyboard. Installation on a phone requires HTTPS; a plain LAN IP can still be used as a website.
+Open Esa Kanban through your HTTPS address and sign in, then choose **More → Install Esa Kanban**. On iPhone/iPad, use Safari’s **Share → Add to Home Screen**. On Android, use Chrome’s **Install app** option. It opens in its own window with the AI-inspired Esa Kanban icon; the existing responsive layout supports portrait, landscape, and the phone keyboard. Installation on a phone requires HTTPS; a plain LAN IP can still be used as a website.
 
 The app caches versioned UI files and a reconnect screen. Board data, chats, terminal streams, login pages, and credentials are never cached by the service worker. Your Mac must remain awake and online to use them. If a new version is ready, choose **Reload** when convenient; updates do not interrupt open work automatically. There is no offline write queue.
 
