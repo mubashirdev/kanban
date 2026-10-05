@@ -7,15 +7,31 @@ export interface ClaudeCommand {
   aliases: string[];
   builtin: boolean;
 }
-export interface ClaudeModel { value: string; displayName: string; description: string }
-export interface ClaudeCatalog { commands: ClaudeCommand[]; models: ClaudeModel[] }
+export interface ClaudeModel { value: string; displayName: string; description: string; supportsEffort?: boolean; supportedEffortLevels?: Effort[] }
+export interface ClaudeCatalog { commands: ClaudeCommand[]; models: ClaudeModel[]; outputStyles?: string[] }
+export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type Effort = typeof EFFORT_LEVELS[number];
+/** Only offer levels advertised by this installed CLI, rather than assuming its version. */
+export function effortOptions(commands: ClaudeCommand[], models: ClaudeModel[] = [], model?: string | null): Effort[] {
+  const hint = commands.find((command) => command.builtin && command.name === "effort")?.argumentHint ?? "";
+  const levels = EFFORT_LEVELS.filter((level) => hint.split(/[^\w]+/).includes(level));
+  const choice = models.find((item) => item.value === (model ?? "default"));
+  if (!choice || !models.some((item) => item.supportsEffort !== undefined)) return levels;
+  if (!choice.supportsEffort) return [];
+  return choice.supportedEffortLevels ? levels.filter((level) => choice.supportedEffortLevels!.includes(level)) : levels;
+}
+export function outputStyleMetadata(value: unknown): string[] {
+  return Array.isArray(value) ? [...new Set(value.filter((item): item is string => typeof item === "string" && /^[^\x00-\x1f\x7f/\\]{1,100}$/.test(item) && item.trim() === item && ![".", ".."].includes(item)))].slice(0, 100) : [];
+}
 export function modelMetadata(value: unknown): ClaudeModel[] {
   if (!Array.isArray(value)) return [];
   const names = new Set<string>();
   return value.flatMap((model) => {
     if (!model || typeof model.value !== "string" || !/^[\w][\w.:/@\[\]-]{0,255}$/.test(model.value) || names.has(model.value)) return [];
     names.add(model.value);
-    return [{ value: model.value, displayName: String(model.displayName ?? model.value).slice(0, 200), description: String(model.description ?? "").slice(0, 1000) }];
+    return [{ value: model.value, displayName: String(model.displayName ?? model.value).slice(0, 200), description: String(model.description ?? "").slice(0, 1000),
+      ...(typeof model.supportsEffort === "boolean" ? { supportsEffort: model.supportsEffort } : {}),
+      ...(Array.isArray(model.supportedEffortLevels) ? { supportedEffortLevels: EFFORT_LEVELS.filter((level) => model.supportedEffortLevels.includes(level)) } : {}) }];
   });
 }
 const validName = (name: unknown): name is string => typeof name === "string" && /^[\w][\w:./@-]{0,199}$/.test(name) && !name.startsWith("__");
@@ -55,7 +71,7 @@ export async function discoverCatalog(bin: string, cwd: string, plan: boolean, t
           try { event = JSON.parse(line); } catch { continue; }
           if (event?.type !== "control_response" || event.response?.request_id !== requestId) continue;
           if (event.response.subtype !== "success") throw new Error("Claude could not load commands. Check its connections and try again.");
-          return { commands: commandMetadata(event.response.response?.commands), models: modelMetadata(event.response.response?.models) };
+          return { commands: commandMetadata(event.response.response?.commands), models: modelMetadata(event.response.response?.models), outputStyles: outputStyleMetadata(event.response.response?.available_output_styles) };
         }
       }
       throw new Error("Claude exited before loading commands. Check that Claude is installed and signed in.");

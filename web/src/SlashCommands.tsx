@@ -10,9 +10,9 @@ export function slashToken(text: string, caret: number): { query: string; start:
   return caret > start && caret <= end ? { query: match[2], start, end } : null;
 }
 
-export function useSlashCommands({ slug, id, draft, setDraft, composer, onModel }: {
-  slug: string; id: string; draft: string; setDraft: (text: string) => void; composer: RefObject<HTMLTextAreaElement>;
-  onModel: () => void;
+export function useSlashCommands({ slug, id, draft, composer, onCommand }: {
+  slug: string; id: string; draft: string; composer: RefObject<HTMLTextAreaElement>;
+  onCommand: (command: ClaudeCommand) => void;
 }) {
   const listId = useId();
   const [token, setToken] = useState<ReturnType<typeof slashToken>>(null);
@@ -79,14 +79,8 @@ export function useSlashCommands({ slug, id, draft, setDraft, composer, onModel 
   }, [opened]);
 
   const pick = (command: ClaudeCommand) => {
-    if (command.name === "model" && command.builtin) { close(); onModel(); return; }
-    const current = token ?? slashToken(draft, composer.current?.selectionStart ?? draft.length);
-    const prefix = `/${command.name} `;
-    const before = current ? draft.slice(0, current.start) : "";
-    const after = current ? draft.slice(current.end).replace(/^[ \t]+/, "") : draft;
-    setDraft(`${before}${prefix}${after}`);
     close();
-    requestAnimationFrame(() => { composer.current?.focus(); composer.current?.setSelectionRange(before.length + prefix.length, before.length + prefix.length); });
+    onCommand(command);
   };
   const keyDown = (event: KeyboardEvent): boolean => {
     if (!opened || event.nativeEvent.isComposing) return false;
@@ -119,7 +113,7 @@ export function useSlashCommands({ slug, id, draft, setDraft, composer, onModel 
         </button>)}
         {!matches.length && <div className="slash-status" role="status">{query ? `No commands match “${query}”.` : "No commands available in this folder."}</div>}
       </div>}
-    <div className="slash-help">Choose to insert · Add arguments, then Send</div>
+    <div className="slash-help">Choose a command to see its options</div>
   </div>, document.body) : null;
   return {
     popup: popupElement, keyDown, close,

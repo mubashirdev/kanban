@@ -34,6 +34,8 @@ export function buildArgs(
   /** Inline MCP config (see mcpConfig) so every run has the board's tools. */
   mcp?: string,
   appendSystemPrompt?: string,
+  effort?: import("./commands").Effort | null,
+  outputStyle?: string | null,
 ): string[] {
   // Prompts go in on stdin (see startRun) so more messages can follow while Claude works;
   // --replay-user-messages echoes each one back when Claude picks it up.
@@ -42,6 +44,8 @@ export function buildArgs(
     "--include-partial-messages", "--permission-mode", permissionMode];
   args.push(resume ? "--resume" : "--session-id", sessionId);
   if (model) args.push("--model", model);
+  if (effort) args.push("--effort", effort);
+  if (outputStyle) args.push("--settings", JSON.stringify({ outputStyle }));
   if (mcp) args.push("--mcp-config", mcp);
   if (appendSystemPrompt) args.push("--append-system-prompt", appendSystemPrompt);
   return args;

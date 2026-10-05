@@ -21,6 +21,10 @@ export interface Ticket {
   status: Status;
   /** Ticket-only override; missing/null inherits the board's model. */
   model?: string | null;
+  /** Ticket-only reasoning setting for subsequent replies/runs; null uses Claude's defaults. */
+  effort?: import("./commands").Effort | null;
+  /** Ticket-only response style from Claude's live registry. */
+  outputStyle?: string | null;
   /** Missing on tickets created before modes existed: treated as "auto". */
   mode?: TicketMode;
   /** True once Claude has asked the user a round of questions on this ticket. */

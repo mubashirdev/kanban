@@ -66,7 +66,9 @@ export interface ClaudeCommand {
   aliases: string[];
   builtin: boolean;
 }
-export interface ClaudeModel { value: string; displayName: string; description: string }
+export interface ClaudeModel { value: string; displayName: string; description: string; supportsEffort?: boolean; supportedEffortLevels?: Effort[] }
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+export interface ClaudeCatalog { commands: ClaudeCommand[]; models: ClaudeModel[]; efforts: Effort[]; outputStyles: string[]; defaultModel: string | null }
 
 export type AttentionKind = "failed" | "blocked" | "questions" | "proposal" | "review" | "reply";
 
@@ -87,6 +89,8 @@ export interface Ticket {
   title: string;
   status: Status;
   model?: string | null;
+  effort?: Effort | null;
+  outputStyle?: string | null;
   mode?: TicketMode;
   interviewed?: boolean;
   sessionStarted?: boolean;
@@ -389,8 +393,10 @@ const t = (slug: string, id?: string) =>
   `/api/profiles/${encodeURIComponent(slug)}/tickets${id ? `/${encodeURIComponent(id)}` : ""}`;
 
 export const api = {
-  commands: (slug: string, id: string, refresh = false) => req<{ commands: ClaudeCommand[]; models: ClaudeModel[] }>("GET", `${t(slug, id)}/commands${refresh ? "?refresh=1" : ""}`),
+  commands: (slug: string, id: string, refresh = false) => req<ClaudeCatalog>("GET", `${t(slug, id)}/commands${refresh ? "?refresh=1" : ""}`),
   setModel: (slug: string, id: string, model: string | null) => req<Ticket>("POST", `${t(slug, id)}/model`, { model }),
+  setEffort: (slug: string, id: string, effort: Effort | null) => req<Ticket>("POST", `${t(slug, id)}/effort`, { effort }),
+  setOutputStyle: (slug: string, id: string, outputStyle: string | null) => req<Ticket>("POST", `${t(slug, id)}/output-style`, { outputStyle }),
   claudeProjects: () => req<ClaudeProject[]>("GET", "/api/claude/projects"),
   claudeDefaults: () => req<{ model: string | null }>("GET", "/api/claude/defaults"),
   pickFolder: () => req<{ path: string | null }>("POST", "/api/pick-folder"),

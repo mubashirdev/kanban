@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, subscribe, type NewTicketDraft, type SessionEntry, type Ticket } from "./api";
+import { api, subscribe, type ClaudeCommand, type Effort, type NewTicketDraft, type SessionEntry, type Ticket } from "./api";
 import { autoGrow } from "./autoGrow";
 import { ArrowDownIcon, CloseIcon, FileCodeIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
@@ -12,7 +12,9 @@ import { toast } from "./toast";
 import { Markdown } from "./Transcript";
 import { usePersistentState } from "./usePersistentState";
 import { useSlashCommands } from "./SlashCommands";
-import { ModelPicker } from "./ModelPicker";
+import { ClaudeSettings, type SettingKind } from "./ClaudeSettings";
+import { CommandOptions } from "./CommandOptions";
+import { prepareCommand } from "./commandSyntax";
 
 type Block = { kind: "entry"; e: SessionEntry; index: number } | { kind: "tools"; items: SessionEntry[] };
 
@@ -103,8 +105,12 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const queued = ticket.queued ?? [];
   // Unsent text survives closing the drawer, switching tickets and reloads.
   const [draft, setDraft] = usePersistentState(draftKey(slug, ticket.id), () => "", (v) => !v.trim(), (v) => typeof v === "string");
-  const [modelOpen, setModelOpen] = useState(false);
-  const commands = useSlashCommands({ slug, id: ticket.id, draft, setDraft, composer, onModel: () => setModelOpen(true) });
+  const [settingsTab, setSettingsTab] = useState<SettingKind | null>(null);
+  const [selectedCommand, setSelectedCommand] = useState<ClaudeCommand | null>(null);
+  const commands = useSlashCommands({ slug, id: ticket.id, draft, composer, onCommand: (command) => {
+    if (command.builtin && ["model", "effort", "output-style", "config"].includes(command.name)) setSettingsTab(command.name === "effort" ? "effort" : command.name === "output-style" ? "outputStyle" : "model");
+    else setSelectedCommand(command);
+  } });
   const images = useImagePaste(setDraft);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   // Text Claude is writing right now (from the run's partial-message stream); not yet in the session file.
@@ -194,10 +200,10 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     setJump(null);
   };
 
-  const send = async (text: string) => {
+  const send = async (text: string, preserveDraft = false) => {
     const t = text.trim();
     if (!t || stopping || images.uploading) return;
-    if (t === "/model") { commands.close(); setModelOpen(true); return; }
+    if (["/model", "/config", "/settings", "/effort", "/effort status", "/output-style"].includes(t)) { commands.close(); setSettingsTab(t.startsWith("/effort") ? "effort" : t === "/output-style" ? "outputStyle" : "model"); return; }
     if (/^\/model\s+\S/.test(t)) {
       try {
         const model = t.slice(6).trim();
@@ -207,18 +213,36 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       } catch (failure: any) { onError(failure.message); }
       return;
     }
+    if (/^\/effort\s+\S/.test(t)) {
+      try {
+        const effort = t.slice(7).trim();
+        await api.setEffort(slug, ticket.id, effort === "auto" ? null : effort as Effort);
+        commands.close(); setDraft((current) => current.trim() === t ? "" : current);
+        toast(effort === "auto" ? "Effort: Auto" : `Effort: ${effort}`, { tone: "ok" });
+      } catch (failure: any) { onError(failure.message); }
+      return;
+    }
+    if (/^\/output-style\s+\S/.test(t)) {
+      try {
+        const style = t.slice(13).trim();
+        await api.setOutputStyle(slug, ticket.id, style);
+        commands.close(); setDraft((current) => current.trim() === t ? "" : current);
+        toast(`Output style: ${style}`, { tone: "ok" });
+      } catch (failure: any) { onError(failure.message); }
+      return;
+    }
     images.clearError();
     commands.close();
     stickToBottom.current = true;
     setPending((ps) => [...ps, { text: t, steer: running }]);
-    setDraft("");
+    if (!preserveDraft) setDraft("");
     try {
       const r = await api.chat(slug, ticket.id, t);
       // Steering: the server queue now shows it.
       if (r.queued?.some((q) => q.text === t)) setPending((ps) => ps.filter((p) => p.text !== t));
     } catch (e: any) {
       setPending((ps) => ps.filter((p) => p.text !== t));
-      setDraft(t);
+      if (!preserveDraft) setDraft(t);
       onError(e.message);
     }
   };
@@ -494,7 +518,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
         <textarea ref={composer} rows={2} value={draft} disabled={stopping} className={images.dragOver ? "drop-target" : undefined} {...images.handlers} {...commands.aria} role="combobox" aria-label="Message Claude"
           placeholder={running ? "Steer Claude: it reads this at its next step, no restart…" : refine ? "Describe your idea or answer Claude…" : "Ask Claude to change or continue something…"}
           onChange={(e) => { setDraft(e.target.value); commands.select(e.target.value, e.target.selectionStart); }}
-          onSelect={(e) => commands.select(e.currentTarget.value, e.currentTarget.selectionStart)}
+          onSelect={(e) => { if (!settingsTab && !selectedCommand) commands.select(e.currentTarget.value, e.currentTarget.selectionStart); }}
           onKeyDown={(e) => {
             if (commands.keyDown(e)) return;
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !window.matchMedia("(pointer: coarse)").matches) {
@@ -509,17 +533,26 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             <span className="composer-keys"> Enter to send · Shift+Enter for a new line</span>
           </span>
           <span className="composer-actions">
-            <button type="button" className="btn small" aria-label="Choose Claude model" title={ticket.model ? `Model: ${ticket.model}` : "Use board model"} disabled={stopping} onClick={() => setModelOpen(true)}>Model</button>
+            <button type="button" className="btn small" aria-label="Claude settings" title={`Model: ${ticket.model ?? "Board default"} · Effort: ${ticket.effort ?? "Auto"}`} disabled={stopping} onClick={() => { commands.close(); setSettingsTab("model"); }}>Settings</button>
             <button type="button" className="btn small slash-trigger" aria-label="Browse Claude commands" aria-expanded={commands.opened} disabled={stopping} onClick={commands.toggle}><span aria-hidden="true">/</span><span className="slash-trigger-label">Commands</span></button>
             {running && <button className="btn danger small" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop"}</button>}
             <button className="btn primary small" disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? "Uploading…" : "Send"}</button>
           </span>
         </div>
       </div>
-      {modelOpen && <ModelPicker slug={slug} id={ticket.id} current={ticket.model ?? null} onClose={() => setModelOpen(false)} onSaved={(model) => {
-        if (draft.trim() === "/model") setDraft("");
-        setModelOpen(false);
-        toast(model ? `This ticket will use ${model} for its next reply.` : "This ticket will use the board’s model.", { tone: "ok" });
+      {settingsTab && <ClaudeSettings slug={slug} ticket={ticket} initialTab={settingsTab} onClose={() => setSettingsTab(null)} onSaved={(kind) => {
+        setDraft((current) => [`/${kind === "outputStyle" ? "output-style" : kind}`, "/config", "/settings", "/effort status"].includes(current.trim()) ? "" : current);
+      }} />}
+      {selectedCommand && <CommandOptions command={selectedCommand} initial={(() => {
+        const match = /^\s*\/([\w:./@-]+)(?:\s+(.*))?$/s.exec(draft);
+        return match && [selectedCommand.name, ...selectedCommand.aliases].some((name) => name.startsWith(match[1])) ? match[2] ?? "" : "";
+      })()} onClose={() => setSelectedCommand(null)} onPrepare={(text) => {
+        setSelectedCommand(null); setDraft((current) => prepareCommand(current, text)); commands.close();
+        requestAnimationFrame(() => composer.current?.focus({ preventScroll: true }));
+      }} onSend={(text) => {
+        setSelectedCommand(null); commands.close();
+        const preserve = !/^\s*\/[\w:./@-]*(?:\s|$)/.test(draft);
+        void send(text, preserve);
       }} />}
     </div>
   );

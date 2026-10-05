@@ -25,7 +25,7 @@ import type { Store } from "./store";
 import { STATUSES, type Profile, type ScheduleEditor, type Status, type Ticket } from "./types";
 import { nowIso, slugify } from "./util";
 import { authorizeLan, createLanSignIn, type LanAccess } from "./lan";
-import { ClaudeCommands } from "./commands";
+import { ClaudeCommands, effortOptions } from "./commands";
 
 export interface ServerDeps {
   store: Store;
@@ -597,19 +597,26 @@ export function createServer(deps: ServerDeps) {
       const cwd = ticket.workdir ?? ticket.worktree ?? profile.path;
       try {
         const plan = ticket.status === "backlog" || ticket.status === "planning", refresh = url.searchParams.get("refresh") === "1";
-        return json(commands.catalog ? await commands.catalog(cwd, plan, refresh) : { commands: await commands.get(cwd, plan, refresh), models: [] });
+        const catalog = commands.catalog ? await commands.catalog(cwd, plan, refresh) : { commands: await commands.get(cwd, plan, refresh), models: [] };
+        return json({ ...catalog, efforts: effortOptions(catalog.commands), outputStyles: catalog.outputStyles ?? [], defaultModel: profile.model ?? null });
       } catch (error) { throw new HttpError(503, (error as Error).message); }
     }
-    if (action === "model" && parts.length === 5 && m === "POST") {
-      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "model selection is only available outside a board run");
+    if (["model", "effort", "output-style"].includes(action) && parts.length === 5 && m === "POST") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "Claude settings are only available outside a board run");
       const b = await body(req), ticket = store.getTicket(slug, id)!;
-      if (b.model !== null) {
+      const field = action === "output-style" ? "outputStyle" : action;
+      const value = b[field];
+      if (value !== null) {
         let catalog;
-        try { catalog = await commands.catalog?.(ticket.workdir ?? ticket.worktree ?? profile.path, ticket.status === "backlog" || ticket.status === "planning"); }
+        try {
+          const cwd = ticket.workdir ?? ticket.worktree ?? profile.path, plan = ticket.status === "backlog" || ticket.status === "planning";
+          catalog = commands.catalog ? await commands.catalog(cwd, plan) : { commands: await commands.get(cwd, plan), models: [] };
+        }
         catch (error) { throw new HttpError(503, (error as Error).message); }
-        if (typeof b.model !== "string" || !catalog?.models.some((model) => model.value === b.model)) throw new HttpError(400, "Choose an available Claude model");
+        const available = action === "model" ? catalog.models.some((model) => model.value === value) : action === "effort" ? effortOptions(catalog.commands, catalog.models, ticket.model ?? profile.model).some((level) => level === value) : catalog.outputStyles?.includes(value);
+        if (typeof value !== "string" || !available) throw new HttpError(400, `Choose an available Claude ${action}`);
       }
-      return json(view(profile, await board.updateTicket(slug, id, { model: b.model })));
+      return json(view(profile, await board.updateTicket(slug, id, { [field]: value })));
     }
     if (action === "activity" && m === "GET") return json(store.readActivity(slug, id));
     if (action === "outputs" && m === "GET") {

@@ -36,7 +36,7 @@ test("model picker validates live choices, changes only its ticket, and never st
   const server = createServer({ store, bus, board, port: 0, webDir: tempDir(), commands: { get: async () => [], catalog: async () => catalog } });
   const base = `http://127.0.0.1:${server.port}/api/profiles/models/tickets/${ticket.id}`;
   try {
-    expect(await (await fetch(base + "/commands")).json()).toEqual(catalog);
+    expect(await (await fetch(base + "/commands")).json()).toEqual({ ...catalog, efforts: [], outputStyles: [], defaultModel: "opus" });
     expect((await fetch(base + "/model", json("POST", { model: "unknown" }))).status).toBe(400);
     const chosen = await fetch(base + "/model", json("POST", { model: "sonnet" }));
     expect(chosen.status).toBe(200); expect((await chosen.json() as any).model).toBe("sonnet");
@@ -47,6 +47,61 @@ test("model picker validates live choices, changes only its ticket, and never st
     expect((await fetch(base + "/model", { ...json("POST", { model: "sonnet" }), headers: { "content-type": "application/json", "x-ckanban-run": `models/${ticket.id}` } })).status).toBe(403);
     await fetch(base + "/model", json("POST", { model: null }));
     expect(store.getTicket("models", ticket.id)!.model).toBeNull();
+  } finally { server.stop(true); }
+});
+
+test("effort selection validates the live catalog and preserves ticket isolation without a model turn", async () => {
+  const store = new Store(tempDir()), bus = new Bus();
+  store.saveProfile({ name: "Effort", slug: "effort", path: tempDir(), baseBranch: "main", maxParallel: 1, createdAt: new Date().toISOString() });
+  const ticket = store.createTicket("effort", { title: "Choose effort", body: "", status: "backlog" });
+  const other = store.createTicket("effort", { title: "Other", body: "", status: "backlog" });
+  let fail = false, hints = "<low|high|auto>", cwdUsed = "", planUsed = false;
+  const server = createServer({ store, bus, board: new Board(store, bus, { claudeBin: "/bin/false" }), port: 0, webDir: tempDir(), commands: { get: async () => [], catalog: async (cwd, plan) => {
+    cwdUsed = cwd; planUsed = plan;
+    if (fail) throw new Error("Claude unavailable");
+    return { commands: [{ name: "effort", description: "Set effort", argumentHint: hints, aliases: [], builtin: true }], models: [{ value: "opus", displayName: "Opus", description: "", supportsEffort: true, supportedEffortLevels: ["high" as const] }, { value: "haiku", displayName: "Haiku", description: "" }] };
+  } } });
+  const base = `http://127.0.0.1:${server.port}/api/profiles/effort/tickets/${ticket.id}`;
+  try {
+    expect((await (await fetch(base + "/commands")).json() as any).efforts).toEqual(["low", "high"]);
+    for (const effort of ["medium", "max", "auto", 1, {}, "high --permission-mode bypassPermissions"]) expect((await fetch(base + "/effort", json("POST", { effort }))).status).toBe(400);
+    const chosen = await fetch(base + "/effort", json("POST", { effort: "high" }));
+    expect(chosen.status).toBe(200); expect((await chosen.json() as any).effort).toBe("high");
+    expect(new Store(store.root).getTicket("effort", ticket.id)!.effort).toBe("high");
+    expect(cwdUsed).toBe(store.getProfile("effort")!.path); expect(planUsed).toBe(true);
+    expect(store.getTicket("effort", other.id)!.effort).toBeUndefined();
+    expect(store.getTicket("effort", ticket.id)!.sessionId).toBeNull();
+    expect(store.getTicket("effort", ticket.id)!.runCount).toBe(0);
+    store.updateTicket("effort", ticket.id, { model: "haiku" });
+    expect((await fetch(base + "/effort", json("POST", { effort: "high" }))).status).toBe(400);
+    store.updateTicket("effort", ticket.id, { model: null });
+    expect((await fetch(base + "/effort", { ...json("POST", { effort: "high" }), headers: { "content-type": "application/json", "x-ckanban-run": `effort/${ticket.id}` } })).status).toBe(403);
+    fail = true;
+    expect((await fetch(base + "/effort", json("POST", { effort: "low" }))).status).toBe(503);
+    expect((await fetch(base + "/effort", json("POST", { effort: null }))).status).toBe(200);
+    expect(store.getTicket("effort", ticket.id)!.effort).toBeNull();
+    fail = false; hints = "";
+    expect((await fetch(base + "/effort", json("POST", { effort: "high" }))).status).toBe(400);
+  } finally { server.stop(true); }
+});
+
+test("output style validates installed names, survives storage and never changes another ticket or launches Claude", async () => {
+  const store = new Store(tempDir()), bus = new Bus();
+  store.saveProfile({ name: "Styles", slug: "styles", path: tempDir(), baseBranch: "main", maxParallel: 1, createdAt: new Date().toISOString() });
+  const ticket = store.createTicket("styles", { title: "Choose style", body: "", status: "review" });
+  const other = store.createTicket("styles", { title: "Other", body: "", status: "backlog" });
+  const server = createServer({ store, bus, board: new Board(store, bus, { claudeBin: "/bin/false" }), port: 0, webDir: tempDir(), commands: { get: async () => [], catalog: async () => ({ commands: [], models: [], outputStyles: ["Concise", "Custom style"] }) } });
+  const base = `http://127.0.0.1:${server.port}/api/profiles/styles/tickets/${ticket.id}`;
+  try {
+    for (const outputStyle of ["Unknown", "../private", "Concise\"},\"permissionMode\":\"bypassPermissions", 1]) expect((await fetch(base + "/output-style", json("POST", { outputStyle }))).status).toBe(400);
+    expect((await fetch(base + "/output-style", json("POST", { outputStyle: "Custom style" }))).status).toBe(200);
+    expect(new Store(store.root).getTicket("styles", ticket.id)!.outputStyle).toBe("Custom style");
+    expect(store.getTicket("styles", other.id)!.outputStyle).toBeUndefined();
+    expect(store.getTicket("styles", ticket.id)!.status).toBe("review");
+    expect(store.getTicket("styles", ticket.id)!.sessionId).toBeNull();
+    expect((await fetch(base + "/output-style", { ...json("POST", { outputStyle: "Concise" }), headers: { "content-type": "application/json", "x-ckanban-run": `styles/${ticket.id}` } })).status).toBe(403);
+    expect((await fetch(base + "/output-style", json("POST", { outputStyle: null }))).status).toBe(200);
+    expect(store.getTicket("styles", ticket.id)!.outputStyle).toBeNull();
   } finally { server.stop(true); }
 });
 
@@ -83,7 +138,7 @@ test("ticket command discovery uses the linked working directory and returns a r
     commands: { async get(cwd, plan, refresh) { observed = { cwd, plan, refresh }; if (fail) throw new Error("Try again"); return []; } } });
   try {
     const endpoint = `http://127.0.0.1:${localServer.port}/api/profiles/commands/tickets/${ticket.id}/commands?refresh=1`;
-    expect(await (await fetch(endpoint)).json()).toEqual({ commands: [], models: [] });
+    expect(await (await fetch(endpoint)).json()).toEqual({ commands: [], models: [], efforts: [], outputStyles: [], defaultModel: null });
     expect(observed).toEqual({ cwd: linked, plan: true, refresh: true });
     fail = true; expect((await fetch(endpoint)).status).toBe(503);
     expect((await fetch(endpoint.replace(ticket.id, "missing"))).status).toBe(404);

@@ -387,10 +387,10 @@ export class Board {
     run.handle = startRun({
       bin: this.opts.claudeBin,
       cwd: session.dir,
-      args: buildArgs(session.sessionId, session.existed, t.model ?? profile.model, refine ? "plan" : "bypassPermissions", mcpConfig(), command ? chatPrompt(t, "", run.chat!.mode, outputDir) : undefined),
+      args: buildArgs(session.sessionId, session.existed, t.model ?? profile.model, refine ? "plan" : "bypassPermissions", mcpConfig(), command ? chatPrompt(t, "", run.chat!.mode, outputDir) : undefined, t.effort, t.outputStyle),
       input: prompt,
       // CKANBAN_TICKET marks board runs: the ckanban MCP/CLI refuses board changes there (no runs starting runs).
-      env: { CKANBAN_OUTPUT_DIR: outputDir, CKANBAN_TICKET: `${slug}/${id}` },
+      env: { CKANBAN_OUTPUT_DIR: outputDir, CKANBAN_TICKET: `${slug}/${id}`, ...(t.effort ? { CLAUDE_CODE_EFFORT_LEVEL: t.effort } : {}) },
       onEvent: (ev) => {
         if (command && ev?.type === "assistant" && ev.message?.model === "<synthetic>" && !ev.parent_tool_use_id) {
           const text = ev.message.content?.filter((block: any) => block.type === "text").map((block: any) => block.text).join("\n");
@@ -592,7 +592,7 @@ export class Board {
   async updateTicket(
     slug: string,
     id: string,
-    patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "dependsOn" | "model">> & { expectedBody?: string },
+    patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "dependsOn" | "model" | "effort" | "outputStyle">> & { expectedBody?: string },
   ): Promise<Ticket> {
     let current = this.store.getTicket(slug, id);
     if (!current) throw new Error(`ticket ${id} not found`);
@@ -602,6 +602,8 @@ export class Board {
     const clean: Partial<Ticket> = {};
     if (patch.title !== undefined) clean.title = patch.title;
     if (patch.model !== undefined) clean.model = patch.model;
+    if (patch.effort !== undefined) clean.effort = patch.effort;
+    if (patch.outputStyle !== undefined) clean.outputStyle = patch.outputStyle;
     if (patch.body !== undefined) clean.body = patch.body;
     if (patch.order !== undefined) clean.order = patch.order;
     if (patch.mode !== undefined) clean.mode = patch.mode;

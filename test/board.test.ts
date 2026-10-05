@@ -26,6 +26,37 @@ test("ticket model overrides survive storage and drive the next reply without ch
   expect(readArgs().at(-1)!.args.includes("--model")).toBe(false);
 });
 
+test("ticket effort overrides apply to later replies, survive reload and leave an active run unchanged", async () => {
+  await setup({ git: false });
+  const ticket = await board.createTicket("p", { title: "Discuss", body: "", status: "backlog" });
+  const previous = process.env.CLAUDE_CODE_EFFORT_LEVEL;
+  process.env.CLAUDE_CODE_EFFORT_LEVEL = "low";
+  process.env.FAKE_STEP_MS = "100";
+  try {
+    await board.updateTicket("p", ticket.id, { effort: "high", outputStyle: "Concise" });
+    expect(new Store(store.root).getTicket("p", ticket.id)!.effort).toBe("high");
+    expect(new Store(store.root).getTicket("p", ticket.id)!.outputStyle).toBe("Concise");
+    await board.chat("p", ticket.id, "Explain this ticket");
+    await Bun.sleep(30);
+    await board.updateTicket("p", ticket.id, { effort: "max" });
+    await board.whenIdle();
+    let call = readArgs().at(-1)!;
+    expect(call.args[call.args.indexOf("--effort") + 1]).toBe("high");
+    expect((call as any).effort).toBe("high");
+    expect(JSON.parse(call.args[call.args.indexOf("--settings") + 1])).toEqual({ outputStyle: "Concise" });
+    expect(call.args[call.args.indexOf("--permission-mode") + 1]).toBe("plan");
+    await board.chat("p", ticket.id, "Explain again"); await board.whenIdle();
+    call = readArgs().at(-1)!;
+    expect(call.args[call.args.indexOf("--effort") + 1]).toBe("max");
+    expect(call.args).toContain("--resume");
+    await board.updateTicket("p", ticket.id, { effort: null, outputStyle: null });
+    await board.chat("p", ticket.id, "Use defaults"); await board.whenIdle();
+    expect(readArgs().at(-1)!.args).not.toContain("--effort");
+    expect(readArgs().at(-1)!.args).not.toContain("--settings");
+    expect(process.env.CLAUDE_CODE_EFFORT_LEVEL).toBe("low");
+  } finally { if (previous === undefined) delete process.env.CLAUDE_CODE_EFFORT_LEVEL; else process.env.CLAUDE_CODE_EFFORT_LEVEL = previous; delete process.env.FAKE_STEP_MS; }
+});
+
 test("slash chat dispatches exact arguments separately from refine context", async () => {
   await setup({ git: false });
   const ticket = await board.createTicket("p", { title: "Discuss", body: "Keep context", status: "backlog" });
