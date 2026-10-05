@@ -1,0 +1,93 @@
+import { expect, test } from "bun:test";
+import { runInNewContext } from "node:vm";
+import { serviceWorkerSource } from "../web/pwa";
+
+const origin = "https://kanban.example";
+const files = ["/offline.html", "/icons/icon-192.png", "/assets/app-abcd.js", "/assets/app-abcd.css"];
+
+function worker() {
+  const handlers: Record<string, (event: any) => void> = {};
+  const saved = new Map<string, Map<string, Response>>();
+  const requested: Request[] = [];
+  let response: (request: Request) => Response = (request) => new Response(new URL(request.url).pathname, {
+    headers: { "content-type": request.url.endsWith(".js") ? "application/javascript" : request.url.endsWith(".css") ? "text/css" : request.url.endsWith(".png") ? "image/png" : "text/html" },
+  });
+  let offline = false, skipped = 0, claimed = 0;
+  runInNewContext(serviceWorkerSource("test", files), {
+    URL, Response,
+    Request: class extends Request { constructor(input: string, options?: RequestInit) { super(new URL(input, origin).href, options); } },
+    fetch: async (request: Request) => { requested.push(request); if (offline) throw new Error("offline"); return response(request); },
+    self: { location: { origin }, addEventListener: (type: string, fn: any) => { handlers[type] = fn; },
+      skipWaiting: () => { skipped++; }, clients: { claim: async () => { claimed++; } } },
+    caches: {
+      keys: async () => [...saved.keys()],
+      delete: async (name: string) => saved.delete(name),
+      open: async (name: string) => {
+        if (!saved.has(name)) saved.set(name, new Map());
+        const cache = saved.get(name)!;
+        return { put: async (path: string, value: Response) => { cache.set(path, value.clone() as Response); }, match: async (path: string) => cache.get(path)?.clone() };
+      },
+    },
+  });
+  return {
+    saved, requested,
+    respond: (fn: typeof response) => { response = fn; },
+    offline: () => { offline = true; },
+    stats: () => ({ skipped, claimed }),
+    lifecycle: async (type: string) => { let done: Promise<void> | undefined; handlers[type]({ waitUntil: (p: Promise<void>) => { done = p; } }); await done; },
+    message: (type: string) => handlers.message({ data: { type } }),
+    fetch: (path: string, init: RequestInit & { mode?: string } = {}) => {
+      let result: Promise<Response> | undefined;
+      // navigate mode cannot be constructed by user code; model the browser's request.
+      const request = { url: new URL(path, origin).href, method: init.method ?? "GET", mode: init.mode ?? "cors" } as Request;
+      handlers.fetch({ request, respondWith: (p: Promise<Response>) => { result = p; } });
+      return result;
+    },
+  };
+}
+
+test("PWA installs only versioned UI files; activation waits for user or closed tabs", async () => {
+  const w = worker(); await w.lifecycle("install");
+  expect([...w.saved.get("ckanban-ui-test")!.keys()]).toEqual(files);
+  expect(w.requested.every((request) => request.credentials === "include" && request.cache === "reload")).toBe(true);
+  expect(w.stats().skipped).toBe(0);
+  w.saved.set("ckanban-ui-old", new Map()); w.saved.set("another-app", new Map());
+  await w.lifecycle("activate");
+  expect([...w.saved.keys()]).toEqual(["ckanban-ui-test", "another-app"]);
+  expect(w.stats().claimed).toBe(1);
+  w.message("unknown"); expect(w.stats().skipped).toBe(0);
+  w.message("ACTIVATE_UPDATE"); expect(w.stats().skipped).toBe(1);
+});
+
+test("PWA never intercepts API, SSE, login pages, mutations, query tokens or foreign origins", async () => {
+  const w = worker(); await w.lifecycle("install");
+  for (const path of ["/api/profiles", "/api/events", "/api/profiles/x/shell", "/lan/sign-in", "/lan?token=secret", "/icons/icon-192.png?token=secret", "https://other.example/assets/app-abcd.js"])
+    expect(w.fetch(path)).toBeUndefined();
+  expect(w.fetch("/", { method: "POST" })).toBeUndefined();
+  expect(w.fetch("/assets/unknown.js")).toBeUndefined();
+});
+
+test("PWA navigations stay network-only; offline shows reconnect page without board data", async () => {
+  const w = worker(); await w.lifecycle("install");
+  w.respond(() => new Response("live private board", { headers: { "content-type": "text/html" } }));
+  expect(await (await w.fetch("/", { mode: "navigate" })!).text()).toBe("live private board");
+  expect(w.saved.get("ckanban-ui-test")!.has("/")).toBe(false);
+  w.offline();
+  expect(await (await w.fetch("/index.html", { mode: "navigate" })!).text()).toBe("/offline.html");
+  expect(await (await w.fetch("/assets/app-abcd.js")!).text()).toBe("/assets/app-abcd.js");
+});
+
+test("PWA preserves authentication failures instead of serving a cached board", async () => {
+  const w = worker(); await w.lifecycle("install");
+  w.respond(() => new Response("Sign in", { status: 401 }));
+  expect((await w.fetch("/", { mode: "navigate" })!).status).toBe(401);
+});
+
+test("PWA refuses authentication errors and HTML masquerading as cached JavaScript", async () => {
+  for (const status of [401, 200]) {
+    const w = worker();
+    w.respond(() => new Response("Sign in", { status, headers: { "content-type": "text/html" } }));
+    await expect(w.lifecycle("install")).rejects.toThrow("Could not cache Kanban UI");
+    expect(w.saved.size).toBe(0);
+  }
+});

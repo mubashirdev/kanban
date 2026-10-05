@@ -26,6 +26,29 @@ const json = (method: string, body?: unknown) => ({
   method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined,
 });
 
+test("PWA static files have update and manifest headers in disk and embedded builds", async () => {
+  const webDir = tempDir();
+  const content = { "index.html": "<html>board</html>", "sw.js": "// worker", "manifest.webmanifest": '{"name":"Kanban"}' };
+  for (const [path, body] of Object.entries(content)) writeFileSync(join(webDir, path), body);
+  const assets = Object.fromEntries(Object.keys(content).map((path) => [`/${path}`, join(webDir, path)]));
+  for (const embedded of [false, true]) {
+    const localStore = new Store(tempDir()), bus = new Bus();
+    const server = createServer({ store: localStore, bus, board: new Board(localStore, bus, { claudeBin: "/bin/false" }), port: 0, webDir, assets: embedded ? assets : undefined });
+    const base = `http://127.0.0.1:${server.port}`;
+    try {
+      const sw = await fetch(`${base}/sw.js`);
+      expect(sw.headers.get("content-type")).toContain("javascript");
+      expect(sw.headers.get("cache-control")).toBe("no-cache");
+      expect(sw.headers.get("service-worker-allowed")).toBe("/");
+      const manifest = await fetch(`${base}/manifest.webmanifest`);
+      expect(manifest.headers.get("content-type")).toContain("application/manifest+json");
+      expect(await manifest.json()).toEqual({ name: "Kanban" });
+      expect((await fetch(base)).headers.get("cache-control")).toBe("no-cache");
+      for (const path of ["/assets/missing.js", "/icons/missing.png", "/offline.html"]) expect((await fetch(base + path)).status).toBe(404);
+    } finally { server.stop(true); }
+  }
+});
+
 test("ticket command discovery uses the linked working directory and returns a retryable failure", async () => {
   const localStore = new Store(tempDir()), localBus = new Bus();
   localStore.saveProfile({ name: "Commands", slug: "commands", path: tempDir(), baseBranch: "main", maxParallel: 1, createdAt: new Date().toISOString() });

@@ -18,6 +18,7 @@ import { TicketDrawer } from "./TicketDrawer";
 import { toast, Toaster } from "./toast";
 import { useMediaQuery } from "./useMediaQuery";
 import { useViewport } from "./useViewport";
+import { InstallDialog, usePwa } from "./Pwa";
 
 import type { DockTab } from "./Dock";
 
@@ -94,6 +95,7 @@ function readLast(): string | null {
 
 export function App() {
   useViewport();
+  const pwa = usePwa();
   const compact = useMediaQuery("(max-width: 767px)");
   const narrow = useMediaQuery("(max-width: 900px)");
   const [usageRequest, setUsageRequest] = useState(0);
@@ -508,6 +510,8 @@ export function App() {
           </button>
         )}
         <HeaderMenu items={[
+          ...(!pwa.installed ? [{ label: "Install Kanban", icon: <CopyIcon />, onSelect: pwa.install }] : []),
+          ...(pwa.waiting ? [{ label: "Reload app update", icon: <CheckIcon />, onSelect: pwa.update }] : []),
           ...(narrow ? [{ label: "Usage & limits", icon: <ClockIcon />, onSelect: () => setUsageRequest((n) => n + 1) }] : []),
           ...(compact ? [
             ...(profile ? [
@@ -522,6 +526,13 @@ export function App() {
           { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
         ]} footer={narrow && profile ? `${running}/${profile.maxParallel} running` : version && version.version !== "dev" ? `Claude Kanban v${version.version}` : null} />
       </header>
+
+      {!pwa.online && <div className="banner warn" role="status"><span>You’re offline. Changes and messages need a connection to your Mac.</span></div>}
+      {pwa.waiting && !pwa.dismissed && pwa.online && <div className="banner info pwa-update" role="status">
+        <span>An app update is ready. Reload when you’re ready.</span>
+        <button className="btn small" onClick={pwa.update}>Reload</button>
+        <button className="icon-btn" aria-label="Dismiss app update" onClick={pwa.dismissUpdate}><CloseIcon size={12} /></button>
+      </div>}
 
       {narrow && restart.pending && (
         <div className="banner warn" role="status">
@@ -658,6 +669,7 @@ export function App() {
         />
       )}
       <Toaster />
+      {pwa.help && <InstallDialog onClose={pwa.closeHelp} />}
     </div>
   );
 }

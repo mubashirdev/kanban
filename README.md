@@ -167,6 +167,12 @@ Configure ngrok to preserve the public Host, disable request inspection, and add
 
 Use separate LaunchAgents with `RunAtLoad` and `KeepAlive` for the board, bridge, and ngrok. They start after logging into macOS, recover after process exits, and keep the configured ngrok domain stable across restarts. The Mac must be awake and connected to the internet for the public link to work. Passwords and ngrok credentials belong in local private configuration, never in the repository.
 
+## Install as an app
+
+Open Kanban through your HTTPS address and sign in, then choose **More → Install Kanban**. On iPhone/iPad, use Safari’s **Share → Add to Home Screen**. On Android, use Chrome’s **Install app** option. It opens in its own window with a Kanban home-screen icon; the existing responsive layout supports portrait, landscape, and the phone keyboard. Installation on a phone requires HTTPS; a plain LAN IP can still be used as a website.
+
+The app caches versioned UI files and a reconnect screen. Board data, chats, terminal streams, login pages, and credentials are never cached by the service worker. Your Mac must remain awake and online to use them. If a new version is ready, choose **Reload** when convenient; updates do not interrupt open work automatically. There is no offline write queue.
+
 ## Development
 
 Requires [Bun](https://bun.sh) ≥ 1.3.5 (the embedded terminal uses Bun's built-in PTY; on older Bun everything else works and the terminal says to upgrade).

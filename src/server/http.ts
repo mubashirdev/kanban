@@ -756,17 +756,34 @@ export function createServer(deps: ServerDeps) {
   }
 
   function staticFile(url: URL): Response {
+    const respond = (path: string, file: string) => {
+      const headers: Record<string, string> = {};
+      if (path === "/sw.js") {
+        headers["content-type"] = "application/javascript; charset=utf-8";
+        headers["cache-control"] = "no-cache";
+        headers["service-worker-allowed"] = "/";
+      } else if (path === "/manifest.webmanifest") {
+        headers["content-type"] = "application/manifest+json; charset=utf-8";
+        headers["cache-control"] = "no-cache";
+      } else if (path.endsWith(".html")) headers["cache-control"] = "no-cache";
+      return new Response(Bun.file(file), { headers });
+    };
+    // A missing script/icon/manifest must not become an HTML response or be cached as one.
+    const requiredAsset = url.pathname.startsWith("/assets/") || url.pathname.startsWith("/icons/") ||
+      ["/sw.js", "/manifest.webmanifest", "/offline.html"].includes(url.pathname);
     const assets = deps.assets ?? {};
     if (Object.keys(assets).length) {
-      const hit = assets[url.pathname] ?? assets["/index.html"];
+      const exact = assets[url.pathname];
+      const hit = exact ?? (!requiredAsset ? assets["/index.html"] : undefined);
       if (!hit) return new Response("not found", { status: 404 });
-      return new Response(Bun.file(hit));
+      return respond(exact ? url.pathname : "/index.html", hit);
     }
     const rel = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, "");
     const file = join(deps.webDir, rel);
-    if (file.startsWith(deps.webDir) && existsSync(file) && statSync(file).isFile()) return new Response(Bun.file(file));
+    if (file.startsWith(deps.webDir) && existsSync(file) && statSync(file).isFile()) return respond(url.pathname, file);
+    if (requiredAsset) return new Response("not found", { status: 404 });
     const index = join(deps.webDir, "index.html");
-    if (existsSync(index)) return new Response(Bun.file(index));
+    if (existsSync(index)) return respond("/index.html", index);
     return new Response("UI not built. Run: bun run build:web", { status: 404 });
   }
 
