@@ -50,7 +50,8 @@ test("private LAN link authenticates UI, APIs and socket requests; defaults rema
     expect(bootstrap.headers.get("referrer-policy")).toBe("no-referrer");
     expect(bootstrap.headers.get("cache-control")).toBe("no-store");
     const setCookie = bootstrap.headers.get("set-cookie")!;
-    expect(setCookie).toContain("HttpOnly; SameSite=Strict");
+    // Strict drops the cookie on the redirect when the link is clicked from another site.
+    expect(setCookie).toContain("HttpOnly; SameSite=Lax");
     const cookie = setCookie.split(";")[0];
     const headers = { host, cookie, origin };
     expect((await (await fetch(base, { headers })).text())).toContain("LAN board");

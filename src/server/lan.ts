@@ -27,7 +27,9 @@ export function authorizeLan(req: Request, peer: string | undefined, lan: LanAcc
       status: 303,
       headers: {
         location: "/",
-        "set-cookie": `${COOKIE}=${lan.token}; Path=/; HttpOnly; SameSite=Strict`,
+        // Lax carries the cookie through top-level GET redirects from chat/email links.
+        // Mutations and WebSocket upgrades still require an exact matching Origin.
+        "set-cookie": `${COOKIE}=${lan.token}; Path=/; HttpOnly; SameSite=Lax`,
         "cache-control": "no-store",
         "referrer-policy": "no-referrer",
       },
