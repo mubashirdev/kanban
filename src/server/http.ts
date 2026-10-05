@@ -24,6 +24,7 @@ import { fetchUsage, type UsageResult } from "./usage";
 import type { Store } from "./store";
 import { STATUSES, type Profile, type ScheduleEditor, type Status, type Ticket } from "./types";
 import { nowIso, slugify } from "./util";
+import { authorizeLan, type LanAccess } from "./lan";
 
 export interface ServerDeps {
   store: Store;
@@ -31,6 +32,8 @@ export interface ServerDeps {
   board: Board;
   port: number;
   webDir: string;
+  /** Opt-in private LAN access; localhost remains available to the CLI. */
+  lan?: LanAccess;
   /** URL path → embedded file (standalone binary). When non-empty, used instead of webDir. */
   assets?: Record<string, string>;
   sessions?: SessionCache;
@@ -76,20 +79,24 @@ const OUTPUT_IMAGE_TYPES: Record<string, string> = {
   jpeg: "image/jpeg",
 };
 
-export function isAllowedRequest(req: Request, port: number): boolean {
+export function isAllowedRequest(req: Request, port: number, lanHost?: string): boolean {
   const host = req.headers.get("host") ?? new URL(req.url).host;
-  if (!LOCAL_HOSTS.some((h) => host === `${h}:${port}`)) return false;
+  const hosts = lanHost ? [...LOCAL_HOSTS, lanHost] : LOCAL_HOSTS;
+  if (!hosts.some((h) => host === `${h}:${port}`)) return false;
   const origin = req.headers.get("origin");
+  // LAN cookies authorize one origin, including WebSocket upgrades and GETs.
+  if (lanHost && origin && origin !== `http://${host}`) return false;
   if (req.method !== "GET" && req.method !== "HEAD" && origin) {
-    if (!LOCAL_HOSTS.some((h) => origin === `http://${h}:${port}`)) return false;
+    if (!hosts.some((h) => origin === `http://${h}:${port}`)) return false;
   }
   return true;
 }
 
 /** WebSocket upgrades are GETs, so they need their own Origin check (browsers always send one). */
-export function isAllowedSocket(req: Request, port: number): boolean {
+export function isAllowedSocket(req: Request, port: number, lanHost?: string): boolean {
   const origin = req.headers.get("origin");
-  return isAllowedRequest(req, port) && !!origin && LOCAL_HOSTS.some((h) => origin === `http://${h}:${port}`);
+  return isAllowedRequest(req, port, lanHost) && !!origin &&
+    [...LOCAL_HOSTS, ...(lanHost ? [lanHost] : [])].some((h) => origin === `http://${h}:${port}`);
 }
 
 function json(data: unknown, status = 200): Response {
@@ -105,6 +112,7 @@ async function body(req: Request): Promise<any> {
 }
 
 export function createServer(deps: ServerDeps) {
+  if (deps.lan && !/^[a-f0-9]{64}$/.test(deps.lan.token)) throw new Error("LAN access requires a 256-bit hex token");
   const { store, bus, board } = deps;
   const sessions = deps.sessions ?? new SessionCache();
   const updates = deps.updates ?? new UpdateChecker();
@@ -428,7 +436,7 @@ export function createServer(deps: ServerDeps) {
     // /profiles/:p/shell — WebSocket to the profile's interactive shell
     if (parts[2] === "shell" && parts.length === 3 && m === "GET") {
       if (!ptySupported()) throw new HttpError(501, `terminal needs Bun 1.3.5 or newer (running ${Bun.version})`);
-      if (!isAllowedSocket(req, server.port ?? deps.port)) throw new HttpError(403, "forbidden");
+      if (!isAllowedSocket(req, server.port ?? deps.port, deps.lan?.host)) throw new HttpError(403, "forbidden");
       const dim = (k: string, d: number) => Math.min(1000, Math.max(1, Number(url.searchParams.get(k)) || d));
       const data: ShellSocket = { kind: "shell", slug, name: profile.name, cwd: profile.path, cols: dim("cols", 80), rows: dim("rows", 24) };
       if (server.upgrade(req, { data })) return undefined;
@@ -438,7 +446,7 @@ export function createServer(deps: ServerDeps) {
     // /profiles/:p/claude — WebSocket to the dock's quick Claude chat (interactive `claude` in the profile folder)
     if (parts[2] === "claude" && parts.length === 3 && m === "GET") {
       if (!ptySupported()) throw new HttpError(501, `terminal needs Bun 1.3.5 or newer (running ${Bun.version})`);
-      if (!isAllowedSocket(req, server.port ?? deps.port)) throw new HttpError(403, "forbidden");
+      if (!isAllowedSocket(req, server.port ?? deps.port, deps.lan?.host)) throw new HttpError(403, "forbidden");
       const dim = (k: string, d: number) => Math.min(1000, Math.max(1, Number(url.searchParams.get(k)) || d));
       const data: ShellSocket = { kind: "claude", slug, name: profile.name, cwd: profile.path, cols: dim("cols", 80), rows: dim("rows", 24) };
       if (server.upgrade(req, { data })) return undefined;
@@ -775,11 +783,15 @@ export function createServer(deps: ServerDeps) {
   }
 
   const server = Bun.serve<ShellSocket>({
-    hostname: "127.0.0.1",
+    hostname: deps.lan ? "0.0.0.0" : "127.0.0.1",
     port: deps.port,
     idleTimeout: 0,
     async fetch(req) {
-      if (!isAllowedRequest(req, server.port ?? deps.port)) return new Response("forbidden", { status: 403 });
+      if (!isAllowedRequest(req, server.port ?? deps.port, deps.lan?.host)) return new Response("forbidden", { status: 403 });
+      if (deps.lan) {
+        const denied = authorizeLan(req, server.requestIP(req)?.address, deps.lan);
+        if (denied) return denied;
+      }
       const url = new URL(req.url);
       if (!url.pathname.startsWith("/api/")) return staticFile(url);
       try {

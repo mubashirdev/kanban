@@ -144,6 +144,14 @@ The server binds to `127.0.0.1` only and rejects requests with a non-localhost `
 
 Env overrides: `CKANBAN_HOME`, `CKANBAN_PORT`, `CKANBAN_CLAUDE_BIN`.
 
+To open the app on a phone on the same Wi-Fi, opt in to LAN access with your computer's local IPv4 address:
+
+```bash
+CKANBAN_LAN_HOST=192.168.1.10 bun run dev
+```
+
+Open the **Private LAN access** link printed at startup on your phone. It signs that browser in with an HttpOnly cookie and removes the access key from the address bar. The link grants access to the board and its terminals; keep it private. A new key is generated at each daemon start. The computer must stay running and both devices must share a network. With this setting absent, the server listens only on localhost.
+
 ## Development
 
 Requires [Bun](https://bun.sh) ≥ 1.3.5 (the embedded terminal uses Bun's built-in PTY; on older Bun everything else works and the terminal says to upgrade).

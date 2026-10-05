@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { Board } from "./board";
 import { Bus } from "./events";
@@ -17,6 +19,11 @@ export async function startDaemon(): Promise<void> {
   const store = new Store(defaultRoot());
   const config = store.config();
   const port = Number(process.env.CKANBAN_PORT) || config.port;
+  const lanHost = process.env.CKANBAN_LAN_HOST;
+  if (lanHost && !Object.values(networkInterfaces()).flat().some((n) => n?.family === "IPv4" && !n.internal && n.address === lanHost)) {
+    throw new Error("CKANBAN_LAN_HOST must be an IPv4 address of this machine's network interface");
+  }
+  const lan = lanHost ? { host: lanHost, token: randomBytes(32).toString("hex") } : undefined;
   const bus = new Bus();
   const board = new Board(store, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   const webDir = join(import.meta.dir, "..", "..", "web", "dist");
@@ -29,8 +36,9 @@ export async function startDaemon(): Promise<void> {
   const scheduler = new Scheduler(board, store, bus);
   // launchd (KeepAlive) starts the daemon again once it exits.
   const restart = () => board.requestRestart(() => void shutdown());
-  const server = createServer({ store, bus, board, port, webDir, sessions, terminals, shells, mcp, scheduler, assets: WEB_ASSETS, restart });
+  const server = createServer({ store, bus, board, port, webDir, lan, sessions, terminals, shells, mcp, scheduler, assets: WEB_ASSETS, restart });
   console.log(`ckanban v${VERSION} listening on http://localhost:${server.port} (data: ${store.root})`);
+  if (lan) console.log(`Private LAN access: http://${lan.host}:${server.port}/?access=${lan.token}`);
   board.recover();
   const stopPoller = startPoller(board, store, config.prPollMinutes);
   // After recover(): a missed run's ticket must not be mistaken for an interrupted one.
