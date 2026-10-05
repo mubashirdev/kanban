@@ -1,1 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="104" fill="#c96442"/><g fill="#fff7ee"><rect x="132" y="142" width="64" height="228" rx="16"/><rect x="224" y="142" width="64" height="152" rx="16"/><rect x="316" y="142" width="64" height="190" rx="16"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Esa Kanban">
+  <defs>
+    <linearGradient id="coral" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#dd805c"/>
+      <stop offset="1" stop-color="#b95135"/>
+    </linearGradient>
+  </defs>
+  <!-- Opaque full bleed background; each operating system supplies its icon mask. -->
+  <rect width="512" height="512" fill="url(#coral)"/>
+  <!-- The board stays within the central maskable safe circle. -->
+  <rect x="108" y="126" width="296" height="260" rx="36" fill="#fff7ee" fill-opacity=".08" stroke="#fff7ee" stroke-width="16"/>
+  <g fill="#fff7ee" opacity=".55">
+    <rect x="148" y="154" width="52" height="12" rx="6"/>
+    <rect x="230" y="154" width="52" height="12" rx="6"/>
+    <rect x="312" y="154" width="52" height="12" rx="6"/>
+  </g>
+  <g fill="#fff7ee">
+    <rect x="148" y="184" width="52" height="88" rx="12"/>
+    <rect x="148" y="288" width="52" height="40" rx="12"/>
+    <rect x="230" y="184" width="52" height="144" rx="12"/>
+    <rect x="312" y="184" width="52" height="52" rx="12"/>
+    <rect x="312" y="252" width="52" height="76" rx="12"/>
+  </g>
+</svg>

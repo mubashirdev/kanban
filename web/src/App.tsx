@@ -421,7 +421,7 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <img className="brand-icon" src="/icons/esa-192.png" width="28" height="28" alt="" />
+          <img className="brand-icon" src="/icons/esa-192.png?v=3" width="28" height="28" alt="" />
           <span className="brand-name">Esa Kanban</span>
         </div>
         {profiles && profiles.length > 0 && (
