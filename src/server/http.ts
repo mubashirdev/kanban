@@ -24,7 +24,7 @@ import { fetchUsage, type UsageResult } from "./usage";
 import type { Store } from "./store";
 import { STATUSES, type Profile, type ScheduleEditor, type Status, type Ticket } from "./types";
 import { nowIso, slugify } from "./util";
-import { authorizeLan, type LanAccess } from "./lan";
+import { authorizeLan, createLanSignIn, type LanAccess } from "./lan";
 
 export interface ServerDeps {
   store: Store;
@@ -113,6 +113,8 @@ async function body(req: Request): Promise<any> {
 
 export function createServer(deps: ServerDeps) {
   if (deps.lan && !/^[a-f0-9]{64}$/.test(deps.lan.token)) throw new Error("LAN access requires a 256-bit hex token");
+  if (deps.lan?.pairingCode && !/^[a-f0-9]{12}$/.test(deps.lan.pairingCode)) throw new Error("LAN pairing requires a 48-bit hex code");
+  const signInLan = deps.lan ? createLanSignIn(deps.lan) : undefined;
   const { store, bus, board } = deps;
   const sessions = deps.sessions ?? new SessionCache();
   const updates = deps.updates ?? new UpdateChecker();
@@ -786,9 +788,12 @@ export function createServer(deps: ServerDeps) {
     hostname: deps.lan ? "0.0.0.0" : "127.0.0.1",
     port: deps.port,
     idleTimeout: 0,
-    async fetch(req) {
+    async fetch(req): Promise<Response> {
       if (!isAllowedRequest(req, server.port ?? deps.port, deps.lan?.host)) return new Response("forbidden", { status: 403 });
       if (deps.lan) {
+        if (new URL(req.url).pathname === "/lan/sign-in" && req.method === "POST") {
+          return signInLan!(req, server.requestIP(req)?.address);
+        }
         const denied = authorizeLan(req, server.requestIP(req)?.address, deps.lan);
         if (denied) return denied;
       }

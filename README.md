@@ -150,7 +150,7 @@ To open the app on a phone on the same Wi-Fi, opt in to LAN access with your com
 CKANBAN_LAN_HOST=192.168.1.10 bun run dev
 ```
 
-Open the **Private LAN access** link printed at startup on your phone. It signs that browser in with an HttpOnly cookie and removes the access key from the address bar. The link grants access to the board and its terminals; keep it private. A new key is generated at each daemon start. The computer must stay running and both devices must share a network. With this setting absent, the server listens only on localhost.
+Open the **Phone pairing** address printed at startup on your phone and enter the short pairing code. You can also open the **Private LAN access** link to sign in automatically. Both methods sign that browser in with an HttpOnly cookie. The code and link grant access to the board and its terminals; keep them private. New credentials are generated at each daemon start. The computer must stay running and both devices must share a network. With this setting absent, the server listens only on localhost.
 
 ## Development
 
