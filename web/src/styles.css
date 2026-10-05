@@ -86,6 +86,8 @@ kbd {
 
 /* top bar */
 .topbar {
+  /* Keep header popovers above board content, below tools (30) and dialogs (40+). */
+  position: relative; z-index: 20;
   display: flex; align-items: center; gap: 10px; padding: 10px 16px;
   border-bottom: 1px solid var(--border); background: var(--surface); flex-wrap: nowrap; min-width: 0;
 }
@@ -847,6 +849,7 @@ textarea { resize: vertical; font-size: 13.5px; }
 .inbox-pill .yt-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: yt-pulse 1.8s ease-out infinite; }
 .inbox-menu {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 80; width: 340px; max-height: 60vh; overflow-y: auto; padding: 6px;
+  overscroll-behavior: contain;
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
 }
 .inbox-board { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 8px 8px 4px; }
@@ -1209,6 +1212,7 @@ button.pill:hover { color: var(--text); }
   .topbar .inbox-pill { min-height: 44px; font-size: 12px; padding: 5px 8px; }
   .inbox-menu, .ticket-menu { max-width: calc(100vw - 24px); max-height: 65dvh; }
   .topbar .inbox > .inbox-menu { position: fixed; top: calc(68px + env(safe-area-inset-top)); left: 12px; right: 12px; width: auto; }
+  .topbar .inbox-menu { max-height: min(60vh, calc(var(--viewport-height, 100dvh) - var(--standalone-top-gap, 0px) - 80px - env(safe-area-inset-bottom))); }
   .header-menu-list { width: 264px; }
   .menu-item { min-height: 44px; padding: 10px; }
   .banner { padding: 8px 12px; align-items: flex-start; overflow-wrap: anywhere; }

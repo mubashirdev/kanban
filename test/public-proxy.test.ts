@@ -107,3 +107,35 @@ test("PWA form login protects APIs and sockets, keeps sessions after restart, an
     expect(logout.headers.get("set-cookie")).toContain("Max-Age=0");
   } finally { secured.stop(true); }
 });
+
+test("Safari installation metadata and real photo icons load without a session, while app data stays protected", async () => {
+  const secured = createPublicProxy({ publicOrigin, gatewayToken: token, upstream: `http://127.0.0.1:${backend.port}`, port: 0, login: { username: "owner", password: "test-only" } });
+  const base = `http://127.0.0.1:${secured.port}`;
+  // Safari's home-screen icon probe does not send Origin or the PWA's cookie.
+  const probe = { host: "kanban.example.test", "x-kanban-gateway": token };
+  try {
+    for (const path of ["/", "/auth/login", "/auth/setup"]) {
+      const page = await fetch(base + path, { headers: probe });
+      const html = await page.text();
+      expect(html).toContain('rel="apple-touch-icon" sizes="180x180" href="/icons/esa-apple-touch.png?v=2"');
+      expect(html).toContain('rel="manifest" href="/manifest.webmanifest"');
+      expect(page.headers.get("content-security-policy")).toContain("img-src 'self'");
+      expect(page.headers.get("content-security-policy")).toContain("manifest-src 'self'");
+    }
+    const metadata = await fetch(base + "/manifest.webmanifest", { headers: probe });
+    expect(metadata.status).toBe(200);
+    expect(metadata.headers.get("content-type")).toContain("application/manifest+json");
+    const manifest = await metadata.json() as { name: string; icons: { src: string }[] };
+    expect(manifest.name).toBe("Esa Kanban");
+    for (const path of ["/icons/esa-apple-touch.png?v=2", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/icons/esa-32.png", ...manifest.icons.map((icon) => icon.src)]) {
+      const icon = await fetch(base + path, { headers: probe });
+      expect(icon.status).toBe(200);
+      expect(icon.headers.get("content-type")).toBe("image/png");
+      expect(icon.headers.get("cache-control")).toBe("no-cache");
+      expect([...new Uint8Array(await icon.arrayBuffer()).slice(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+    }
+    for (const path of ["/api/read", "/icons/private.png", "/assets/app.js"]) expect((await fetch(base + path, { headers: probe })).status).toBe(401);
+    expect((await fetch(base + "/icons/esa-apple-touch.png", { method: "POST", headers })).status).toBe(401);
+    expect((await fetch(base + "/icons/esa-apple-touch.png", { headers: { ...probe, "x-kanban-gateway": "wrong" } })).status).toBe(403);
+  } finally { secured.stop(true); }
+});

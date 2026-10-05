@@ -17,6 +17,19 @@ interface Relay {
   ended?: number;
 }
 const closeCode = (code: number) => [1004, 1005, 1006, 1015].includes(code) || code < 1000 ? 1011 : code;
+// Safari fetches installation metadata/icons separately, often without a session cookie.
+// Only these fixed branding and layout assets are public; board assets/data still require sign-in.
+const PUBLIC_ASSETS: Record<string, readonly [string, string]> = {
+  "/pwa-shell.js": ["pwa-shell.js", "application/javascript"],
+  "/pwa-shell.css": ["pwa-shell.css", "text/css"],
+  "/manifest.webmanifest": ["manifest.webmanifest", "application/manifest+json"],
+  "/icons/esa-192.png": ["icons/esa-192.png", "image/png"],
+  "/icons/esa-512.png": ["icons/esa-512.png", "image/png"],
+  "/icons/esa-32.png": ["icons/esa-32.png", "image/png"],
+  "/icons/esa-apple-touch.png": ["icons/esa-apple-touch.png", "image/png"],
+  "/apple-touch-icon.png": ["icons/esa-apple-touch.png", "image/png"],
+  "/apple-touch-icon-precomposed.png": ["icons/esa-apple-touch.png", "image/png"],
+};
 
 /** Loopback bridge behind an authenticated ngrok endpoint. Validate before rewriting origins. */
 export function createPublicProxy(options: PublicProxyOptions) {
@@ -46,9 +59,10 @@ export function createPublicProxy(options: PublicProxyOptions) {
       const socket = req.headers.get("upgrade")?.toLowerCase() === "websocket";
       if (!allowed(req, socket)) return new Response("Forbidden", { status: 403, headers: { "cache-control": "no-store" } });
       const incoming = new URL(req.url);
-      if (["/pwa-shell.js", "/pwa-shell.css"].includes(incoming.pathname) && ["GET", "HEAD"].includes(req.method)) {
-        return new Response(Bun.file(new URL(`../../web/public${incoming.pathname}`, import.meta.url)), {
-          headers: { "content-type": incoming.pathname.endsWith(".js") ? "application/javascript" : "text/css", "cache-control": "no-cache", "x-content-type-options": "nosniff" },
+      const asset = PUBLIC_ASSETS[incoming.pathname];
+      if (asset && !socket && ["GET", "HEAD"].includes(req.method)) {
+        return new Response(Bun.file(new URL(`../../web/public/${asset[0]}`, import.meta.url)), {
+          headers: { "content-type": asset[1], "cache-control": "no-cache", "x-content-type-options": "nosniff" },
         });
       }
       if (auth) {
