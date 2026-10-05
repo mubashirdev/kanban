@@ -31,8 +31,8 @@ function fresh(questions: Question[]): Progress {
 }
 
 /**
- * A free-text answer box: grows to about 6 lines, then scrolls. Enter runs `onEnter`, Shift+Enter adds a new
- * line, and nothing fires while an IME is composing.
+ * A free-text answer box: grows to about 6 lines, then scrolls. Desktop Enter runs `onEnter`;
+ * phone keyboards keep Return for new lines and use the visible navigation buttons.
  */
 function AnswerBox({ value, onChange, onEnter, autoFocus, disabled, placeholder }: {
   value: string;
@@ -44,11 +44,14 @@ function AnswerBox({ value, onChange, onEnter, autoFocus, disabled, placeholder 
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => autoGrow(ref.current, 6), [value]);
+  useEffect(() => {
+    if (autoFocus) ref.current?.focus({ preventScroll: true });
+  }, [autoFocus]);
   return (
-    <textarea ref={ref} rows={1} autoFocus={autoFocus} disabled={disabled} className="qother" value={value} placeholder={placeholder}
+    <textarea ref={ref} rows={1} disabled={disabled} className="qother" value={value} placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={(e) => {
-        if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+        if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !window.matchMedia("(pointer: coarse)").matches) {
           e.preventDefault();
           onEnter();
         }
@@ -99,7 +102,16 @@ export function QuestionsForm({ questions, answered, disabled, onSubmit, storage
   const a = answers[Math.min(step, total - 1)];
 
   useEffect(() => {
-    if (!answered) root.current?.focus({ preventScroll: true });
+    // A conversation arriving late must not take focus from a message draft or
+    // another dialog. Only move focus when the user is navigating this card.
+    if (!answered && (document.activeElement === document.body || root.current?.contains(document.activeElement))) root.current?.focus({ preventScroll: true });
+    const steps = root.current?.querySelector<HTMLElement>(".qsteps");
+    const active = steps?.querySelector<HTMLElement>(".qstep.on");
+    if (steps && active) {
+      const rail = steps.getBoundingClientRect(), button = active.getBoundingClientRect();
+      if (button.left < rail.left) steps.scrollLeft -= rail.left - button.left;
+      else if (button.right > rail.right) steps.scrollLeft += button.right - rail.right;
+    }
   }, [step, answered]);
 
   const update = (i: number, fn: (a: Answer) => Answer) => setAnswers((arr) => arr.map((x, j) => (j === i ? fn(x) : x)));
@@ -144,15 +156,24 @@ export function QuestionsForm({ questions, answered, disabled, onSubmit, storage
   };
 
   return (
-    <div className="qcard" ref={root} tabIndex={-1} onKeyDown={onKey}>
+    <div className="qcard" ref={root} tabIndex={-1} onKeyDown={onKey}
+      onMouseDown={(e) => {
+        // Safari focuses this ancestor when a button is tapped, scrolling the
+        // large card before pointerup and losing the click. Keep its position;
+        // question changes explicitly focus the card with preventScroll.
+        if ((e.target as Element).closest("button")) {
+          e.preventDefault();
+          root.current?.focus({ preventScroll: true });
+        }
+      }}>
       <div className="qcard-head">
         <span className="qcard-title">Claude has {total} question{total > 1 ? "s" : ""}</span>
+        <span className="muted small qcounter">{summary ? "Review" : `${step + 1} / ${total}`}</span>
         <span className="qsteps" aria-label={`Step ${Math.min(step + 1, total)} of ${total}`}>
           {questions.map((_, i) => (
             <button key={i} className={`qstep ${i === step ? "on" : ""} ${i < step || summary ? "done" : ""}`}
               onClick={() => setStep(i)} aria-label={`Question ${i + 1}`} />
           ))}
-          <span className="muted small">{summary ? "Review" : `${step + 1} / ${total}`}</span>
         </span>
       </div>
 

@@ -384,7 +384,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
               </div>
               {e.text && <Markdown text={e.text.replace(/^.*CKANBAN_RESULT:.*$/m, "").trim()} />}
               {e.questions && (
-                <QuestionsForm questions={e.questions} answered={answeredAfter(b.index)} disabled={running} onSubmit={send}
+                <QuestionsForm questions={e.questions} answered={answeredAfter(b.index)} disabled={running} onSubmit={(text) => send(text, true)}
                   onPreview={onOpenOutput && ((m) => onOpenOutput(`mockups/${m}`))}
                   storageKey={formKey(slug, ticket.id, e.uuid)} />
               )}
@@ -492,13 +492,16 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
               onClick={() => api.updateTicket(slug, ticket.id, { notice: null }).catch((e) => onError(e.message))}><CloseIcon size={12} /></button>
           </div>
         )}
-        {/* Sticky inside the log, so it floats just above the composer. */}
-        {jump && (
+      </div>
+
+      {/* Reserve space outside messages so navigation never covers an answer. */}
+      {jump && (
+        <div className="chat-jump">
           <button className={`jump-latest${jump.fresh ? " fresh" : ""}`} onClick={toBottom}>
             <ArrowDownIcon size={12} /> {jump.fresh ? "New messages" : "Jump to latest"}
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {ticket.terminalOpen && !running && (
         <div className="composer-warn">
