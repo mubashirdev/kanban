@@ -54,9 +54,12 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
   useFocusTrap(dockRef, true, compact);
   useLayer(onClose, { active: compact, skipInInputs: true });
   const [tab, setTab] = useState<DockTab>(() => {
+    if (command) return "terminal";
+    if (tabRequest) return tabRequest.tab;
     const t = stored(TAB_KEY);
     return isTab(t) ? t : "terminal";
   });
+  const [visited, setVisited] = useState(() => new Set<DockTab>([tab]));
   const [height, setHeight] = useState(() => clampHeight(Number(stored(HEIGHT_KEY)) || 320));
   const [restart, setRestart] = useState(0);
   const [confirmRestart, setConfirmRestart] = useState(false);
@@ -69,9 +72,17 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
 
   useEffect(() => {
     store(TAB_KEY, tab);
+    setVisited((current) => current.has(tab) ? current : new Set([...current, tab]));
     onTabChange?.(tab);
   }, [tab]);
   useEffect(() => store(HEIGHT_KEY, String(height)), [height]);
+  useEffect(() => {
+    if (compact) return;
+    const resize = () => setHeight((current) => clampHeight(current));
+    resize();
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, [compact]);
   useEffect(() => {
     if (command) setTab("terminal");
   }, [command?.n]);
@@ -80,13 +91,14 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
   }, [tabRequest?.n]);
 
   // Make ticket needs the chat's session file, which appears after the first message: poll while visible.
-  const loadChat = () => api.quickChat(profile.slug).then(setChat).catch(() => setChat(null));
   useEffect(() => {
     setChat(null);
     if (tab !== "claude" || !pty) return;
+    let current = true;
+    const loadChat = () => api.quickChat(profile.slug).then((value) => { if (current) setChat(value); }).catch(() => { if (current) setChat(null); });
     loadChat();
     const timer = setInterval(loadChat, 3000);
-    return () => clearInterval(timer);
+    return () => { current = false; clearInterval(timer); };
   }, [tab, profile.slug, pty, chatRestart]);
 
   const makeTicket = async () => {
@@ -125,6 +137,17 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
   };
   const onPointerUp = () => (drag.current = null);
 
+  const onTabKey = (e: React.KeyboardEvent, id: DockTab) => {
+    const index = TABS.findIndex(([t]) => t === id);
+    const next = e.key === "ArrowRight" ? (index + 1) % TABS.length
+      : e.key === "ArrowLeft" ? (index + TABS.length - 1) % TABS.length
+      : e.key === "Home" ? 0 : e.key === "End" ? TABS.length - 1 : null;
+    if (next === null) return;
+    e.preventDefault();
+    setTab(TABS[next][0]);
+    dockRef.current?.querySelector<HTMLButtonElement>(`#dock-tab-${TABS[next][0]}`)?.focus();
+  };
+
   return (
     <section ref={dockRef} className="dock" style={{ height }} aria-label="Terminal and files"
       role={compact ? "dialog" : undefined} aria-modal={compact ? true : undefined} tabIndex={-1}>
@@ -135,51 +158,58 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
       <div className="dock-head">
         <div className="tabs" role="tablist" aria-label="Panel">
           {TABS.map(([id, label]) => (
-            <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>
+            <button key={id} id={`dock-tab-${id}`} role="tab" aria-controls={`dock-pane-${id}`} tabIndex={tab === id ? 0 : -1}
+              aria-selected={tab === id} className={tab === id ? "active" : ""} onClick={() => setTab(id)} onKeyDown={(e) => onTabKey(e, id)}>{label}</button>
           ))}
         </div>
-        <span className="dock-path" title={profile.path}>{profile.path.replace(/^\/Users\/[^/]+/, "~")}</span>
-        <div className="spacer" />
-        {tab === "terminal" && pty && (
-          <button className="btn ghost small" onClick={() => setConfirmRestart(true)} title="Kill this shell and start a new one">
-            Restart
-          </button>
-        )}
-        {tab === "claude" && pty && (
-          <>
-            <button className="btn ghost small" onClick={makeTicket} disabled={!chat?.started || makingTicket}
-              title={chat?.started ? "Turn this chat into a Backlog ticket (the dock starts a fresh chat)" : "Send Claude a message first"}>
-              {makingTicket ? "Creating…" : "Make ticket"}
-            </button>
-            <button className="btn ghost small" onClick={() => setConfirmNewChat(true)} title="End this chat and start an empty one">
-              New chat
-            </button>
-          </>
-        )}
-        {tab === "files" && (
-          <button className="btn ghost small icon-label" onClick={() => setRefresh((n) => n + 1)}><RefreshIcon size={12} /> Refresh</button>
-        )}
+        <div className="dock-context">
+          <div className="dock-location" title={profile.path}>
+            <span className="dock-profile">{profile.name}</span>
+            <span className="dock-path">{profile.path.replace(/^\/Users\/[^/]+/, "~")}</span>
+          </div>
+          <div className="dock-actions">
+            {tab === "terminal" && pty && (
+              <button className="btn ghost small" onClick={() => setConfirmRestart(true)} title="Kill this shell and start a new one">
+                Restart
+              </button>
+            )}
+            {tab === "claude" && pty && (
+              <>
+                <button className="btn ghost small" onClick={makeTicket} disabled={!chat?.started || makingTicket}
+                  title={chat?.started ? "Turn this chat into a Backlog ticket (the dock starts a fresh chat)" : "Send Claude a message first"}>
+                  {makingTicket ? "Creating…" : "Make ticket"}
+                </button>
+                <button className="btn ghost small" onClick={() => setConfirmNewChat(true)} title="End this chat and start an empty one">
+                  New chat
+                </button>
+              </>
+            )}
+            {tab === "files" && (
+              <button className="btn ghost small icon-label" onClick={() => setRefresh((n) => n + 1)}><RefreshIcon size={12} /> Refresh</button>
+            )}
+          </div>
+        </div>
         <button className="icon-btn" onClick={onClose} title="Hide panel (Ctrl+`). The shell and Claude chat keep running." aria-label="Hide terminal and files panel">
           <CloseIcon />
         </button>
       </div>
       <div className="dock-body">
-        <div className="dock-pane" hidden={tab !== "terminal"}>
-          {pty ? (
+        <div className="dock-pane" id="dock-pane-terminal" role="tabpanel" aria-labelledby="dock-tab-terminal" hidden={tab !== "terminal"}>
+          {(tab === "terminal" || visited.has("terminal")) && (pty ? (
             <TerminalView key={profile.slug} slug={profile.slug} active={tab === "terminal"} restartSignal={restart} command={command ?? null} onCommandSent={onCommandSent} />
           ) : (
             <PtyUnsupported />
-          )}
+          ))}
         </div>
-        <div className="dock-pane" hidden={tab !== "claude"}>
-          {pty ? (
+        <div className="dock-pane" id="dock-pane-claude" role="tabpanel" aria-labelledby="dock-tab-claude" hidden={tab !== "claude"}>
+          {(tab === "claude" || visited.has("claude")) && (pty ? (
             <TerminalView key={profile.slug} slug={profile.slug} kind="claude" active={tab === "claude"} restartSignal={chatRestart} command={null} />
           ) : (
             <PtyUnsupported />
-          )}
+          ))}
         </div>
-        <div className="dock-pane" hidden={tab !== "files"}>
-          <FilesView key={profile.slug} slug={profile.slug} refreshSignal={refresh} />
+        <div className="dock-pane" id="dock-pane-files" role="tabpanel" aria-labelledby="dock-tab-files" hidden={tab !== "files"}>
+          {(tab === "files" || visited.has("files")) && <FilesView key={profile.slug} slug={profile.slug} refreshSignal={refresh} />}
         </div>
       </div>
       {confirmNewChat && (

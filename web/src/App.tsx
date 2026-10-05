@@ -31,7 +31,12 @@ const Dock = lazy(() => import("./Dock").then((m) => {
     sessionStorage.setItem("ckanban.chunkReload", "1");
     location.reload();
   }
-  return { default: () => <div className="dock dock-failed">Couldn't load the terminal panel. Reload the page.</div> };
+  return { default: ({ onClose }: { onClose: () => void }) => <div className="dock dock-failed" role="alert">
+    <p>Couldn't load the tools panel.</p><div className="actions">
+      <button className="btn primary" onClick={() => location.reload()}>Reload</button>
+      <button className="btn" onClick={onClose}>Close</button>
+    </div>
+  </div> };
 }));
 const DOCK_OPEN = "ckanban.dock.open";
 
@@ -599,8 +604,11 @@ export function App() {
       )}
 
       {dockOpen && profile && (
-        <Suspense fallback={null}>
-          <Dock profile={profile} pty={health?.pty ?? true} onClose={() => setDockOpen(false)} command={dockCommand}
+        <Suspense fallback={<section className="dock dock-loading" aria-label="Opening tools panel">
+          <span role="status"><span className="spinner" /> Opening tools…</span>
+          <button className="btn" onClick={() => setDockOpen(false)}>Cancel</button>
+        </section>}>
+          <Dock key={profile.slug} profile={profile} pty={health?.pty ?? true} onClose={() => setDockOpen(false)} command={dockCommand}
             onCommandSent={() => setDockCommand(null)} tabRequest={dockTab} onTabChange={setDockShown} onOpenTicket={(id) => openTicket(id)} />
         </Suspense>
       )}

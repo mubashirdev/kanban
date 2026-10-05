@@ -852,24 +852,44 @@ textarea.drop-target { border-color: var(--accent); box-shadow: 0 0 0 3px var(--
 }
 .dock-resize { position: absolute; top: -4px; left: 0; right: 0; height: 8px; cursor: row-resize; z-index: 2; touch-action: none; }
 .dock-resize:hover, .dock-resize:focus-visible { background: linear-gradient(transparent 3px, var(--accent) 3px, var(--accent) 5px, transparent 5px); outline: none; }
-.dock-head { display: flex; align-items: center; gap: 8px; padding-right: 8px; border-bottom: 1px solid var(--border); }
+.dock-head { display: grid; grid-template-columns: auto minmax(0, 1fr) 32px; align-items: center; gap: 8px; padding-right: 8px; flex: none; border-bottom: 1px solid var(--border); }
 .dock-head .tabs { border-bottom: 0; padding: 0 8px; }
-.dock-path { color: var(--muted); font-family: var(--mono); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.dock-context { min-width: 0; display: flex; align-items: center; gap: 12px; }
+.dock-location { flex: 1; min-width: 0; overflow: hidden; }
+.dock-profile { display: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock-actions { display: flex; flex: none; gap: 4px; align-items: center; }
+.dock-path { display: block; color: var(--muted); font-family: var(--mono); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .dock-body { flex: 1; min-height: 0; position: relative; }
 .dock-pane { position: absolute; inset: 0; display: flex; }
 .dock-pane[hidden] { display: none; }
 
-/* Padding lives on the view, not the host: FitAddon sizes rows from the host's computed height, which includes padding under border-box. */
-.terminal-view { flex: 1; min-width: 0; position: relative; display: flex; padding: 6px 0 0 10px; }
+/* Keep padding and controls outside the host so FitAddon measures only the terminal's usable space. */
+.terminal-view { flex: 1; min-width: 0; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.terminal-screen { flex: 1; min-height: 0; display: flex; padding: 8px 10px 0; overflow: hidden; }
 /* The quick Claude chat is always dark: Claude Code's colours assume a dark terminal. */
 .terminal-view.dark { background: #242320; }
-.terminal-host { flex: 1; min-width: 0; }
+.terminal-host { flex: 1; min-width: 0; min-height: 0; }
 .terminal-host .xterm { height: 100%; }
 .terminal-host .xterm-viewport { background: transparent !important; }
 .terminal-banner {
-  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); padding: 6px 12px; font-size: 12.5px;
+  flex: none; margin: 6px 10px; padding: 8px 12px; font-size: 12.5px; max-height: 30%; overflow: auto; overflow-wrap: anywhere;
   border-radius: 8px; background: var(--warn-soft); color: var(--warn); border: 1px solid var(--border);
 }
+.terminal-statusbar { flex: none; min-height: 32px; padding: 4px 12px; display: flex; gap: 12px; align-items: center; justify-content: space-between; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--muted); }
+.terminal-state { display: inline-flex; align-items: center; gap: 6px; }
+.terminal-state i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.terminal-state.open { color: var(--ok); }
+.terminal-state.error, .terminal-state.closed { color: var(--warn); }
+.terminal-view.dark .terminal-statusbar, .terminal-view.dark .terminal-touchbar { color: #c4c1b7; border-color: #454139; }
+.terminal-view.dark .terminal-state.open { color: #a9c39b; }
+.terminal-view.dark .terminal-state.error, .terminal-view.dark .terminal-state.closed { color: #e6b36c; }
+.terminal-touchbar { flex: none; display: flex; padding: 4px 8px; gap: 8px; border-top: 1px solid var(--border); }
+.terminal-touchbar button { flex: none; display: inline-flex; justify-content: center; align-items: center; min-width: 44px; min-height: 44px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: inherit; font: 12px var(--mono); touch-action: manipulation; }
+.terminal-touchbar button:active { background: var(--accent-soft); }
+.terminal-touchbar button:disabled { opacity: .45; cursor: default; }
+.terminal-keys { display: flex; min-width: 0; overflow-x: auto; gap: 6px; scrollbar-width: none; }
+.terminal-keys::-webkit-scrollbar { display: none; }
+.terminal-view.dark .terminal-touchbar button { border-color: #454139; }
 
 .files-view { flex: 1; display: flex; min-width: 0; }
 .file-side { width: 280px; flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); }
@@ -1022,7 +1042,9 @@ input[aria-invalid="true"] { border-color: var(--err); }
   .spinner { animation: none; border-right-color: currentColor; opacity: 0.6; }
 }
 .panel:focus, .modal:focus { outline: none; }
-.dock-failed { height: 120px; align-items: center; justify-content: center; color: var(--muted); }
+.dock-failed, .dock-loading { height: 320px; align-items: center; justify-content: center; gap: 12px; color: var(--muted); }
+.dock-failed p { margin: 0; }
+.dock-loading [role=status] { display: inline-flex; align-items: center; gap: 8px; }
 
 /* Report bug dialog */
 .bug-form textarea { font-family: var(--mono); font-size: 12.5px; }
@@ -1215,12 +1237,13 @@ button.pill:hover { color: var(--text); }
   /* Full screen tools: tree and file preview become separate navigable panes. */
   .dock { position: fixed; inset: var(--viewport-top, 0px) 0 auto; height: var(--viewport-height, 100dvh) !important; z-index: 30; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); border-top: 0; }
   .dock-resize, .dock-path { display: none; }
-  .dock-head { flex-wrap: wrap; gap: 4px; padding: 8px; }
+  .dock-head { grid-template-columns: minmax(0, 1fr) 44px; gap: 4px; padding: 8px; }
   .dock-head .tabs { padding: 0; flex: 1 1 auto; }
   .dock-head .tabs button { padding: 8px 10px; }
-  .dock-head > .spacer { display: none; }
-  .dock-head > .btn { order: 1; }
-  .dock-head > .icon-btn { width: 44px; height: 44px; }
+  .dock-head > .icon-btn { grid-column: 2; grid-row: 1; width: 44px; height: 44px; }
+  .dock-context { grid-column: 1 / -1; grid-row: 2; min-height: 44px; gap: 8px; }
+  .dock-profile { display: block; font-size: 12px; color: var(--muted); }
+  .dock-actions .btn { min-height: 44px; font-size: 12px; padding-inline: 10px; }
   .files-view { min-height: 0; }
   .file-side { width: 100%; border-right: 0; }
   .file-viewer { display: none; }
@@ -1233,7 +1256,7 @@ button.pill:hover { color: var(--text); }
   .file-viewer-head > .muted { display: none; }
   .tree-row { min-height: 44px; }
   .tree-row > span:last-child { overflow: hidden; text-overflow: ellipsis; }
-  .terminal-banner { max-width: calc(100% - 24px); }
+  .terminal-statusbar .link-btn, .terminal-banner .link-btn { min-height: 44px; }
 }
 
 @media (max-width: 374px) {
@@ -1248,5 +1271,5 @@ button.pill:hover { color: var(--text); }
 @media (min-width: 768px) and (max-height: 500px) {
   .dock { position: fixed; inset: var(--viewport-top, 0px) 0 auto; height: var(--viewport-height, 100dvh) !important; z-index: 30; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); border-top: 0; }
   .dock-resize { display: none; }
-  .dock-head { flex-wrap: wrap; flex: none; padding: 8px; }
+  .dock-head { padding: 8px; }
 }
