@@ -106,3 +106,12 @@ test("PWA refuses authentication errors and HTML masquerading as cached JavaScri
     expect(w.saved.size).toBe(0);
   }
 });
+
+test("push notifications tolerate bad payloads, use app icons and only open the app origin", async () => {
+  const handlers: Record<string,(event:any)=>void>={},shown:any[]=[],opened:string[]=[];
+  runInNewContext(serviceWorkerSource("push-test",[]),{URL,self:{location:{origin},addEventListener:(name:string,handler:any)=>{handlers[name]=handler;},registration:{showNotification:async(title:string,options:any)=>{shown.push({title,...options});}}},clients:{matchAll:async()=>[],openWindow:async(url:string)=>{opened.push(url);}}});
+  for(const data of [null,{body:"Work is ready",url:"https://evil.example",tag:"test"},{body:"Question waiting",url:"/#/board/ticket"}]){let done:Promise<any>|undefined;handlers.push({data:{json:()=>data},waitUntil:(value:Promise<any>)=>{done=value;}});await done;}
+  expect(shown).toHaveLength(3);expect(shown[0].body).toBe("A ticket has an update.");expect(shown[1].data.url).toBe("/");expect(shown[2].icon).toBe("/icons/esa-192.png");
+  let done:Promise<any>|undefined;handlers.notificationclick({notification:{data:{url:"/#/board/ticket"},close:()=>{}},waitUntil:(value:Promise<any>)=>{done=value;}});await done;expect(opened).toEqual([origin+"/#/board/ticket"]);
+  handlers.notificationclick({notification:{data:{url:"https://evil.example"},close:()=>{}},waitUntil:()=>{throw new Error("Foreign URL must not be opened");}});expect(opened).toHaveLength(1);
+});

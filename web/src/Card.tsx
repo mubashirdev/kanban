@@ -59,12 +59,13 @@ export function Card({ ticket, onClick, dragging, queued, held }: { ticket: Tick
           <span className="yt-why" title={ticket.error ?? undefined}>{att.label}</span>
         </div>
       )}
+      {(ticket.kind && ticket.kind !== "task" || ticket.priority && !["normal","none"].includes(ticket.priority) || ticket.labels?.length) && <div className="card-properties">{ticket.kind && ticket.kind !== "task" && <span className="ticket-label">{ticket.kind}</span>}{ticket.priority && !["normal","none"].includes(ticket.priority) && <span className={`priority-tag priority-${ticket.priority}`}>{ticket.priority}</span>}{ticket.labels?.slice(0,3).map(label=><span key={label} className="ticket-label">{label}</span>)}{(ticket.labels?.length ?? 0)>3 && <span className="muted small">+{ticket.labels!.length-3}</span>}</div>}
       <div className="card-title" title={ticket.title}>{ticket.title}</div>
       {showActivity ? (
         <div className="card-activity" title={ticket.lastActivity!}>{ticket.lastActivity}</div>
       ) : last && (
         <div className="card-last" title={last.text}>
-          <span className={`who ${last.role}`}>{last.role === "user" ? "You" : "Claude"}:</span>{" "}
+          <span className={`who ${last.role}`}>{last.role === "user" ? "You" : ticket.agent === "codex" ? "Codex" : "Claude"}:</span>{" "}
           {plainPreview(last.text)}
         </div>
       )}

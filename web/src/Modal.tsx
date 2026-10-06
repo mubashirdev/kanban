@@ -7,12 +7,13 @@ import { useFocusTrap, useLayer } from "./layers";
  * Dialog with focus trap and Esc (topmost layer only). `guard` = there is typed work to lose:
  * Esc, the × and clicking outside ask before closing.
  */
-export function Modal({ title, onClose, children, wide, guard }: {
+export function Modal({ title, onClose, children, wide, guard, footer }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
   wide?: boolean;
   guard?: boolean;
+  footer?: ReactNode;
 }) {
   const id = useId();
   const box = useRef<HTMLDivElement>(null);
@@ -28,6 +29,7 @@ export function Modal({ title, onClose, children, wide, guard }: {
           <button className="icon-btn" onClick={tryClose} aria-label="Close"><CloseIcon /></button>
         </header>
         {children}
+        {footer && <div className="modal-footer">{footer}</div>}
       </div>
       {asking && (
         <ConfirmDialog title="Discard draft?" confirmLabel="Discard" onCancel={() => setAsking(false)} onConfirm={onClose}>

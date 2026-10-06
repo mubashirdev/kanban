@@ -97,7 +97,7 @@ export async function discoverCommands(bin: string, cwd: string, plan: boolean, 
 
 /** Bounded, short-lived cache: many drawers can share one discovery process. */
 export class ClaudeCommands {
-  private cache = new Map<string, { until: number; pending: Promise<ClaudeCatalog>; loading: boolean }>();
+  private cache = new Map<string, { until: number; pending: Promise<ClaudeCatalog>; loading: boolean; refreshing?: Promise<ClaudeCatalog> }>();
   constructor(private bin = "claude", private discover = discoverCatalog) {}
   async get(cwd: string, plan: boolean, refresh = false): Promise<ClaudeCommand[]> {
     return (await this.catalog(cwd, plan, refresh)).commands;
@@ -105,14 +105,34 @@ export class ClaudeCommands {
   catalog(cwd: string, plan: boolean, refresh = false): Promise<ClaudeCatalog> {
     const key = `${plan}:${cwd}`;
     const previous = this.cache.get(key);
-    if (previous && (previous.loading || (!refresh && previous.until > Date.now()))) return previous.pending;
-    if (!previous && this.cache.size >= 64) this.cache.delete(this.cache.keys().next().value!);
+    if (previous?.loading) return previous.pending;
+    // A background refresh is running: Reload waits for it, everyone else gets the old list.
+    if (previous?.refreshing) return refresh ? previous.refreshing : previous.pending;
+    if (previous && !refresh && previous.until > Date.now()) return previous.pending;
+    // Discovery takes many seconds: an expired list is still served while a fresh one loads.
+    if (previous && !refresh) {
+      const next = this.load(key, cwd, plan, false);
+      previous.refreshing = next;
+      next.catch(() => {}).finally(() => { previous.refreshing = undefined; });
+      return previous.pending;
+    }
+    return this.load(key, cwd, plan, true);
+  }
+
+  /** wait: callers wait for this load (first load or Reload); otherwise the old list stays until it is done. */
+  private load(key: string, cwd: string, plan: boolean, wait: boolean): Promise<ClaudeCatalog> {
+    if (!this.cache.has(key) && this.cache.size >= 64) this.cache.delete(this.cache.keys().next().value!);
     const entry = { until: Date.now() + 120_000, pending: Promise.resolve({ commands: [], models: [] } as ClaudeCatalog), loading: true };
-    entry.pending = this.discover(this.bin, cwd, plan).then((commands) => { entry.loading = false; entry.until = Date.now() + 120_000; return commands; }, (error) => {
+    entry.pending = this.discover(this.bin, cwd, plan).then((catalog) => {
+      entry.loading = false;
+      entry.until = Date.now() + 120_000;
+      this.cache.set(key, entry);
+      return catalog;
+    }, (error) => {
       if (this.cache.get(key) === entry) this.cache.delete(key);
       throw error;
     });
-    this.cache.set(key, entry);
+    if (wait) this.cache.set(key, entry);
     return entry.pending;
   }
 }

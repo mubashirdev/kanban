@@ -47,3 +47,13 @@ export const SparkIcon = ({ size = 11, ...rest }: IconProps) => (
     <path d="M8 0c.5 3.9 2.1 5.5 6 6-3.9.5-5.5 2.1-6 6-.5-3.9-2.1-5.5-6-6 3.9-.5 5.5-2.1 6-6Z" fill="currentColor" />
   </svg>
 );
+
+export const SlashIcon = (p: IconProps) => svg(<><path d="M9.5 3l-3 10M4 5H2v6h2M12 5h2v6h-2" /></>, p);
+export const ImageIcon = (p: IconProps) => svg(<><rect x="2" y="2" width="12" height="12" rx="2" /><circle cx="5.5" cy="5.5" r="1" /><path d="M3 12l4-4 2.5 2.5L11 9l2 3" /></>, p);
+
+export const SlidersIcon = (p: IconProps) => svg(<><path d="M2 4h3M9 4h5M2 12h7M13 12h1" /><circle cx="7" cy="4" r="2" /><circle cx="11" cy="12" r="2" /></>, p);
+
+export const BellIcon = (p: IconProps) => svg(<><path d="M3 11h10l-1.2-1.8V6a3.8 3.8 0 0 0-7.6 0v3.2L3 11zM6.5 13a1.5 1.5 0 0 0 3 0" /></>, p);
+export const ArrowUpIcon = (p: IconProps) => svg(<path d="M8 13V3M3.5 7.5L8 3l4.5 4.5" />, p);
+export const ColumnsIcon = (p: IconProps) => svg(<><rect x="2" y="2.5" width="12" height="11" rx="2" /><path d="M6 2.5v11M10 2.5v11" /></>, p);
+export const HistoryIcon = (p: IconProps) => svg(<><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9" /><path d="M2.5 2.5v2.5H5" /><path d="M8 5.5V8l1.8 1.3" /></>, p);

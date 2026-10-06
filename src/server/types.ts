@@ -16,6 +16,19 @@ export interface Profile {
 }
 
 export interface Ticket {
+  agent?: "claude" | "codex";
+  codexSessionId?: string | null;
+  codexModel?: string | null;
+  codexEffort?: "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | null;
+  priority?: "none" | "low" | "normal" | "high" | "urgent";
+  kind?: "task" | "bug" | "feature" | "refactor" | "research";
+  labels?: string[];
+  /** A chat session off the board: no worktree, PR or column moves; messages go to the agent as typed. */
+  standalone?: boolean;
+  /** Standalone sessions only: "read" lets the agent look around but not change files. */
+  access?: "read" | "edit";
+  /** Standalone sessions only: when the user last looked at it, so a reply counts as unread after this. */
+  readAt?: string | null;
   id: string;
   title: string;
   status: Status;

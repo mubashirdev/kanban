@@ -1,3 +1,5 @@
+import { ReviewPanel } from "./ReviewPanel";
+import { TicketMetadata } from "./TicketMetadata";
 import { useEffect, useRef, useState } from "react";
 import { api, COLUMNS, safeHref, startWorkTarget, subscribe, type ClaudeSession, type Profile, type Status, type Ticket } from "./api";
 import { outcomeBadge } from "./Card";
@@ -171,7 +173,7 @@ function usePanelWidth(fit: number) {
 }
 
 /** Ticket view: details on the left, the chat with Claude filling the right side. */
-export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, nav, slideIn = true }: {
+export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, nav, slideIn = true, initialTab = "chat" }: {
   profile: Profile;
   ticket: Ticket;
   /** The board's tickets, for the planner/child links. */
@@ -182,6 +184,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   nav?: { prev: string | null; next: string | null; go: (id: string) => void };
   /** Slide in when opened; off when stepping from the neighbouring ticket. */
   slideIn?: boolean;
+  initialTab?: "chat" | "review";
 }) {
   // Errors from actions in this ticket show here, next to what failed, not in the page's top strip.
   const [panelError, setPanelError] = useState<string | null>(null);
@@ -197,8 +200,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const images = useImagePaste(setBody);
   // Body the current edit started from; the server rejects the save if the file changed meanwhile.
   const [baseBody, setBaseBody] = useState(ticket.body);
-  const [tabPick, setTabPick] = useState<"chat" | "plan" | "outputs">("chat");
-  const setTab = (next: "chat" | "plan" | "outputs") => {
+  const [tabPick, setTabPick] = useState<"chat" | "plan" | "outputs" | "review">(initialTab);
+  const setTab = (next: "chat" | "plan" | "outputs" | "review") => {
     setTabPick(next);
     if (window.matchMedia("(max-width: 900px)").matches) setDetailsOpenState(false);
   };
@@ -399,6 +402,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
           style={{ "--side-w": `${side.width}px` } as React.CSSProperties}>
           <div className="panel-details">
             <div className="details-pinned">
+              <TicketMetadata slug={slug} ticket={ticket} onError={onError} />
               <div className="field-row">
                 <span className="field-key">Status</span>
                 <Select className="status-select" ariaLabel="Status" value={ticket.status} onChange={(s) => setStatus(s as Status)}
@@ -407,13 +411,13 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
               {col && <p className="field-help">{col.claude && <SparkIcon className="icon spark" />}{col.hint}</p>}
 
               <div className="action-stack">
-                {working && <button className="btn danger" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop Claude"}</button>}
+                {working && <button className="btn danger" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop agent"}</button>}
                 {!working && (ticket.status === "backlog" || ticket.status === "planning") && (
                   <button className={`btn ${att?.kind === "questions" || att?.kind === "proposal" ? "" : "primary"}`}
-                    onClick={startWork} title={startTarget === "planning" ? "Claude interviews you first" : "Claude works on its own"}>Start work</button>
+                    onClick={startWork} title={startTarget === "planning" ? "Your agent interviews you first" : "Your agent works on its own"}>Start work</button>
                 )}
                 {!working && ticket.status === "backlog" && (
-                  <button className="btn" onClick={() => setStatus("planning")}>Refine with Claude</button>
+                  <button className="btn" onClick={() => setStatus("planning")}>Refine with agent</button>
                 )}
                 {ticket.status === "review" && <button className="btn primary" onClick={() => setStatus("done")}>Mark done</button>}
                 {ticket.prUrl && (
@@ -477,7 +481,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                   {body.trim() ? (
                     <div className="body-view" onDoubleClick={startEdit}><Markdown text={body} /></div>
                   ) : (
-                    <div className="muted small">No description yet. {ticket.status === "planning" ? "Claude can propose one in the chat." : ""}</div>
+                    <div className="muted small">No description yet. {ticket.status === "planning" ? "Your agent can propose one in the chat." : ""}</div>
                   )}
                 </div>
               )}
@@ -507,11 +511,12 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                   </span>
                 </button>
               )}
+              <button role="tab" aria-selected={tab === "review"} className={tab === "review" ? "active" : ""} onClick={()=>setTab("review")}>Review</button>
               <button role="tab" aria-selected={tab === "outputs"} className={tab === "outputs" ? "active" : ""} onClick={() => { setOutputFocus(null); setTab("outputs"); }}>
                 Outputs{outputCount > 0 && <span className="tab-count">{outputCount}</span>}
               </button>
             </nav>
-            {tab === "plan" ? (
+            {tab === "review" ? <div className="panel-scroll"><ReviewPanel slug={slug} ticket={ticket} onError={onError} onOutputs={()=>setTab("outputs")} /></div> : tab === "plan" ? (
               <div className="panel-scroll panel-plan">
                 <PlanPanel slug={slug} ticket={ticket} children={children} onOpenTicket={onOpenTicket} onError={onError} />
               </div>
@@ -533,7 +538,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
           <ConfirmDialog title="Start work?" confirmLabel="Start work" busyLabel="Starting…" tone="primary"
             onCancel={() => setConfirmStart(false)}
             onConfirm={async () => { await api.updateTicket(slug, ticket.id, { status: "ready" }); setConfirmStart(false); }}>
-            <p>Claude will work on this on its own. When working: <b>{ticket.mode === "interview" ? "Interview me first" : "Just do it"}</b>.</p>
+            <p>The selected agent will work on this on its own. When working: <b>{ticket.mode === "interview" ? "Interview me first" : "Just do it"}</b>.</p>
           </ConfirmDialog>
         )}
         {reportingBug && (
@@ -542,7 +547,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
         {confirmDelete && (
           <ConfirmDialog title={`Delete "${ticket.title}"?`} confirmLabel="Delete ticket" busyLabel="Deleting…" onCancel={() => setConfirmDelete(false)}
             onConfirm={async () => { await api.deleteTicket(slug, ticket.id); onClose(); }}>
-            <p>Removes the ticket and its board history.{working ? " Claude will be stopped." : ""}</p>
+            <p>Removes the ticket and its board history.{working ? " The agent will be stopped." : ""}</p>
             {ticket.worktree && <p className="muted">Its worktree is removed if it has no uncommitted changes. The branch and any PR stay.</p>}
           </ConfirmDialog>
         )}

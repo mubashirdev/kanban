@@ -167,7 +167,7 @@ export function QuestionsForm({ questions, answered, disabled, onSubmit, storage
         }
       }}>
       <div className="qcard-head">
-        <span className="qcard-title">Claude has {total} question{total > 1 ? "s" : ""}</span>
+        <span className="qcard-title">Your agent has {total} question{total > 1 ? "s" : ""}</span>
         <span className="muted small qcounter">{summary ? "Review" : `${step + 1} / ${total}`}</span>
         <span className="qsteps" aria-label={`Step ${Math.min(step + 1, total)} of ${total}`}>
           {questions.map((_, i) => (
@@ -231,7 +231,7 @@ export function QuestionsForm({ questions, answered, disabled, onSubmit, storage
             ))}
           </ol>
           <AnswerBox value={note} onChange={setNote} onEnter={send} disabled={disabled}
-            placeholder="Anything else Claude should know? (optional)" />
+            placeholder="Anything else your agent should know? (optional)" />
         </div>
       )}
 

@@ -6,9 +6,9 @@ export type TicketMode = "interview" | "auto";
 /** claude: dropping a card here makes Claude start (or it is running). */
 export const COLUMNS: { id: Status; label: string; hint: string; claude: boolean }[] = [
   { id: "backlog", label: "Backlog", hint: "Park ideas. Nothing runs.", claude: false },
-  { id: "planning", label: "Planning", hint: "Claude interviews you and shapes the ticket", claude: true },
-  { id: "ready", label: "Queued", hint: "Waits for a free slot, then Claude starts the work on its own", claude: true },
-  { id: "in_progress", label: "In Progress", hint: "Claude is working, or queued for a free slot", claude: true },
+  { id: "planning", label: "Planning", hint: "Clarify the task with your agent", claude: true },
+  { id: "ready", label: "Queued", hint: "Waits for a free agent slot", claude: true },
+  { id: "in_progress", label: "In Progress", hint: "Agent is working, or waiting for a free slot", claude: true },
   { id: "review", label: "Review", hint: "Your turn: check the result", claude: false },
   { id: "done", label: "Done", hint: "Finished", claude: false },
 ];
@@ -65,6 +65,8 @@ export interface ClaudeCommand {
   argumentHint: string;
   aliases: string[];
   builtin: boolean;
+  /** Text to put in the composer instead of running a command (Codex skills: "$name "). */
+  insert?: string;
 }
 export interface ClaudeModel { value: string; displayName: string; description: string; supportsEffort?: boolean; supportedEffortLevels?: Effort[] }
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -85,6 +87,17 @@ export interface Profile {
 }
 
 export interface Ticket {
+  agent?: "claude" | "codex";
+  codexSessionId?: string | null;
+  codexModel?: string | null;
+  codexEffort?: "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | null;
+  priority?: "none" | "low" | "normal" | "high" | "urgent";
+  kind?: "task" | "bug" | "feature" | "refactor" | "research";
+  labels?: string[];
+  /** A chat session off the board (see the Sessions page). */
+  standalone?: boolean;
+  access?: "read" | "edit";
+  readAt?: string | null;
   id: string;
   title: string;
   status: Status;
@@ -423,6 +436,7 @@ export const api = {
   ticket: (slug: string, id: string) => req<Ticket>("GET", t(slug, id)),
   quickChat: (slug: string) => req<QuickChat>("GET", `/api/profiles/${encodeURIComponent(slug)}/claude/session`),
   sessions: (slug: string) => req<ClaudeSession[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/sessions`),
+  codexSessions: (slug: string) => req<ClaudeSession[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/codex-sessions`),
   linkSession: (slug: string, id: string, sessionId: string | null) =>
     req<Ticket>("POST", `${t(slug, id)}/link-session`, { sessionId }),
   outputs: (slug: string, id: string) => req<OutputFile[]>("GET", `${t(slug, id)}/outputs`),
@@ -433,11 +447,11 @@ export const api = {
     return r.text();
   },
   createTicket: (slug: string, input: {
-    title: string; body: string; status: Status; sessionId?: string; mode?: TicketMode; parentId?: string; planKey?: string; dependsOn?: string[];
+    title: string; body: string; status: Status; sessionId?: string; codexSessionId?: string; standalone?: boolean; access?: Ticket["access"]; mode?: TicketMode; agent?: Ticket["agent"]; priority?: Ticket["priority"]; kind?: Ticket["kind"]; labels?: string[]; parentId?: string; planKey?: string; dependsOn?: string[];
   }) => req<Ticket>("POST", t(slug), input),
   plan: (slug: string, id: string, action: "start" | "pause" | "resume" | "done" | "concurrency", maxConcurrent?: number) =>
     req<Ticket>("POST", `${t(slug, id)}/plan`, { action, maxConcurrent }),
-  updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice">> & { expectedBody?: string }) =>
+  updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "priority" | "kind" | "labels" | "agent" | "codexModel" | "codexEffort" | "access" | "readAt" | "standalone">> & { expectedBody?: string }) =>
     req<Ticket>("PATCH", t(slug, id), patch),
   deleteTicket: (slug: string, id: string) => req<void>("DELETE", t(slug, id)),
   comments: (slug: string, id: string) => req<Comment[]>("GET", `${t(slug, id)}/comments`),
@@ -448,6 +462,12 @@ export const api = {
   conversation: (slug: string, id: string, before?: number) =>
     req<{ entries: SessionEntry[]; start: number; total: number; title: string | null }>(
       "GET", `${t(slug, id)}/conversation${before !== undefined ? `?before=${before}` : ""}`),
+  review: (slug: string, id: string, file?: string) => req<{files:{path:string;status:string}[];diff:string;truncated:boolean;warning:string|null;checks:{name:string;state:string;url:string|null}[];checkError:string|null;hasPr:boolean;recordedChecks:{command:string;state:string;output:string}[];verification:{summary:string;durationMs:number|null;costUsd:number|null}|null}>("GET", `${t(slug,id)}/review${file ? "?file="+encodeURIComponent(file) : ""}`),
+  notificationKey: () => req<{publicKey:string}>("GET", "/api/notifications"),
+  subscribePush: (input: unknown) => req<{ok:boolean}>("POST", "/api/notifications", input),
+  unsubscribePush: (endpoint: string) => req<{ok:boolean}>("DELETE", "/api/notifications", {endpoint}),
+  testPush: (endpoint: string) => req<{ok:boolean}>("POST", "/api/notifications/test", {endpoint}),
+  workspaceActivity: (slug: string) => req<{id:string;title:string;at:string;changes:string[]}[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/activity`),
   activity: (slug: string, id: string) => req<ActivityEntry[]>("GET", `${t(slug, id)}/activity`),
   inbox: () => req<InboxItem[]>("GET", "/api/inbox"),
   schedules: (slug: string) => req<Schedule[]>("GET", sch(slug)),
@@ -467,6 +487,7 @@ export const api = {
   mcpRecheck: (name: string) => req<McpState>("POST", `/api/mcp/${encodeURIComponent(name)}/recheck`),
   mcpConfig: (name: string) => req<McpConfig>("GET", `/api/mcp/${encodeURIComponent(name)}/config`),
   mcpUpdate: (name: string, input: McpAddInput) => req<McpState>("PUT", `/api/mcp/${encodeURIComponent(name)}`, input),
+  codexModels: () => req<{value:string;displayName:string;efforts:string[]}[]>("GET", "/api/agents/codex/models"),
   agents: () => req<AgentStatus[]>("GET", "/api/agents"),
   agentInstall: (id: AgentStatus["id"]) => req<AgentStatus[]>("POST", `/api/agents/${id}/install`),
   agentUninstall: (id: AgentStatus["id"]) => req<AgentStatus[]>("POST", `/api/agents/${id}/uninstall`),

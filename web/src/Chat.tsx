@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, subscribe, type ClaudeCommand, type Effort, type NewTicketDraft, type SessionEntry, type Ticket } from "./api";
 import { autoGrow } from "./autoGrow";
-import { ArrowDownIcon, CloseIcon, FileCodeIcon } from "./icons";
+import { ArrowDownIcon, CloseIcon, FileCodeIcon, SlidersIcon, SlashIcon, ImageIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
 import { NewTicketsCard } from "./NewTicketsCard";
 import { ProposalCard } from "./ProposalCard";
@@ -12,6 +12,7 @@ import { toast } from "./toast";
 import { Markdown } from "./Transcript";
 import { usePersistentState } from "./usePersistentState";
 import { useSlashCommands } from "./SlashCommands";
+import { AgentSettings } from "./AgentSettings";
 import { ClaudeSettings, type SettingKind } from "./ClaudeSettings";
 import { CommandOptions } from "./CommandOptions";
 import { prepareCommand } from "./commandSyntax";
@@ -105,13 +106,20 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const queued = ticket.queued ?? [];
   // Unsent text survives closing the drawer, switching tickets and reloads.
   const [draft, setDraft] = usePersistentState(draftKey(slug, ticket.id), () => "", (v) => !v.trim(), (v) => typeof v === "string");
+  const codex = ticket.agent === "codex";
+  const agentName = codex ? "Codex" : "Claude";
   const [settingsTab, setSettingsTab] = useState<SettingKind | null>(null);
   const [selectedCommand, setSelectedCommand] = useState<ClaudeCommand | null>(null);
-  const commands = useSlashCommands({ slug, id: ticket.id, draft, composer, onCommand: (command) => {
-    if (command.builtin && ["model", "effort", "output-style", "config"].includes(command.name)) setSettingsTab(command.name === "effort" ? "effort" : command.name === "output-style" ? "outputStyle" : "model");
+  const commands = useSlashCommands({ agent: agentName, slug, id: ticket.id, draft, composer, onCommand: (command) => {
+    if (command.insert) {
+      setDraft((current) => command.insert! + current.replace(/^\s*\/[\w:./@-]*\s*/, ""));
+      requestAnimationFrame(() => composer.current?.focus({ preventScroll: true }));
+    } else if (command.builtin && command.name === "clear") void clearConversation();
+    else if (command.builtin && ["model", "effort", "output-style", "config"].includes(command.name)) setSettingsTab(command.name === "effort" ? "effort" : command.name === "output-style" ? "outputStyle" : "model");
     else setSelectedCommand(command);
   } });
   const images = useImagePaste(setDraft);
+  const imageInput = useRef<HTMLInputElement>(null);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   // Text Claude is writing right now (from the run's partial-message stream); not yet in the session file.
   const [live, setLive] = useState("");
@@ -121,17 +129,17 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const running = !!ticket.running;
   const { stopping, stop } = useStop(slug, ticket, running, onError);
-  const refine = REFINE(ticket.status);
+  const refine = ticket.standalone ? ticket.access !== "edit" : REFINE(ticket.status);
 
   const loadTail = useCallback(async () => {
-    if (!ticket.sessionId) return setPage({ entries: [], start: 0 });
+    if (!ticket.sessionId && !codex) return setPage({ entries: [], start: 0 });
     const r = await api.conversation(slug, ticket.id);
     setPage((prev) => {
       if (!prev || r.start <= prev.start) return { entries: r.entries, start: r.start };
       const idx = prev.entries.findIndex((e) => e.uuid === r.entries[0]?.uuid);
       return idx >= 0 ? { entries: [...prev.entries.slice(0, idx), ...r.entries], start: prev.start } : { entries: r.entries, start: r.start };
     });
-  }, [slug, ticket.id, ticket.sessionId]);
+  }, [slug, ticket.id, ticket.sessionId, codex]);
 
   const reload = useCallback(() => {
     setLoadError(null);
@@ -200,9 +208,25 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     setJump(null);
   };
 
+  const clearConversation = async () => {
+    commands.close();
+    if (running) return onError(`Stop ${agentName} before starting a new conversation.`);
+    try {
+      await api.chat(slug, ticket.id, "/clear");
+      setDraft("");
+      // The composer still held "/clear" while the request ran, which reopened the menu.
+      commands.select("", 0);
+      setPage({ entries: [], start: 0 });
+      toast("Started a new conversation.", { tone: "ok" });
+    } catch (failure: any) { onError(failure.message); }
+  };
+
   const send = async (text: string, preserveDraft = false) => {
     const t = text.trim();
     if (!t || stopping || images.uploading) return;
+    if (/^\/(clear|new)$/.test(t)) return clearConversation();
+    // Codex settings live on the ticket, not in the CLI: open the settings sheet whatever was typed after.
+    if (codex && /^\/(model|effort)(\s|$)/.test(t)) { commands.close(); setSettingsTab("model"); return; }
     if (["/model", "/config", "/settings", "/effort", "/effort status", "/output-style"].includes(t)) { commands.close(); setSettingsTab(t.startsWith("/effort") ? "effort" : t === "/output-style" ? "outputStyle" : "model"); return; }
     if (/^\/model\s+\S/.test(t)) {
       try {
@@ -332,9 +356,11 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
         )}
         {empty && (
           <div className="chat-empty">
-            {ticket.status === "backlog" ? (
+            {ticket.standalone ? (
+              <p className="muted">{refine ? `Ask ${agentName} about this repo. It can read files but won’t change them.` : `Tell ${agentName} what to do. It works directly in your repo folder.`} Type / for commands.</p>
+            ) : ticket.status === "backlog" ? (
               <>
-                <p><b>Parked.</b> Move it to Planning when you want Claude to help shape it: it will ask a few questions, then propose a clear title and description.</p>
+                <p><b>Parked.</b> Move it to Planning when you want your agent to help shape it: it will ask a few questions, then propose a clear title and description.</p>
                 <button className="btn" onClick={() => api.updateTicket(slug, ticket.id, { status: "planning" }).catch((e) => onError(e.message))}>
                   Move to Planning
                 </button>
@@ -342,13 +368,13 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             ) : ticket.status === "planning" ? (
               <>
                 {/* Only shown if the automatic start didn't happen (e.g. session was open in a terminal). */}
-                <p><b>Shape this ticket with Claude.</b> Describe your idea below, or let Claude start the interview.</p>
+                <p><b>Shape this ticket with your agent.</b> Describe your idea below, or let your agent start the interview.</p>
                 <button className="btn" onClick={() => send("Help me refine this ticket. Interview me about what's unclear, then propose an improved title and description.")}>
                   Start the interview
                 </button>
               </>
             ) : (
-              <p className="muted">No conversation yet. Move the card to In Progress to let Claude work on it, or send a message.</p>
+              <p className="muted">No conversation yet. Move the card to In Progress to let your agent work on it, or send a message.</p>
             )}
           </div>
         )}
@@ -379,7 +405,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           return (
             <div key={e.uuid} className={`conv-msg ${e.role}`}>
               <div className="conv-head">
-                <b>{e.role === "user" ? "You" : "Claude"}</b>
+                <b>{e.role === "user" ? "You" : agentName}</b>
                 {e.at && <time className="muted small" dateTime={e.at} title={fullTime(e.at)}>{timeAgo(e.at)}</time>}
               </div>
               {e.text && <Markdown text={e.text.replace(/^.*CKANBAN_RESULT:.*$/m, "").trim()} />}
@@ -405,7 +431,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
               )}
               {e.unreadable && (
                 <div className="chat-unreadable" role="status">
-                  <span>Couldn't read Claude's {UNREADABLE[e.unreadable]}.</span>
+                  <span>Couldn't read {agentName}’s {UNREADABLE[e.unreadable]}.</span>
                   {!answeredAfter(b.index) && (
                     <button className="btn small" disabled={running} onClick={() => send(RESEND[e.unreadable!])}>Resend</button>
                   )}
@@ -414,7 +440,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
               {e.moved === "planning" && (
                 <div className="chat-moved">
                   Moved to <b>Planning</b>: this was a planning request, so nothing was changed. Answer or refine here, then
-                  drag the card to In Progress when you want Claude to do it.
+                  drag the card to In Progress when you want your agent to do it.
                 </div>
               )}
             </div>
@@ -428,19 +454,19 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
         ))}
         {ticket.interrupted?.partial && (
           <div className="conv-msg assistant interrupted">
-            <div className="conv-head"><b>Claude</b><span className="muted small">interrupted by a board restart; {running ? "continuing below…" : "resumes when the board is back"}</span></div>
+            <div className="conv-head"><b>{agentName}</b><span className="muted small">interrupted by a board restart; {running ? "continuing below…" : "resumes when the board is back"}</span></div>
             <Markdown text={ticket.interrupted.partial} />
           </div>
         )}
         {live && (
           <div className="conv-msg assistant live" aria-live="polite">
-            <div className="conv-head"><b>Claude</b><span className="muted small">writing…</span></div>
+            <div className="conv-head"><b>{agentName}</b><span className="muted small">writing…</span></div>
             {liveView(live).text && <Markdown text={liveView(live).text} />}
             {liveView(live).preparing && <div className="chat-typing"><span className="spinner" /> {liveView(live).preparing}</div>}
           </div>
         )}
         {running && !live && (
-          <div className="chat-typing"><span className="spinner" /> {ticket.lastActivity && ticket.lastActivity !== "Starting…" ? ticket.lastActivity : "Claude is working…"}</div>
+          <div className="chat-typing"><span className="spinner" /> {ticket.lastActivity && ticket.lastActivity !== "Starting…" ? ticket.lastActivity : ` ${agentName} is working…`}</div>
         )}
         {pending.filter((p) => p.steer && !queued.some((q) => q.text === p.text)).map((p, i) => (
           <div key={i} className="conv-msg user pending">
@@ -452,7 +478,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           <div key={q.id} className="conv-msg peer in pending">
             <div className="conv-head">
               <b>{peerLabel("in", q.text.match(/<ckanban-context[^>]* from="([^"]*)"/)?.[1] ?? null)}</b>
-              <span className="muted small">{q.state === "queued" ? "queued · Claude reads this at its next step" : "not sent · Claude was stopped before reading it"}</span>
+              <span className="muted small">{q.state === "queued" ? codex ? "queued · Codex reads this in its next turn" : "queued · Claude reads this at its next step" : `not sent · ${agentName} was stopped before reading it`}</span>
             </div>
             <Markdown text={q.text.split("<ckanban-context")[0].trim()} />
             {q.state === "unsent" && (
@@ -469,7 +495,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           <div key={q.id} className={`conv-msg user pending${q.state === "unsent" ? " unsent" : ""}`}>
             <div className="conv-head">
               <b>You</b>
-              <span className="muted small">{q.state === "queued" ? "queued · Claude reads this at its next step" : "not sent · Claude was stopped before reading it"}</span>
+              <span className="muted small">{q.state === "queued" ? codex ? "queued · Codex reads this in its next turn" : "queued · Claude reads this at its next step" : `not sent · ${agentName} was stopped before reading it`}</span>
             </div>
             <Markdown text={q.text} />
             {q.state === "unsent" && (
@@ -483,7 +509,10 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           </div>
         ))}
         {!running && ticket.error && !ticket.error.startsWith("corrupt") && (
-          <div className="banner error inline"><pre>{ticket.error}</pre></div>
+          <div className="banner error inline">
+            <pre>{ticket.error}</pre>
+            {/model/i.test(ticket.error) && <button className="btn small" onClick={() => setSettingsTab("model")}>Choose model</button>}
+          </div>
         )}
         {ticket.notice && (
           <div className="banner info inline notice" role="status">
@@ -518,8 +547,9 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       )}
       <div className="composer">
         {commands.popup}
-        <textarea ref={composer} rows={2} value={draft} disabled={stopping} className={images.dragOver ? "drop-target" : undefined} {...images.handlers} {...commands.aria} role="combobox" aria-label="Message Claude"
-          placeholder={running ? "Steer Claude: it reads this at its next step, no restart…" : refine ? "Describe your idea or answer Claude…" : "Ask Claude to change or continue something…"}
+        <textarea ref={composer} rows={2} value={draft} disabled={stopping} className={images.dragOver ? "drop-target" : undefined} {...images.handlers} {...commands.aria} role="combobox" aria-label={`Message ${agentName}`}
+          placeholder={running ? (codex ? "Queue a message for Codex’s next turn…" : "Steer Claude: it reads this at its next step…") : ticket.standalone ? `Message ${agentName}…` : refine ? `Describe your idea or answer ${agentName}…` : `Ask ${agentName} to change or continue something…`}
+          onFocus={commands.prefetch}
           onChange={(e) => { setDraft(e.target.value); commands.select(e.target.value, e.target.selectionStart); }}
           onSelect={(e) => { if (!settingsTab && !selectedCommand) commands.select(e.currentTarget.value, e.currentTarget.selectionStart); }}
           onKeyDown={(e) => {
@@ -532,18 +562,25 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
         {images.error && <div className="form-error">{images.error}</div>}
         <div className="composer-foot">
           <span className="muted small composer-hint">
-            {refine ? "Refine mode: Claude won't change files." : "Claude acts on your message."}
+            {ticket.standalone ? (refine ? `Read only: ${agentName} won’t change files.` : `${agentName} can change files in your repo.`) : refine ? `Refine mode: ${agentName} won’t change files.` : `${agentName} acts on your message.`}
             <span className="composer-keys"> Enter to send · Shift+Enter for a new line</span>
           </span>
           <span className="composer-actions">
-            <button type="button" className="btn small" aria-label="Claude settings" title={`Model: ${ticket.model ?? "Board default"} · Effort: ${ticket.effort ?? "Auto"}`} disabled={stopping} onClick={() => { commands.close(); setSettingsTab("model"); }}>Settings</button>
-            <button type="button" className="btn small slash-trigger" aria-label="Browse Claude commands" aria-expanded={commands.opened} disabled={stopping} onClick={commands.toggle}><span aria-hidden="true">/</span><span className="slash-trigger-label">Commands</span></button>
+            <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={(e) => {
+              const files = Array.from(e.currentTarget.files ?? []);
+              e.currentTarget.value = "";
+              if (files.length && composer.current) images.insert(composer.current, files);
+            }} />
+            <button type="button" className="btn small composer-icon" aria-label="Attach images" title="Attach images" disabled={stopping || images.uploading} onClick={() => imageInput.current?.click()}><ImageIcon size={18} /></button>
+            <button type="button" className="btn small composer-icon" aria-label={`${agentName} settings`} title={codex ? `Model: ${ticket.codexModel ?? "Configured default"} · Effort: ${ticket.codexEffort ?? "Default"}` : `Model: ${ticket.model ?? "Board default"} · Effort: ${ticket.effort ?? "Auto"}`} disabled={stopping} onClick={() => { commands.close(); setSettingsTab("model"); }}><SlidersIcon size={18} /></button>
+            <button type="button" className="btn small composer-icon slash-trigger" title="Browse commands" aria-label={`Browse ${agentName} commands`} aria-expanded={commands.opened} disabled={stopping} onClick={commands.toggle}><SlashIcon size={18} /></button>
             {running && <button className="btn danger small" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop"}</button>}
             <button className="btn primary small" disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? "Uploading…" : "Send"}</button>
           </span>
         </div>
       </div>
-      {settingsTab && <ClaudeSettings slug={slug} ticket={ticket} initialTab={settingsTab} onClose={() => setSettingsTab(null)} onSaved={(kind) => {
+      {settingsTab && codex && <AgentSettings slug={slug} ticket={ticket} onClose={()=>setSettingsTab(null)}/>}
+      {settingsTab && !codex && <ClaudeSettings slug={slug} ticket={ticket} initialTab={settingsTab} onClose={() => setSettingsTab(null)} onSaved={(kind) => {
         setDraft((current) => [`/${kind === "outputStyle" ? "output-style" : kind}`, "/config", "/settings", "/effort status"].includes(current.trim()) ? "" : current);
       }} />}
       {selectedCommand && <CommandOptions command={selectedCommand} initial={(() => {

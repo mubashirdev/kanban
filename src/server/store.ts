@@ -1,3 +1,4 @@
+import { ticketMetadata, type TicketMetadata } from "./ticket-metadata";
 import {
   appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
@@ -47,6 +48,9 @@ function serializeTicket(t: Ticket): string {
   const { body, ...meta } = t;
   return `---\n${YAML.stringify(meta)}---\n${body}`;
 }
+
+/** One line of a board's Activity page: what changed on which ticket. */
+interface WorkspaceChange { id: string; title: string; at: string; changes: string[] }
 
 export class Store {
   constructor(public readonly root: string) {
@@ -153,20 +157,33 @@ export class Store {
 
   createTicket(
     slug: string,
-    input: { title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; parentId?: string; planKey?: string; dependsOn?: string[] },
+    input: TicketMetadata & { title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; parentId?: string; planKey?: string; dependsOn?: string[]; standalone?: boolean; access?: "read" | "edit"; codexSessionId?: string },
   ): Ticket {
     const at = nowIso();
     const t: Ticket = {
-      id: newTicketId(), title: input.title, status: input.status, mode: input.mode ?? "auto", order: this.entryOrder(slug, input.status),
+      ...ticketMetadata(input), id: newTicketId(), title: input.title, status: input.status, mode: input.mode ?? "auto", order: this.entryOrder(slug, input.status),
       sessionId: null, worktree: null, branch: null, prUrl: null, outcome: null, lastActivity: null,
       lastRunAt: null, runCount: 0, error: null, createdAt: at, updatedAt: at, body: input.body,
       ...(input.scheduleId ? { scheduleId: input.scheduleId } : {}),
       ...(input.parentId ? { parentId: input.parentId } : {}),
       ...(input.planKey ? { planKey: input.planKey } : {}),
       ...(input.dependsOn?.length ? { dependsOn: input.dependsOn } : {}),
+      ...(input.standalone ? { standalone: true, access: input.access ?? "read", readAt: at } : {}),
+      ...(input.codexSessionId ? { codexSessionId: input.codexSessionId } : {}),
     };
     atomicWrite(this.ticketPath(slug, t.id), serializeTicket(t));
+    this.recordWorkspaceChange(slug, t, ["Created ticket"]);
     return t;
+  }
+
+  private recordWorkspaceChange(slug: string, ticket: Ticket, changes: string[]) {
+    const file = join(this.profileDir(slug), "workspace-activity.jsonl");
+    const entries = [...readJsonl<WorkspaceChange>(file).slice(-499), { id: ticket.id, title: ticket.title, at: nowIso(), changes }];
+    atomicWrite(file, entries.map(entry=>JSON.stringify(entry)).join("\n") + "\n");
+  }
+
+  workspaceActivity(slug: string) {
+    return readJsonl<WorkspaceChange>(join(this.profileDir(slug), "workspace-activity.jsonl")).slice(-100).reverse();
   }
 
   updateTicket(slug: string, id: string, patch: Partial<Ticket>): Ticket {
@@ -178,6 +195,11 @@ export class Store {
     }
     if (patch.body === undefined) next.body = current.body;
     atomicWrite(this.ticketPath(slug, id), serializeTicket(next));
+    const keys = ["status", "priority", "kind", "labels", "outcome", "agent"] as const;
+    const changes = keys
+      .filter((key) => JSON.stringify(current[key]) !== JSON.stringify(next[key]))
+      .map((key) => `${key}: ${Array.isArray(next[key]) ? (next[key] as string[]).join(", ") : next[key] ?? "none"}`);
+    if (changes.length) this.recordWorkspaceChange(slug, next, changes);
     return next;
   }
 
@@ -229,6 +251,15 @@ export class Store {
   appendActivity(slug: string, id: string, run: number, event: unknown): void {
     const e: ActivityEntry = { run, at: nowIso(), event };
     appendFileSync(join(this.ticketDir(slug, id), "activity.jsonl"), JSON.stringify(e) + "\n");
+  }
+
+  activityVersion(slug: string, id: string): string | null {
+    try {
+      const stat = statSync(join(this.ticketDir(slug, id), "activity.jsonl"));
+      return `${stat.mtimeMs}:${stat.size}`;
+    } catch {
+      return null;
+    }
   }
 
   readActivity(slug: string, id: string): ActivityEntry[] {

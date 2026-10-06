@@ -15,10 +15,12 @@
   },
   "dependencies": {
     "@simplewebauthn/server": "^14.0.3",
+    "web-push": "^3.6.7",
     "yaml": "^2.5.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/web-push": "^3.6.4",
     "typescript": "^5.6.0"
   }
 }

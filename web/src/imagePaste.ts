@@ -80,5 +80,5 @@ export function useImagePaste(setValue: Dispatch<SetStateAction<string>>) {
     },
   };
 
-  return { handlers, error, uploading, dragOver, clearError: () => setError(null) };
+  return { insert, handlers, error, uploading, dragOver, clearError: () => setError(null) };
 }

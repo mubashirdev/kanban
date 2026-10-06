@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { InboxItem } from "./api";
+import { BellIcon } from "./icons";
 import { useLayer } from "./layers";
 
 /** Top-bar "N need you" across every board; the list jumps straight to a ticket. ↑↓ move, Esc closes. */
@@ -42,7 +43,7 @@ export function Inbox({ items, onPick }: { items: InboxItem[]; onPick: (i: Inbox
 
   return (
     <div className="inbox" ref={root}>
-      <button ref={pill} className="inbox-pill" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}
+      <button ref={pill} className="inbox-pill" aria-label={`${items.length} need you`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}
         onKeyDown={(e) => {
           if (e.key === "ArrowDown") {
             e.preventDefault();
@@ -51,7 +52,8 @@ export function Inbox({ items, onPick }: { items: InboxItem[]; onPick: (i: Inbox
           }
         }}
         title="Tickets on any board where Claude is waiting on you">
-        <span className="yt-dot" aria-hidden /> {items.length} need you
+        <span className="inbox-text"><span className="yt-dot" aria-hidden /> {items.length} need you</span>
+        <span className="inbox-compact" aria-hidden><BellIcon size={20} /><span className="inbox-count">{items.length > 99 ? "99+" : items.length}</span></span>
       </button>
       {open && (
         <div className="inbox-menu" role="menu" ref={menu} onKeyDown={onMenuKey}>

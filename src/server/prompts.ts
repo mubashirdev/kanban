@@ -222,6 +222,16 @@ export function bugReportRule(t: Ticket): string {
 export type ChatMode = "refine" | "act";
 
 /** A chat message sent while Claude is already working: it arrives at Claude's next step. */
+/** System prompt for a standalone session: a plain chat, often read on a phone. */
+export function sessionPrompt(access: "read" | "edit"): string {
+  return `You are chatting with the user through the Esa Kanban app, often on their phone. This is a normal working session, not a board ticket: there is no worktree, pull request or result line to report.
+Keep replies short and easy to read on a small screen.
+${access === "read"
+    ? "Access right now: read-only. Read code and answer, but do not change files."
+    : "Access right now: can edit. You may change files in this folder when the user asks."} The user can switch this at any time; this line is always current, even if earlier turns said otherwise.
+${QUESTIONS_FORMAT}`;
+}
+
 export function steerPrompt(text: string): string {
   return `${text.trim()}
 

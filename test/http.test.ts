@@ -6,6 +6,9 @@ import { Bus } from "../src/server/events";
 import { createServer, isAllowedRequest } from "../src/server/http";
 import { ptySupported } from "../src/server/shell";
 import { Store } from "../src/server/store";
+
+/** The board adds /clear to every Claude list: headless Claude can't start a new conversation itself. */
+const CLEAR = { name: "clear", description: "Start a new conversation", argumentHint: "", aliases: ["new"], builtin: true };
 import { tempDir } from "./helpers";
 
 let server: ReturnType<typeof createServer>;
@@ -36,7 +39,7 @@ test("model picker validates live choices, changes only its ticket, and never st
   const server = createServer({ store, bus, board, port: 0, webDir: tempDir(), commands: { get: async () => [], catalog: async () => catalog } });
   const base = `http://127.0.0.1:${server.port}/api/profiles/models/tickets/${ticket.id}`;
   try {
-    expect(await (await fetch(base + "/commands")).json()).toEqual({ ...catalog, efforts: [], outputStyles: [], defaultModel: "opus" });
+    expect(await (await fetch(base + "/commands")).json()).toEqual({ ...catalog, commands: [CLEAR], efforts: [], outputStyles: [], defaultModel: "opus" });
     expect((await fetch(base + "/model", json("POST", { model: "unknown" }))).status).toBe(400);
     const chosen = await fetch(base + "/model", json("POST", { model: "sonnet" }));
     expect(chosen.status).toBe(200); expect((await chosen.json() as any).model).toBe("sonnet");
@@ -138,7 +141,7 @@ test("ticket command discovery uses the linked working directory and returns a r
     commands: { async get(cwd, plan, refresh) { observed = { cwd, plan, refresh }; if (fail) throw new Error("Try again"); return []; } } });
   try {
     const endpoint = `http://127.0.0.1:${localServer.port}/api/profiles/commands/tickets/${ticket.id}/commands?refresh=1`;
-    expect(await (await fetch(endpoint)).json()).toEqual({ commands: [], models: [], efforts: [], outputStyles: [], defaultModel: null });
+    expect(await (await fetch(endpoint)).json()).toEqual({ commands: [CLEAR], models: [], efforts: [], outputStyles: [], defaultModel: null });
     expect(observed).toEqual({ cwd: linked, plan: true, refresh: true });
     fail = true; expect((await fetch(endpoint)).status).toBe(503);
     expect((await fetch(endpoint.replace(ticket.id, "missing"))).status).toBe(404);

@@ -1,3 +1,4 @@
+import { Notifications } from "./notifications";
 import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { networkInterfaces } from "node:os";
@@ -8,6 +9,7 @@ import { createServer } from "./http";
 import { McpManager } from "./mcp";
 import { startPoller } from "./prpoller";
 import { Scheduler } from "./scheduler";
+import { CodexSessions } from "./codex-session";
 import { SessionCache, startSessionWatcher } from "./session";
 import { ShellManager } from "./shell";
 import { TerminalWatcher } from "./terminals";
@@ -38,6 +40,7 @@ export async function startDaemon(): Promise<void> {
   const embedded = Object.keys(WEB_ASSETS).length > 0;
   if (!embedded && !existsSync(join(webDir, "index.html"))) console.warn("web UI not built yet: run `bun run build:web`");
   const sessions = new SessionCache();
+  const codexSessions = new CodexSessions(store);
   const terminals = new TerminalWatcher(store, bus, sessions);
   const shells = new ShellManager();
   const mcp = new McpManager(bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude", seenFile: join(store.root, "mcp-seen.json") });
@@ -45,7 +48,13 @@ export async function startDaemon(): Promise<void> {
   // launchd (KeepAlive) starts the daemon again once it exits.
   const restart = () => board.requestRestart(() => void shutdown());
   const commands = new ClaudeCommands(process.env.CKANBAN_CLAUDE_BIN ?? "claude");
-  const server = createServer({ store, bus, board, port, webDir, lan, sessions, terminals, shells, mcp, scheduler, commands, assets: WEB_ASSETS, restart });
+  const notifications = new Notifications(store);
+  const stopNotifications = notifications.start(bus, (slug, id) => board.isRunning(slug, id), (slug, ticket) => {
+    if (ticket.agent !== "codex") return ticket.sessionId ? sessions.summary(ticket.sessionId) : null;
+    const parsed = codexSessions.get(slug, ticket.id);
+    return parsed ? { ...parsed, updatedAt: ticket.updatedAt } : null;
+  });
+  const server = createServer({ store, bus, board, port, webDir, lan, sessions, terminals, shells, mcp, scheduler, commands, notifications, codexSessions, assets: WEB_ASSETS, restart });
   console.log(`ckanban v${VERSION} listening on http://localhost:${server.port} (data: ${store.root})`);
   if (lan?.trustedNetwork) console.log(`Wi-Fi preview: http://${lan.host}:${server.port}/`);
   else if (lan) {
@@ -62,6 +71,7 @@ export async function startDaemon(): Promise<void> {
 
   const shutdown = async () => {
     console.log("ckanban shutting down");
+    stopNotifications();
     stopPoller();
     stopScheduler();
     stopWatcher();

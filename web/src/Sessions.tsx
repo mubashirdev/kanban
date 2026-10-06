@@ -1,0 +1,304 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api, copy, type ClaudeSession, type Profile, type Ticket } from "./api";
+import { autoGrow } from "./autoGrow";
+import { Chat } from "./Chat";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, HistoryIcon, MoreIcon, SparkIcon, TerminalIcon, TrashIcon } from "./icons";
+import { useLayer } from "./layers";
+import { Modal } from "./Modal";
+import { ReviewPanel } from "./ReviewPanel";
+import { sessionLabel } from "./SessionPicker";
+import { timeAgo, useNow } from "./time";
+import { toast } from "./toast";
+import { usePersistentState } from "./usePersistentState";
+
+type Agent = NonNullable<Ticket["agent"]>;
+type Access = NonNullable<Ticket["access"]>;
+
+const AGENTS: { id: Agent; label: string }[] = [{ id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }];
+const ACCESS: { id: Access; label: string; hint: string }[] = [
+  { id: "read", label: "Read only", hint: "It can look at code and answer, but won't change files." },
+  { id: "edit", label: "Can edit", hint: "It works directly in your repo folder, like in a terminal." },
+];
+
+export const agentName = (t: Pick<Ticket, "agent">) => (t.agent === "codex" ? "Codex" : "Claude");
+/** Claude gets a spark on coral, Codex a prompt on blue, so the two are told apart at a glance. */
+export function AgentMark({ agent, size = "normal" }: { agent?: Ticket["agent"]; size?: "normal" | "small" }) {
+  const codex = agent === "codex";
+  const px = size === "small" ? 11 : 16;
+  return (
+    <span className={`agent-mark ${codex ? "codex" : "claude"}${size === "small" ? " small" : ""}`} aria-hidden>
+      {codex ? <TerminalIcon size={px} /> : <SparkIcon size={px} />}
+    </span>
+  );
+}
+const lastAt = (t: Ticket) => t.session?.lastMessage?.at ?? t.createdAt;
+/** Markdown marks read as noise in a one-line preview. */
+const plainText = (text: string) => text.replace(/[`*_#>]+/g, "").replace(/\s+/g, " ").trim();
+/** A short title from the first message, like a chat app names a new thread. */
+const titleFrom = (text: string) => {
+  const line = text.trim().split("\n")[0].replace(/^\/\S+\s*/, "").trim() || text.trim();
+  return line.length > 60 ? `${line.slice(0, 57).trimEnd()}…` : line;
+};
+
+/** Sessions tab: start a chat with Claude or Codex in this repo, or pick up an earlier one. */
+export function SessionsPage({ profile, tickets, onOpen }: { profile: Profile; tickets: Ticket[]; onOpen: (id: string) => void }) {
+  useNow();
+  const sessions = useMemo(() => tickets.filter((t) => t.standalone).sort((a, b) => lastAt(b).localeCompare(lastAt(a))), [tickets]);
+  const [resuming, setResuming] = useState(false);
+  return (
+    <div className="workspace-scroll sessions-page">
+      <div className="sessions-column">
+        <SessionStarter profile={profile} onStarted={onOpen} />
+        <div className="sessions-head">
+          <h2>Sessions</h2>
+          <button className="btn small" onClick={() => setResuming(true)}><HistoryIcon size={15} /> Resume earlier</button>
+        </div>
+        {sessions.length === 0 ? (
+          <p className="sessions-empty">No sessions yet. Ask something above, or resume a conversation you started in a terminal.</p>
+        ) : (
+          <ul className="session-list">
+            {sessions.map((t) => <li key={t.id}><SessionRow ticket={t} onOpen={() => onOpen(t.id)} /></li>)}
+          </ul>
+        )}
+      </div>
+      {resuming && <ResumeDialog profile={profile} onClose={() => setResuming(false)} onResumed={(id) => { setResuming(false); onOpen(id); }} />}
+    </div>
+  );
+}
+
+function SessionRow({ ticket, onOpen }: { ticket: Ticket; onOpen: () => void }) {
+  const last = ticket.session?.lastMessage;
+  const att = ticket.attention;
+  const state = ticket.running ? "running" : att?.kind === "reply" ? "unread" : att ? "waiting" : null;
+  return (
+    <button className={`session-item ${state ?? ""}`} onClick={onOpen}>
+      <AgentMark agent={ticket.agent} />
+      <span className="session-item-main">
+        <span className="session-item-top">
+          <span className="session-item-title">{ticket.title}</span>
+          <time className="session-item-time" dateTime={lastAt(ticket)}>{timeAgo(lastAt(ticket))}</time>
+        </span>
+        <span className="session-item-preview">
+          {ticket.running ? <><span className="spinner" /> {ticket.lastActivity ?? `${agentName(ticket)} is working…`}</>
+            : att && att.kind !== "reply" ? <b>{att.label}</b>
+            : last ? <>{last.role === "user" ? "You: " : ""}{plainText(last.text)}</>
+            : "No messages yet"}
+        </span>
+      </span>
+      <span className="sr-only">{agentName(ticket)}{ticket.access === "edit" ? ", can edit" : ", read only"}{state === "unread" ? ", new reply" : ""}</span>
+      {state === "unread" && <span className="unread-dot" aria-hidden />}
+    </button>
+  );
+}
+
+function SessionStarter({ profile, onStarted }: { profile: Profile; onStarted: (id: string) => void }) {
+  const [agent, setAgent] = usePersistentState<Agent>("esa.session.agent", () => "claude", () => false, (v) => v === "claude" || v === "codex");
+  const [access, setAccess] = usePersistentState<Access>("esa.session.access", () => "read", () => false, (v) => v === "read" || v === "edit");
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const box = useRef<HTMLTextAreaElement>(null);
+  const name = agent === "codex" ? "Codex" : "Claude";
+  useEffect(() => autoGrow(box.current, 6), [text]);
+
+  const start = async () => {
+    const message = text.trim();
+    if (!message || busy) return;
+    setBusy(true);
+    try {
+      const t = await api.createTicket(profile.slug, { title: titleFrom(message), body: "", status: "backlog", standalone: true, access, agent });
+      await api.chat(profile.slug, t.id, message);
+      setText("");
+      onStarted(t.id);
+    } catch (e: any) {
+      toast(e.message, { tone: "error" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form className="session-starter" onSubmit={(e) => { e.preventDefault(); void start(); }}>
+      <label className="starter-label" htmlFor="session-starter-input">Start a session in <b>{profile.name}</b></label>
+      <textarea id="session-starter-input" ref={box} rows={2} value={text} disabled={busy} onChange={(e) => setText(e.target.value)}
+        placeholder={access === "read" ? `Ask ${name} about this repo…` : `Tell ${name} what to do…`}
+        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !matchMedia("(pointer: coarse)").matches) { e.preventDefault(); void start(); } }} />
+      <div className="starter-foot">
+        <div className="segmented" role="radiogroup" aria-label="Agent">
+          {AGENTS.map((a) => (
+            <button type="button" key={a.id} role="radio" aria-checked={agent === a.id} onClick={() => setAgent(a.id)}>
+              <AgentMark agent={a.id} size="small" />{a.label}
+            </button>
+          ))}
+        </div>
+        <div className="segmented" role="radiogroup" aria-label="What it may do">
+          {ACCESS.map((a) => (
+            <button type="button" key={a.id} role="radio" aria-checked={access === a.id} title={a.hint} onClick={() => setAccess(a.id)}>{a.label}</button>
+          ))}
+        </div>
+        <button type="submit" className="btn primary send-round" disabled={!text.trim() || busy} aria-label={`Start session with ${name}`}>
+          {busy ? <span className="spinner" /> : <ArrowUpIcon size={18} />}
+        </button>
+      </div>
+      <p className="starter-hint">{ACCESS.find((a) => a.id === access)!.hint}</p>
+    </form>
+  );
+}
+
+/** Pick up a Claude or Codex conversation started elsewhere (terminal, IDE) in this folder. */
+function ResumeDialog({ profile, onClose, onResumed }: { profile: Profile; onClose: () => void; onResumed: (id: string) => void }) {
+  const [agent, setAgent] = useState<Agent>("claude");
+  const [list, setList] = useState<ClaudeSession[] | null>(null);
+  const [error, setError] = useState("");
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    setList(null); setError("");
+    (agent === "codex" ? api.codexSessions(profile.slug) : api.sessions(profile.slug)).then(setList, (e) => setError(e.message));
+  }, [agent, profile.slug]);
+  const needle = q.trim().toLowerCase();
+  const shown = (list ?? []).filter((s) => !needle || `${s.title ?? ""} ${s.firstPrompt ?? ""}`.toLowerCase().includes(needle));
+
+  const resume = async (s: ClaudeSession) => {
+    try {
+      const t = await api.createTicket(profile.slug, {
+        title: sessionLabel(s).slice(0, 80), body: "", status: "backlog", standalone: true, access: "read", agent,
+        ...(agent === "codex" ? { codexSessionId: s.id } : { sessionId: s.id }),
+      });
+      onResumed(t.id);
+    } catch (e: any) { setError(e.message); }
+  };
+
+  return (
+    <Modal title="Resume an earlier session" onClose={onClose} wide>
+      <div className="form">
+        <div className="segmented" role="radiogroup" aria-label="Agent">
+          {AGENTS.map((a) => <button type="button" key={a.id} role="radio" aria-checked={agent === a.id} onClick={() => setAgent(a.id)}>{a.label}</button>)}
+        </div>
+        <p className="muted small" style={{ margin: 0 }}>{agent === "codex" ? "Codex" : "Claude Code"} conversations started in <code>{profile.path}</code>.</p>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name…" aria-label="Search sessions" />
+        <div className="picker-list sessions" role="listbox">
+          {error && <div className="picker-empty">{error}</div>}
+          {!error && list === null && <div className="picker-empty">Loading…</div>}
+          {list !== null && !shown.length && <div className="picker-empty">{list.length ? "No match." : "No earlier sessions in this folder."}</div>}
+          {shown.map((s) => (
+            <button key={s.id} type="button" className="session-row" disabled={!!s.ticket} onClick={() => resume(s)}
+              title={s.ticket ? `Already open as "${s.ticket.title}"` : s.id}>
+              <div className="session-main">
+                <span className="session-title">{sessionLabel(s)}</span>
+                {s.title && s.firstPrompt && <span className="session-sub">{s.firstPrompt}</span>}
+              </div>
+              <div className="session-meta">
+                {s.ticket && <span className="badge stopped">open: {s.ticket.title}</span>}
+                <span className="muted small">{timeAgo(s.lastActive)}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** One session, full screen on a phone: the chat, and the changes it made. */
+export function SessionView({ profile, ticket, tickets, onClose, onOpenTicket }: {
+  profile: Profile; ticket: Ticket; tickets: Ticket[]; onClose: () => void; onOpenTicket: (id: string) => void;
+}) {
+  const slug = profile.slug;
+  const [tab, setTab] = useState<"chat" | "changes">("chat");
+  const [title, setTitle] = useState(ticket.title);
+  const [menu, setMenu] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const onError = (message: string) => toast(message, { tone: "error" });
+  useLayer(onClose, { active: !menu && !confirmDelete });
+  useEffect(() => setTitle(ticket.title), [ticket.title]);
+
+  // Looking at the session marks its latest reply as read.
+  const lastReply = ticket.session?.lastMessage?.at;
+  useEffect(() => {
+    if (ticket.running || !lastReply || (ticket.readAt && ticket.readAt >= lastReply)) return;
+    // The reply's own time, from the server's clock: the phone's clock may run behind.
+    api.updateTicket(slug, ticket.id, { readAt: lastReply }).catch(() => {});
+  }, [lastReply, ticket.running]);
+
+  const saveTitle = () => {
+    const next = title.trim();
+    if (!next || next === ticket.title) return setTitle(ticket.title);
+    api.updateTicket(slug, ticket.id, { title: next }).catch((e) => onError(e.message));
+  };
+  const setAccess = (access: Access) => {
+    if (access !== ticket.access) api.updateTicket(slug, ticket.id, { access }).catch((e) => onError(e.message));
+  };
+  const toBoard = async () => {
+    setMenu(false);
+    try {
+      await api.updateTicket(slug, ticket.id, { standalone: false });
+      toast("Moved to the board's Backlog.", { tone: "ok" });
+    } catch (e: any) { onError(e.message); }
+  };
+
+  return (
+    <div className="drawer-wrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <aside className="panel session-panel" role="dialog" aria-modal="true" aria-label={ticket.title}>
+        <header className="panel-head session-head">
+          <button className="icon-btn back-btn" onClick={onClose} aria-label="Back to sessions"><ChevronLeftIcon size={20} /></button>
+          <AgentMark agent={ticket.agent} />
+          <input className="title-input" value={title} aria-label="Session name" onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
+            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); else if (e.key === "Escape") { setTitle(ticket.title); e.currentTarget.blur(); } }} />
+          <div className="segmented compact" role="radiogroup" aria-label="What it may do">
+            {ACCESS.map((a) => (
+              <button type="button" key={a.id} role="radio" aria-checked={(ticket.access ?? "read") === a.id} disabled={!!ticket.running}
+                title={ticket.running ? "Stop the agent to change this" : a.hint} onClick={() => setAccess(a.id)}>{a.id === "read" ? "Read" : "Edit"}</button>
+            ))}
+          </div>
+          <div className="session-menu">
+            <button className="icon-btn" aria-label="Session actions" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((v) => !v)}><MoreIcon /></button>
+            {menu && <SessionMenu ticket={ticket} onClose={() => setMenu(false)} onToBoard={toBoard} onDelete={() => { setMenu(false); setConfirmDelete(true); }} />}
+          </div>
+          <button className="icon-btn close-btn" onClick={onClose} aria-label="Close" title="Close (Esc)"><CloseIcon /></button>
+        </header>
+        <div className="panel-body details-closed">
+          <div className="panel-main">
+            <nav className="tabs" role="tablist" aria-label="Session">
+              <button role="tab" aria-selected={tab === "chat"} className={tab === "chat" ? "active" : ""} onClick={() => setTab("chat")}>
+                Chat {ticket.running && <span className="dot" />}
+              </button>
+              <button role="tab" aria-selected={tab === "changes"} className={tab === "changes" ? "active" : ""} onClick={() => setTab("changes")}>Changes</button>
+            </nav>
+            {tab === "changes"
+              ? <div className="panel-scroll"><ReviewPanel slug={slug} ticket={ticket} onError={onError} onOutputs={() => setTab("chat")} /></div>
+              : <Chat slug={slug} ticket={ticket} tickets={tickets} onOpenTicket={onOpenTicket} onError={onError} />}
+          </div>
+        </div>
+        {confirmDelete && (
+          <ConfirmDialog title={`Delete "${ticket.title}"?`} confirmLabel="Delete session" busyLabel="Deleting…" onCancel={() => setConfirmDelete(false)}
+            onConfirm={async () => { await api.deleteTicket(slug, ticket.id); onClose(); }}>
+            <p>Removes it from Sessions.{ticket.running ? ` ${agentName(ticket)} will be stopped.` : ""} The conversation stays in {agentName(ticket)}'s own history, and files it changed stay as they are.</p>
+          </ConfirmDialog>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function SessionMenu({ ticket, onClose, onToBoard, onDelete }: { ticket: Ticket; onClose: () => void; onToBoard: () => void; onDelete: () => void }) {
+  const root = useRef<HTMLDivElement>(null);
+  useLayer(onClose);
+  useEffect(() => {
+    root.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const outside = (e: PointerEvent) => { if (!root.current?.parentElement?.contains(e.target as Node)) onClose(); };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, []);
+  return (
+    <div className="inbox-menu session-menu-list" role="menu" aria-label="Session actions" ref={root}>
+      <button role="menuitem" className="menu-item" onClick={onToBoard}><span className="menu-icon"><ColumnsIcon /></span><span className="menu-label">Move to board</span></button>
+      {ticket.resumeCommand && (
+        <button role="menuitem" className="menu-item" onClick={() => { void copy(ticket.resumeCommand!); toast("Terminal command copied.", { tone: "ok" }); onClose(); }}>
+          <span className="menu-icon"><CopyIcon /></span><span className="menu-label">Copy terminal command</span>
+        </button>
+      )}
+      <div className="menu-sep" />
+      <button role="menuitem" className="menu-item danger" onClick={onDelete}><span className="menu-icon"><TrashIcon /></span><span className="menu-label">Delete session</span></button>
+    </div>
+  );
+}

@@ -1,10 +1,15 @@
+import { NotificationsDialog } from "./NotificationsDialog";
+import { WorkspaceNavigation, WorkspaceControls, WorkspaceInbox, WorkspaceActivity, TicketList, EMPTY_FILTER, type WorkspacePage, type WorkspaceFilter } from "./Workspace";
+import { metadataMatches } from "./ticketTemplates";
+import { SessionsPage, SessionView } from "./Sessions";
+import { usePersistentState } from "./usePersistentState";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, copy, COLUMNS, onReconnect, subscribe, type Health, type InboxItem, type McpState, type Profile, type Schedule, type Status, type Ticket } from "./api";
 import { avatarColor, avatarLetter } from "./avatar";
 import { BugReportDialog } from "./BugReportDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
 import { HeaderMenu } from "./HeaderMenu";
-import { BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, CopyIcon, GearIcon, KeyboardIcon, PlugIcon, SearchIcon, TerminalIcon } from "./icons";
+import { BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, CopyIcon, GearIcon, KeyboardIcon, PlusIcon, PlugIcon, SearchIcon, TerminalIcon } from "./icons";
 import { Inbox } from "./Inbox";
 import { UsagePill } from "./UsagePill";
 import { anyLayerOpen } from "./layers";
@@ -126,8 +131,18 @@ export function App() {
   const [profileDialog, setProfileDialog] = useState<"new" | "edit" | null>(null);
   const [newTicket, setNewTicket] = useState(false);
   const setError = (msg: string) => toast(msg, { tone: "error" });
+  const [workspacePage, setWorkspacePage] = usePersistentState<WorkspacePage>("esa.page", () => "board", () => false, (v) => ["board", "sessions", "inbox", "activity"].includes(v));
+  const [layout, setLayout] = useState<"board" | "list">("board");
+  const [metadataFilter, setMetadataFilter] = useState<WorkspaceFilter>(EMPTY_FILTER);
   const [filters, setFilters] = useState<Set<FilterId>>(new Set());
   const [dismissed, setDismissed] = useState(readDismissed);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  // The installed app's icon badge shows how many tickets and sessions wait on you.
+  useEffect(() => {
+    const nav = navigator as Navigator & { setAppBadge?: (count: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
+    if (inbox.length) nav.setAppBadge?.(inbox.length).catch(() => {});
+    else nav.clearAppBadge?.().catch(() => {});
+  }, [inbox.length]);
   const [shortcuts, setShortcuts] = useState(false);
   const [bugReport, setBugReport] = useState(false);
   const [switcher, setSwitcher] = useState(false);
@@ -361,9 +376,11 @@ export function App() {
   const open = tickets.find((t) => t.id === openId) ?? null;
   const q = query.trim().toLowerCase();
   const activeFilters = FILTERS.filter((f) => filters.has(f.id));
-  const shownTickets = tickets.filter((t) =>
-    (!q || `${t.title}\n${t.body}`.toLowerCase().includes(q)) && (!activeFilters.length || activeFilters.some((f) => f.test(t))));
-  const filtering = !!q || activeFilters.length > 0;
+  // Sessions live on their own page; the board, its filters and counts only see board tickets.
+  const boardTickets = tickets.filter((t) => !t.standalone);
+  const shownTickets = boardTickets.filter((t) =>
+    metadataMatches(t, metadataFilter) && (!q || `${t.title}\n${t.body}`.toLowerCase().includes(q)) && (!activeFilters.length || activeFilters.some((f) => f.test(t))));
+  const filtering = !!q || activeFilters.length > 0 || Object.values(metadataFilter).some(Boolean);
   // Prev/next walk the visible tickets in board order as it was when the drawer opened, so moving the open
   // ticket (e.g. Backlog to Done) doesn't send Next into its new column. Stepping keeps that order;
   // deleted tickets are skipped.
@@ -406,6 +423,7 @@ export function App() {
   const scheduleErrors = schedules?.filter((s) => s.lastError).length ?? 0;
   const missing = health ? (["claude", "git", "gh"] as const).filter((k) => !health[k]) : [];
   const running = tickets.filter((t) => t.status === "in_progress").length;
+  const sessionsNeedingYou = tickets.filter((t) => t.standalone && !t.running && t.attention).length;
 
   const updateKey = `update:${version?.latest}`;
   const pathKey = `path:${missing.join(",")}`;
@@ -421,7 +439,7 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <img className="brand-icon" src="/icons/esa-192.png?v=4" width="28" height="28" alt="" />
+          <img className="brand-icon" src="/icons/esa-192.png?v=5" width="28" height="28" alt="" />
           <span className="brand-name">Esa Kanban</span>
         </div>
         {profiles && profiles.length > 0 && (
@@ -501,8 +519,8 @@ export function App() {
           {mcpAttention > 0 && <span className="need-chip">{mcpAttention}</span>}
         </button>}
         {profile && (
-          <button className="btn primary new-ticket-btn" onClick={() => setNewTicket(true)} title="New ticket (N)">
-            New ticket
+          <button className="btn primary new-ticket-btn" onClick={() => setNewTicket(true)} title="New ticket (N)" aria-label="New ticket">
+            <PlusIcon size={21} className="icon new-ticket-symbol" /><span className="new-ticket-label">New ticket</span>
           </button>
         )}
         <HeaderMenu items={[
@@ -518,10 +536,13 @@ export function App() {
             { label: `Connections${mcpAttention ? ` · ${mcpAttention} need you` : ""}`, icon: <PlugIcon />, onSelect: () => setConnections(true) },
           ] : []),
           ...(profile ? [{ label: "Board settings", icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
+          { label: "Notifications", icon: <ChatIcon />, onSelect:()=>setNotificationsOpen(true) },
           { label: "Keyboard shortcuts", hint: "?", icon: <KeyboardIcon />, onSelect: () => setShortcuts(true) },
           { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
         ]} footer={narrow && profile ? `${running}/${profile.maxParallel} running` : version && version.version !== "dev" ? `Esa Kanban v${version.version}` : null} />
       </header>
+
+      <WorkspaceNavigation page={workspacePage} onChange={setWorkspacePage} count={inbox.length} sessions={sessionsNeedingYou} />
 
       {!pwa.online && <div className="banner warn" role="status"><span>You’re offline. Changes and messages need a connection to your Mac.</span></div>}
       {pwa.waiting && !pwa.dismissed && pwa.online && <div className="banner info pwa-update" role="status">
@@ -576,6 +597,7 @@ export function App() {
         </div>
       ) : (
         <>
+          {workspacePage === "inbox" ? <WorkspaceInbox items={inbox} onPick={i=>{if(i.profile!==slug)setSlug(i.profile);openTicket(i.id,i.profile);}} /> : workspacePage === "activity" ? <WorkspaceActivity key={slug} slug={profile.slug} onOpen={openTicket} /> : workspacePage === "sessions" ? <SessionsPage profile={profile} tickets={tickets} onOpen={openTicket} /> : <>
           <div className="board-bar">
             <div className="search">
               <SearchIcon className="icon search-icon" />
@@ -591,7 +613,7 @@ export function App() {
             </div>
             <div className="filter-chips" role="group" aria-label="Filter tickets">
               {FILTERS.map((f) => {
-                const n = tickets.filter(f.test).length;
+                const n = boardTickets.filter(f.test).length;
                 return (
                   <button key={f.id} className={`chip${filters.has(f.id) ? " on" : ""}`} aria-pressed={filters.has(f.id)} onClick={() => toggleFilter(f.id)}>
                     {f.label}{n > 0 && <span className="chip-count">{n}</span>}
@@ -599,14 +621,16 @@ export function App() {
                 );
               })}
             </div>
+          <WorkspaceControls key={profile.slug} slug={profile.slug} tickets={boardTickets} filter={metadataFilter} onFilter={setMetadataFilter} layout={layout} onLayout={setLayout} query={query} onQuery={setQuery} flags={[...filters]} onFlags={values=>setFilters(new Set(values.filter((f):f is FilterId=>FILTERS.some(x=>x.id===f))))} />
             {filtering && (
               <span className="muted small" aria-live="polite">
-                {shownTickets.length} of {tickets.length} ticket{tickets.length === 1 ? "" : "s"}
-                {" · "}<button className="link-btn small" onClick={() => { setQuery(""); setFilters(new Set()); }}>Clear all</button>
+                {shownTickets.length} of {boardTickets.length} ticket{boardTickets.length === 1 ? "" : "s"}
+                {" · "}<button className="link-btn small" onClick={() => { setQuery(""); setFilters(new Set()); setMetadataFilter(EMPTY_FILTER); }}>Clear all</button>
               </span>
             )}
           </div>
-          <Board tickets={shownTickets} filtered={filtering} onOpen={(id) => openTicket(id)} onMove={move} onAdd={() => setNewTicket(true)} restartPending={restart.pending} />
+          {layout === "list" ? <TicketList tickets={shownTickets} onOpen={openTicket} /> : <Board tickets={shownTickets} filtered={filtering} onOpen={(id) => openTicket(id)} onMove={move} onAdd={() => setNewTicket(true)} restartPending={restart.pending} />}
+          </>}
         </>
       )}
 
@@ -624,6 +648,7 @@ export function App() {
         <ConnectionsDialog state={mcp} onClose={() => setConnections(false)}
           onRunInTerminal={profile && health?.pty !== false ? (cmd) => { setConnections(false); runInTerminal(cmd); } : undefined} />
       )}
+      {notificationsOpen && <NotificationsDialog onClose={()=>setNotificationsOpen(false)} />}
       {shortcuts && <ShortcutsDialog onClose={() => setShortcuts(false)} />}
       {bugReport && <BugReportDialog onClose={() => setBugReport(false)} />}
       {switcher && profile && (
@@ -633,7 +658,8 @@ export function App() {
         <SchedulesDialog profile={profile} schedules={schedules} tickets={tickets} onClose={() => setSchedulesOpen(false)}
           onOpenTicket={(id) => { setSchedulesOpen(false); openTicket(id); }} />
       )}
-      {open && profile && <TicketDrawer key={open.id} profile={profile} ticket={open} tickets={tickets} onOpenTicket={openTicket} onClose={closeTicket}
+      {open && profile && open.standalone && <SessionView key={open.id} profile={profile} ticket={open} tickets={tickets} onClose={closeTicket} onOpenTicket={openTicket} />}
+      {open && profile && !open.standalone && <TicketDrawer key={open.id} profile={profile} ticket={open} tickets={tickets} onOpenTicket={openTicket} onClose={closeTicket}
         nav={{ prev: prevId, next: nextId, go: stepTicket }} slideIn={!stepped.current} />}
       {profileDialog && (
         <ProfileDialog

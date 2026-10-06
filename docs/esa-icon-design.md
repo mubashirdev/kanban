@@ -7,3 +7,10 @@ The original generated artwork is saved in `web/branding/esa-ai-source.png`. Exp
 ## Final generation prompt
 
 Use case: logo-brand. Create a single premium app icon for Esa Kanban, an AI-powered kanban and coding workspace. Square full-bleed opaque midnight navy background, no rounded outer border or mockup. Central distinctive mark: three thick staggered luminous glass task cards joined by a subtle vertical spine, together suggesting a stylized capital E and organized kanban tasks. A prominent elegant four-point AI sparkle emerges from the upper right of this mark and is integrated with it, not a disconnected decoration. Electric cyan, indigo and violet illumination, restrained soft glow, polished glass edge highlights, clean dimensional depth. The main silhouette must be bold, uncluttered and instantly readable at 32px, sophisticated rather than playful. Keep all essential artwork inside the central 75% of the square for circular and iOS icon masking. Balanced centered composition. No words, labels, tiny circuitry, grids, robots, brains, existing brand logos, watermark, device frame, or surrounding scene. Render the actual icon artwork only, not a presentation of an icon. 1024x1024.
+
+
+## Warm theme revision
+
+Final source: `web/branding/esa-warm-ai-source.png`, edited with built-in imagegen from the original artwork. PNG exports now use `v=5`.
+
+Prompt: Edit this Esa Kanban app icon to match an elegant warm cream and terracotta application theme. Preserve the distinctive E silhouette formed by three task cards and the integrated four-point AI sparkle, the centered composition and generous mask-safe margins. Replace ALL blue cyan violet neon with restrained terracotta coral #c96442, peach, ivory and warm white. Replace the navy backdrop with solid warm ivory #f6f5f1. Use premium softly sculpted matte ceramic surfaces, delicate warm highlights and subtle shadows, bold readable shape at 32px. Remove neon glow and glass look. Full-bleed opaque square icon artwork only, no outer rounded frame, no text or watermark. It must clearly remain an AI productivity icon and match a professional cream-and-coral interface.

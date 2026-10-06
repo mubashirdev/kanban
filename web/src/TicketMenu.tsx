@@ -62,7 +62,7 @@ export function TicketMenu({ ticket, working, live, linkedLabel, onPickSession, 
   const pick = (fn: () => void) => () => { close(false); fn(); };
 
   const hasSession = !!(ticket.workdir && ticket.sessionId);
-  const canLink = !hasSession && !working && ticket.status !== "done" && ticket.runCount === 0;
+  const canLink = ticket.agent !== "codex" && !hasSession && !working && ticket.status !== "done" && ticket.runCount === 0;
 
   return (
     <div className="ticket-menu-wrap" ref={root}>
@@ -80,11 +80,11 @@ export function TicketMenu({ ticket, working, live, linkedLabel, onPickSession, 
           </div>
           {ticket.resumeCommand && (
             <button role="menuitem" className="term-block" disabled={working}
-              title={working ? "Wait until Claude is done" : ticket.resumeCommand}
+              title={working ? "Wait until the agent is done" : ticket.resumeCommand}
               onClick={() => copyItem("resume", ticket.resumeCommand!)}>
               <span className="term-bar">
                 <span>Resume in your terminal</span>
-                <span className="term-copy">{working ? "Wait until Claude is done" : copied === "resume" ? "Copied ✓" : "Click to copy"}</span>
+                <span className="term-copy">{working ? "Wait until the agent is done" : copied === "resume" ? "Copied ✓" : "Click to copy"}</span>
               </span>
               <span className="term-line">{ticket.resumeCommand}</span>
             </button>

@@ -86,15 +86,15 @@ function SortableCard({ ticket, onOpen, queued, held }: { ticket: Ticket; onOpen
 
 const EMPTY_HINT: Record<Status, string> = {
   backlog: "No parked ideas. Add a ticket to get started.",
-  planning: "Drop a card here and Claude starts interviewing you",
-  ready: "Drop a card here and Claude starts working on it",
-  in_progress: "Drop a card here and Claude starts working on it (queued if all slots are busy)",
+  planning: "Drop a card here and the agent starts interviewing you",
+  ready: "Drop a card here and the agent starts working on it",
+  in_progress: "Drop a card here and the agent starts working on it (queued if all slots are busy)",
   review: "Finished work lands here for you to check",
   done: "Nothing finished yet",
 };
 
 const DONE_LIMIT = 10;
-const CLAUDE_TAG = "Claude starts automatically when a card is here";
+const CLAUDE_TAG = "The selected agent starts automatically here";
 
 function Column({ id, label, hint, claude, tickets, queue = [], held = false, onOpen, onAdd, collapsed, onCollapse, filtered }: {
   id: Status; label: string; hint: string; claude: boolean; tickets: Ticket[];

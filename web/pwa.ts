@@ -24,6 +24,24 @@ self.addEventListener('activate', event => event.waitUntil((async () => {
 })()));
 // Wait until the user chooses to reload, or every old tab is closed.
 self.addEventListener('message', event => { if (event.data?.type === 'ACTIVATE_UPDATE') self.skipWaiting(); });
+self.addEventListener('push', event => {
+  let payload = {}; try { const value = event.data ? event.data.json() : {}; if (value && typeof value === 'object' && !Array.isArray(value)) payload = value; } catch {}
+  const url = typeof payload.url === 'string' && payload.url.startsWith('/#/') ? payload.url : '/';
+  event.waitUntil(self.registration.showNotification('Esa Kanban', {
+    body: typeof payload.body === 'string' ? payload.body : 'A ticket has an update.',
+    icon: '/icons/esa-192.png', badge: '/icons/esa-32.png',
+    tag: typeof payload.tag === 'string' ? payload.tag : 'esa-update', data: {url}
+  }));
+});
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const target = new URL(event.notification.data?.url || '/', self.location.origin);
+  if (target.origin !== self.location.origin) return;
+  event.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(async windows => {
+    for (const window of windows) { if (new URL(window.url).origin === self.location.origin) { await window.navigate(target.href); return window.focus(); } }
+    return clients.openWindow(target.href);
+  }));
+});
 self.addEventListener('fetch', event => {
   const request = event.request, url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin) return;

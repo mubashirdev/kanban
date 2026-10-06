@@ -19,6 +19,7 @@ export function attentionFor(
 ): Attention | null {
   if (t.plan?.state === "stuck" && t.status !== "done" && !o.planComplete) return { kind: "blocked", label: "Plan stuck" };
   if (running || t.status === "in_progress") return null;
+  if (t.standalone) return sessionAttention(t, s);
   // A running plan's planner and children are handled unattended; the plan pings the user when stuck.
   if (o.managed || t.plan?.state === "running" || t.plan?.state === "finishing" || t.plan?.state === "paused") return null;
   // Done means accepted as-is; Backlog means parked. Neither waits on the user, whatever the session holds.
@@ -36,5 +37,16 @@ export function attentionFor(
   if (t.status === "review") return { kind: "review", label: "Ready for review" };
   // A reply cut off by a restart isn't a reply yet: recover() resumes it.
   if (t.status === "planning" && s?.lastMessage?.role === "assistant" && !t.interrupted) return { kind: "reply", label: "Claude replied" };
+  return null;
+}
+
+/** A standalone session waits on the user when it failed, asked something, or replied since they last looked. */
+function sessionAttention(t: Ticket, s: SessionSummary | null): Attention | null {
+  const agent = t.agent === "codex" ? "Codex" : "Claude";
+  if (t.outcome === "failed") return { kind: "failed", label: "Run failed" };
+  const q = s?.openQuestions ?? 0;
+  if (q > 0) return { kind: "questions", label: `Answer ${q} question${q === 1 ? "" : "s"}` };
+  const last = s?.lastMessage;
+  if (last?.role === "assistant" && !t.interrupted && (!t.readAt || (last.at ?? "") > t.readAt)) return { kind: "reply", label: `${agent} replied` };
   return null;
 }
