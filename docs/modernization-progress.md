@@ -3,12 +3,12 @@
 Goal: control Claude and Codex fully from a phone. Keep the cream/coral branding, the PWA identity and sign-in, saved drafts, existing data and active-run behaviour.
 
 - [x] Matching AI branding
-- [x] Board/list views and mobile Board/Sessions/Inbox/Activity bottom navigation
+- [x] Board/list views; phones get a one-row toolbar (search + Filters sheet) and no bottom bar, Activity sits in the menu
 - [x] Development templates, priorities, labels and saved views
 - [x] Review tab: diffs, CI checks, preview links and request changes
 - [x] Opt-in push notifications and app icon badge
 - [x] Per-ticket Claude/Codex execution with separate sessions
-- [x] Sessions: ticket-free Claude/Codex chats in the repo folder, read-only or edit, resume earlier CLI sessions, move to board
+- [x] Sessions lane first on the board: ticket-free Claude/Codex chats in the repo folder that open as a full-screen chat, read-only or edit, resume earlier CLI sessions, move to board
 - [x] One `/` menu for both agents: recent, common commands first, skills; Codex skills insert `$name`; `/clear` for both
 - [x] 44px touch targets across board, ticket and session views
 - [x] Tests, type checks, phone and desktop browser checks

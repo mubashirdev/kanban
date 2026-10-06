@@ -6,7 +6,7 @@ import { useImagePaste } from "./imagePaste";
 import { NewTicketsCard } from "./NewTicketsCard";
 import { ProposalCard } from "./ProposalCard";
 import { QuestionsForm } from "./QuestionsForm";
-import { draftKey, formKey } from "./drafts";
+import { draftKey, formKey, takeFirstMessage } from "./drafts";
 import { fullTime, timeAgo, useNow } from "./time";
 import { toast } from "./toast";
 import { Markdown } from "./Transcript";
@@ -102,7 +102,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   useNow();
   // Sent messages not yet in the session file (the server's queue covers ones Claude hasn't read).
   // steer: sent while Claude was working, so it waits for the server queue instead of joining the timeline.
-  const [pending, setPending] = useState<{ text: string; steer: boolean }[]>([]);
+  const [pending, setPending] = useState<{ text: string; steer: boolean }[]>(() => takeFirstMessage(ticket.id));
   const queued = ticket.queued ?? [];
   // Unsent text survives closing the drawer, switching tickets and reloads.
   const [draft, setDraft] = usePersistentState(draftKey(slug, ticket.id), () => "", (v) => !v.trim(), (v) => typeof v === "string");

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, copy, type ClaudeSession, type Profile, type Ticket } from "./api";
 import { autoGrow } from "./autoGrow";
+import { rememberFirstMessage } from "./drafts";
 import { Chat } from "./Chat";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, HistoryIcon, MoreIcon, SparkIcon, TerminalIcon, TrashIcon } from "./icons";
+import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, HistoryIcon, MoreIcon, PlusIcon, SparkIcon, TerminalIcon, TrashIcon } from "./icons";
 import { useLayer } from "./layers";
 import { Modal } from "./Modal";
 import { ReviewPanel } from "./ReviewPanel";
@@ -41,54 +42,65 @@ const titleFrom = (text: string) => {
   return line.length > 60 ? `${line.slice(0, 57).trimEnd()}…` : line;
 };
 
-/** Sessions tab: start a chat with Claude or Codex in this repo, or pick up an earlier one. */
-export function SessionsPage({ profile, tickets, onOpen }: { profile: Profile; tickets: Ticket[]; onOpen: (id: string) => void }) {
+/** First lane of the board: chats with Claude or Codex that never became tickets. Newest activity first. */
+export function SessionLane({ sessions, onOpen, onNew }: { sessions: Ticket[]; onOpen: (id: string) => void; onNew: () => void }) {
   useNow();
-  const sessions = useMemo(() => tickets.filter((t) => t.standalone).sort((a, b) => lastAt(b).localeCompare(lastAt(a))), [tickets]);
-  const [resuming, setResuming] = useState(false);
+  const sorted = [...sessions].sort((a, b) => lastAt(b).localeCompare(lastAt(a)));
+  const waiting = sorted.filter((t) => !t.running && t.attention).length;
+  const label = `${sorted.length} ${sorted.length === 1 ? "session" : "sessions"}${waiting ? `, ${waiting} new` : ""}`;
   return (
-    <div className="workspace-scroll sessions-page">
-      <div className="sessions-column">
-        <SessionStarter profile={profile} onStarted={onOpen} />
-        <div className="sessions-head">
-          <h2>Sessions</h2>
-          <button className="btn small" onClick={() => setResuming(true)}><HistoryIcon size={15} /> Resume earlier</button>
-        </div>
-        {sessions.length === 0 ? (
-          <p className="sessions-empty">No sessions yet. Ask something above, or resume a conversation you started in a terminal.</p>
-        ) : (
-          <ul className="session-list">
-            {sessions.map((t) => <li key={t.id}><SessionRow ticket={t} onOpen={() => onOpen(t.id)} /></li>)}
-          </ul>
-        )}
+    <section id="column-sessions" className="column col-sessions" aria-label="Sessions">
+      <header className="column-head">
+        <span className="column-title">Sessions</span>
+        <span className={`count ${waiting ? "needs-you" : ""}`} title={label} aria-label={label}>{sorted.length}</span>
+        <span className="spacer" />
+        <button className="icon-btn" title="New session" aria-label="New session" onClick={onNew}><PlusIcon /></button>
+      </header>
+      <div className="column-hint">Chat with Claude or Codex in this repo</div>
+      <div className="column-body">
+        {sorted.map((t) => <SessionCard key={t.id} ticket={t} onOpen={() => onOpen(t.id)} />)}
+        <button className="session-new" onClick={onNew}><PlusIcon /> New session</button>
       </div>
-      {resuming && <ResumeDialog profile={profile} onClose={() => setResuming(false)} onResumed={(id) => { setResuming(false); onOpen(id); }} />}
-    </div>
+    </section>
   );
 }
 
-function SessionRow({ ticket, onOpen }: { ticket: Ticket; onOpen: () => void }) {
+function SessionCard({ ticket, onOpen }: { ticket: Ticket; onOpen: () => void }) {
   const last = ticket.session?.lastMessage;
   const att = ticket.attention;
   const state = ticket.running ? "running" : att?.kind === "reply" ? "unread" : att ? "waiting" : null;
   return (
-    <button className={`session-item ${state ?? ""}`} onClick={onOpen}>
+    <button className={`card session-card ${state ?? ""}`} onClick={onOpen}
+      aria-label={`${ticket.title}, ${agentName(ticket)}${state === "unread" ? ", new reply" : state === "waiting" ? `, ${att!.label}` : ""}`}>
       <AgentMark agent={ticket.agent} />
-      <span className="session-item-main">
-        <span className="session-item-top">
-          <span className="session-item-title">{ticket.title}</span>
-          <time className="session-item-time" dateTime={lastAt(ticket)}>{timeAgo(lastAt(ticket))}</time>
+      <span className="session-card-main">
+        <span className="session-card-top">
+          <span className="session-card-title">{ticket.title}</span>
+          <time className="session-card-time" dateTime={lastAt(ticket)}>{timeAgo(lastAt(ticket))}</time>
         </span>
-        <span className="session-item-preview">
+        <span className="session-card-preview">
           {ticket.running ? <><span className="spinner" /> {ticket.lastActivity ?? `${agentName(ticket)} is working…`}</>
             : att && att.kind !== "reply" ? <b>{att.label}</b>
             : last ? <>{last.role === "user" ? "You: " : ""}{plainText(last.text)}</>
             : "No messages yet"}
         </span>
       </span>
-      <span className="sr-only">{agentName(ticket)}{ticket.access === "edit" ? ", can edit" : ", read only"}{state === "unread" ? ", new reply" : ""}</span>
       {state === "unread" && <span className="unread-dot" aria-hidden />}
     </button>
+  );
+}
+
+/** Start a chat, or pick up one begun in a terminal. */
+export function NewSessionDialog({ profile, onClose, onStarted }: { profile: Profile; onClose: () => void; onStarted: (id: string) => void }) {
+  const [resuming, setResuming] = useState(false);
+  if (resuming) return <ResumeDialog profile={profile} onClose={() => setResuming(false)} onResumed={onStarted} />;
+  return (
+    <Modal title={`New session in ${profile.name}`} onClose={onClose}>
+      <div className="form new-session">
+        <SessionStarter profile={profile} onStarted={onStarted} />
+        <button type="button" className="btn resume-link" onClick={() => setResuming(true)}><HistoryIcon size={15} /> Resume a session from a terminal</button>
+      </div>
+    </Modal>
   );
 }
 
@@ -107,6 +119,7 @@ function SessionStarter({ profile, onStarted }: { profile: Profile; onStarted: (
     setBusy(true);
     try {
       const t = await api.createTicket(profile.slug, { title: titleFrom(message), body: "", status: "backlog", standalone: true, access, agent });
+      rememberFirstMessage(t.id, message);
       await api.chat(profile.slug, t.id, message);
       setText("");
       onStarted(t.id);
@@ -119,8 +132,8 @@ function SessionStarter({ profile, onStarted }: { profile: Profile; onStarted: (
 
   return (
     <form className="session-starter" onSubmit={(e) => { e.preventDefault(); void start(); }}>
-      <label className="starter-label" htmlFor="session-starter-input">Start a session in <b>{profile.name}</b></label>
-      <textarea id="session-starter-input" ref={box} rows={2} value={text} disabled={busy} onChange={(e) => setText(e.target.value)}
+      <label className="sr-only" htmlFor="session-starter-input">First message</label>
+      <textarea id="session-starter-input" ref={box} rows={3} autoFocus value={text} disabled={busy} onChange={(e) => setText(e.target.value)}
         placeholder={access === "read" ? `Ask ${name} about this repo…` : `Tell ${name} what to do…`}
         onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !matchMedia("(pointer: coarse)").matches) { e.preventDefault(); void start(); } }} />
       <div className="starter-foot">

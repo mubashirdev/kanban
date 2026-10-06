@@ -1,7 +1,8 @@
 import { NotificationsDialog } from "./NotificationsDialog";
-import { WorkspaceNavigation, WorkspaceControls, WorkspaceInbox, WorkspaceActivity, TicketList, EMPTY_FILTER, type WorkspacePage, type WorkspaceFilter } from "./Workspace";
+import { WorkspaceControls, WorkspaceActivity, TicketList, EMPTY_FILTER, type WorkspaceFilter } from "./Workspace";
 import { metadataMatches } from "./ticketTemplates";
-import { SessionsPage, SessionView } from "./Sessions";
+import { NewSessionDialog, SessionView } from "./Sessions";
+import { Modal } from "./Modal";
 import { usePersistentState } from "./usePersistentState";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, copy, COLUMNS, onReconnect, subscribe, type Health, type InboxItem, type McpState, type Profile, type Schedule, type Status, type Ticket } from "./api";
@@ -9,7 +10,7 @@ import { avatarColor, avatarLetter } from "./avatar";
 import { BugReportDialog } from "./BugReportDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
 import { HeaderMenu } from "./HeaderMenu";
-import { BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, CopyIcon, GearIcon, KeyboardIcon, PlusIcon, PlugIcon, SearchIcon, TerminalIcon } from "./icons";
+import { BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, CopyIcon, GearIcon, KeyboardIcon, PlusIcon, PlugIcon, SearchIcon, TerminalIcon } from "./icons";
 import { Inbox } from "./Inbox";
 import { UsagePill } from "./UsagePill";
 import { anyLayerOpen } from "./layers";
@@ -131,7 +132,8 @@ export function App() {
   const [profileDialog, setProfileDialog] = useState<"new" | "edit" | null>(null);
   const [newTicket, setNewTicket] = useState(false);
   const setError = (msg: string) => toast(msg, { tone: "error" });
-  const [workspacePage, setWorkspacePage] = usePersistentState<WorkspacePage>("esa.page", () => "board", () => false, (v) => ["board", "sessions", "inbox", "activity"].includes(v));
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [newSession, setNewSession] = useState(false);
   const [layout, setLayout] = useState<"board" | "list">("board");
   const [metadataFilter, setMetadataFilter] = useState<WorkspaceFilter>(EMPTY_FILTER);
   const [filters, setFilters] = useState<Set<FilterId>>(new Set());
@@ -378,6 +380,8 @@ export function App() {
   const activeFilters = FILTERS.filter((f) => filters.has(f.id));
   // Sessions live on their own page; the board, its filters and counts only see board tickets.
   const boardTickets = tickets.filter((t) => !t.standalone);
+  // The Sessions lane follows the search; ticket filters (priority, PR…) don't apply to chats.
+  const shownSessions = tickets.filter((t) => t.standalone && (!q || t.title.toLowerCase().includes(q)));
   const shownTickets = boardTickets.filter((t) =>
     metadataMatches(t, metadataFilter) && (!q || `${t.title}\n${t.body}`.toLowerCase().includes(q)) && (!activeFilters.length || activeFilters.some((f) => f.test(t))));
   const filtering = !!q || activeFilters.length > 0 || Object.values(metadataFilter).some(Boolean);
@@ -423,7 +427,6 @@ export function App() {
   const scheduleErrors = schedules?.filter((s) => s.lastError).length ?? 0;
   const missing = health ? (["claude", "git", "gh"] as const).filter((k) => !health[k]) : [];
   const running = tickets.filter((t) => t.status === "in_progress").length;
-  const sessionsNeedingYou = tickets.filter((t) => t.standalone && !t.running && t.attention).length;
 
   const updateKey = `update:${version?.latest}`;
   const pathKey = `path:${missing.join(",")}`;
@@ -536,13 +539,13 @@ export function App() {
             { label: `Connections${mcpAttention ? ` · ${mcpAttention} need you` : ""}`, icon: <PlugIcon />, onSelect: () => setConnections(true) },
           ] : []),
           ...(profile ? [{ label: "Board settings", icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
-          { label: "Notifications", icon: <ChatIcon />, onSelect:()=>setNotificationsOpen(true) },
+          ...(profile ? [{ label: "Activity", icon: <ClockIcon />, onSelect: () => setActivityOpen(true) }] : []),
+          { label: "Notifications", icon: <BellIcon />, onSelect: () => setNotificationsOpen(true) },
           { label: "Keyboard shortcuts", hint: "?", icon: <KeyboardIcon />, onSelect: () => setShortcuts(true) },
           { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
         ]} footer={narrow && profile ? `${running}/${profile.maxParallel} running` : version && version.version !== "dev" ? `Esa Kanban v${version.version}` : null} />
       </header>
 
-      <WorkspaceNavigation page={workspacePage} onChange={setWorkspacePage} count={inbox.length} sessions={sessionsNeedingYou} />
 
       {!pwa.online && <div className="banner warn" role="status"><span>You’re offline. Changes and messages need a connection to your Mac.</span></div>}
       {pwa.waiting && !pwa.dismissed && pwa.online && <div className="banner info pwa-update" role="status">
@@ -597,7 +600,6 @@ export function App() {
         </div>
       ) : (
         <>
-          {workspacePage === "inbox" ? <WorkspaceInbox items={inbox} onPick={i=>{if(i.profile!==slug)setSlug(i.profile);openTicket(i.id,i.profile);}} /> : workspacePage === "activity" ? <WorkspaceActivity key={slug} slug={profile.slug} onOpen={openTicket} /> : workspacePage === "sessions" ? <SessionsPage profile={profile} tickets={tickets} onOpen={openTicket} /> : <>
           <div className="board-bar">
             <div className="search">
               <SearchIcon className="icon search-icon" />
@@ -621,7 +623,8 @@ export function App() {
                 );
               })}
             </div>
-          <WorkspaceControls key={profile.slug} slug={profile.slug} tickets={boardTickets} filter={metadataFilter} onFilter={setMetadataFilter} layout={layout} onLayout={setLayout} query={query} onQuery={setQuery} flags={[...filters]} onFlags={values=>setFilters(new Set(values.filter((f):f is FilterId=>FILTERS.some(x=>x.id===f))))} />
+          <WorkspaceControls key={profile.slug} slug={profile.slug} tickets={boardTickets} filter={metadataFilter} onFilter={setMetadataFilter} layout={layout} onLayout={setLayout} query={query} onQuery={setQuery} flags={[...filters]} onFlags={(values) => setFilters(new Set(values.filter((f): f is FilterId => FILTERS.some((x) => x.id === f))))}
+            flagOptions={FILTERS.map((f) => ({ id: f.id, label: f.label, count: boardTickets.filter(f.test).length }))} />
             {filtering && (
               <span className="muted small" aria-live="polite">
                 {shownTickets.length} of {boardTickets.length} ticket{boardTickets.length === 1 ? "" : "s"}
@@ -629,8 +632,7 @@ export function App() {
               </span>
             )}
           </div>
-          {layout === "list" ? <TicketList tickets={shownTickets} onOpen={openTicket} /> : <Board tickets={shownTickets} filtered={filtering} onOpen={(id) => openTicket(id)} onMove={move} onAdd={() => setNewTicket(true)} restartPending={restart.pending} />}
-          </>}
+          {layout === "list" ? <TicketList tickets={shownTickets} onOpen={openTicket} /> : <Board key={profile.slug} tickets={shownTickets} sessions={shownSessions} filtered={filtering} onOpen={(id) => openTicket(id)} onMove={move} onAdd={() => setNewTicket(true)} onNewSession={() => setNewSession(true)} restartPending={restart.pending} />}
         </>
       )}
 
@@ -648,7 +650,13 @@ export function App() {
         <ConnectionsDialog state={mcp} onClose={() => setConnections(false)}
           onRunInTerminal={profile && health?.pty !== false ? (cmd) => { setConnections(false); runInTerminal(cmd); } : undefined} />
       )}
-      {notificationsOpen && <NotificationsDialog onClose={()=>setNotificationsOpen(false)} />}
+      {notificationsOpen && <NotificationsDialog onClose={() => setNotificationsOpen(false)} />}
+      {activityOpen && profile && (
+        <Modal title="Activity" wide onClose={() => setActivityOpen(false)}>
+          <WorkspaceActivity key={profile.slug} slug={profile.slug} tickets={tickets} onOpen={(id) => { setActivityOpen(false); openTicket(id); }} />
+        </Modal>
+      )}
+      {newSession && profile && <NewSessionDialog profile={profile} onClose={() => setNewSession(false)} onStarted={(id) => { setNewSession(false); openTicket(id); }} />}
       {shortcuts && <ShortcutsDialog onClose={() => setShortcuts(false)} />}
       {bugReport && <BugReportDialog onClose={() => setBugReport(false)} />}
       {switcher && profile && (

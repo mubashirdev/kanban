@@ -9,6 +9,7 @@ import { BOARD_COLUMNS, COLUMNS, type Status, type Ticket } from "./api";
 import { Card } from "./Card";
 import { CollapseIcon, PlusIcon, SparkIcon } from "./icons";
 import { useMediaQuery } from "./useMediaQuery";
+import { SessionLane } from "./Sessions";
 
 const COLLAPSED_KEY = "ckanban.collapsedColumns";
 
@@ -43,6 +44,9 @@ interface Props {
   onOpen: (id: string) => void;
   onMove: (id: string, status: Status, order: number) => void;
   onAdd: (status: Status) => void;
+  /** Chats off the board, shown in the first lane. */
+  sessions: Ticket[];
+  onNewSession: () => void;
   /** A pending daemon restart holds queued tickets. */
   restartPending?: boolean;
   /** A search or filter is active (empty columns say "no match" instead of the usual hint). */
@@ -196,11 +200,13 @@ const collision: CollisionDetection = (args) => {
   return closestCenter(args);
 };
 
-export function Board({ tickets, onOpen, onMove, onAdd, filtered = false, restartPending = false }: Props) {
+type Lane = Status | "sessions";
+
+export function Board({ tickets, sessions, onOpen, onMove, onAdd, onNewSession, filtered = false, restartPending = false }: Props) {
   const compact = useMediaQuery("(max-width: 1023px)");
   const boardRef = useRef<HTMLElement>(null);
   const navRef = useRef<HTMLElement>(null);
-  const [activeColumn, setActiveColumn] = useState<Status>("backlog");
+  const [activeColumn, setActiveColumn] = useState<Lane>("sessions");
   const syncColumn = () => {
     const board = boardRef.current;
     if (!board) return;
@@ -209,14 +215,14 @@ export function Board({ tickets, onOpen, onMove, onAdd, filtered = false, restar
       const node = el as HTMLElement;
       return !best || Math.abs(node.getBoundingClientRect().left - left) < Math.abs(best.getBoundingClientRect().left - left) ? node : best;
     }, null);
-    const id = nearest?.id.replace("column-", "") as Status;
+    const id = nearest?.id.replace("column-", "") as Lane;
     if (id) setActiveColumn(id);
   };
-  const goToColumn = (id: Status) => {
+  const goToColumn = (id: Lane, instant = false) => {
     const board = boardRef.current;
     const column = document.getElementById(`column-${id}`);
     if (!board || !column) return;
-    const motion = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+    const motion = instant || window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
     board.scrollTo({ left: board.scrollLeft + column.getBoundingClientRect().left - board.getBoundingClientRect().left - parseFloat(getComputedStyle(board).paddingLeft), behavior: motion });
   };
   useEffect(() => {
@@ -248,6 +254,19 @@ export function Board({ tickets, onOpen, onMove, onAdd, filtered = false, restar
   });
 
   const byColumn = useMemo(() => groupByColumn(tickets), [tickets]);
+
+  // A phone shows one lane at a time: open on the first one that waits on you, else the first with cards.
+  const opened = useRef(false);
+  useEffect(() => {
+    if (!compact || opened.current || (!tickets.length && !sessions.length)) return;
+    opened.current = true;
+    const lanes: { id: Lane; cards: Ticket[] }[] = [
+      { id: "sessions", cards: sessions },
+      ...BOARD_COLUMNS.map((c) => ({ id: c.id as Lane, cards: shownIn(byColumn, c.id) })),
+    ];
+    const start = lanes.find((l) => l.cards.some((t) => t.attention && !t.running)) ?? lanes.find((l) => l.cards.length);
+    if (start && start.id !== "sessions") requestAnimationFrame(() => goToColumn(start.id, true));
+  }, [compact, tickets.length, sessions.length]);
 
   const onDragStart = (e: DragStartEvent) => setDragId(String(e.active.id));
 
@@ -290,6 +309,9 @@ export function Board({ tickets, onOpen, onMove, onAdd, filtered = false, restar
       <div className={`board-layout${dragId ? " is-dragging" : ""}`}>
         {compact && (
           <nav ref={navRef} className="column-nav" aria-label="Board columns">
+            <button data-column="sessions" aria-controls="column-sessions" aria-current={activeColumn === "sessions" ? "true" : undefined} onClick={() => goToColumn("sessions")}>
+              Sessions<span className={`count${sessions.some((t) => t.attention && !t.running) ? " needs-you" : ""}`}>{sessions.length}</span>
+            </button>
             {BOARD_COLUMNS.map((c) => (
               <button key={c.id} data-column={c.id} aria-controls={`column-${c.id}`}
                 aria-current={activeColumn === c.id ? "true" : undefined} onClick={() => goToColumn(c.id)}>
@@ -299,6 +321,7 @@ export function Board({ tickets, onOpen, onMove, onAdd, filtered = false, restar
           </nav>
         )}
         <main ref={boardRef} className="board" onScroll={compact ? syncColumn : undefined} aria-label="Kanban board">
+          <SessionLane sessions={sessions} onOpen={onOpen} onNew={onNewSession} />
           {BOARD_COLUMNS.map((c) => (
             <Column key={c.id} {...c} tickets={byColumn.get(c.id) ?? []} queue={c.id === "in_progress" ? byColumn.get("ready") : undefined} held={restartPending} onOpen={onOpen} onAdd={onAdd} filtered={filtered}
               collapsed={!compact && collapsed.has(c.id)} onCollapse={(v) => setColumnCollapsed(c.id, v)} />

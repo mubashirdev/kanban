@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { api, COLUMNS, type Ticket, type InboxItem } from "./api";
-import { BellIcon, ChatIcon, CheckIcon, ClockIcon, ColumnsIcon, FileIcon } from "./icons";
+import { api, COLUMNS, type Ticket } from "./api";
+import { CheckIcon, ClockIcon, SlidersIcon } from "./icons";
 import { timeAgo } from "./time";
 import { PRIORITIES, TEMPLATES } from "./ticketTemplates";
 import { Modal } from "./Modal";
-export type WorkspacePage = "board" | "sessions" | "inbox" | "activity";
+
+const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 export type WorkspaceFilter = { priority: string; kind: string; label: string };
 export const EMPTY_FILTER: WorkspaceFilter = {
   priority: "",
@@ -19,33 +20,6 @@ type SavedView = {
   query: string;
   layout: "board" | "list";
 };
-const PAGES: { id: WorkspacePage; label: string; icon: JSX.Element }[] = [
-  { id: "board", label: "Board", icon: <ColumnsIcon size={18} /> },
-  { id: "sessions", label: "Sessions", icon: <ChatIcon size={18} /> },
-  { id: "inbox", label: "Inbox", icon: <BellIcon size={18} /> },
-  { id: "activity", label: "Activity", icon: <ClockIcon size={18} /> },
-];
-
-/** Top tabs on desktop, a bottom tab bar on phones (see styles). Badges count what waits on you. */
-export function WorkspaceNavigation({ page, onChange, count, sessions }: {
-  page: WorkspacePage;
-  onChange: (page: WorkspacePage) => void;
-  count: number;
-  sessions: number;
-}) {
-  const badge = (id: WorkspacePage) => (id === "inbox" ? count : id === "sessions" ? sessions : 0);
-  return (
-    <nav className="workspace-nav" aria-label="Workspace">
-      {PAGES.map((p) => (
-        <button key={p.id} aria-current={page === p.id ? "page" : undefined} onClick={() => onChange(p.id)}>
-          {p.icon}
-          {p.label}
-          {badge(p.id) > 0 && <span className="need-chip" aria-label={`${badge(p.id)} need you`}>{badge(p.id)}</span>}
-        </button>
-      ))}
-    </nav>
-  );
-}
 export function WorkspaceControls({
   slug,
   tickets,
@@ -57,6 +31,7 @@ export function WorkspaceControls({
   onQuery,
   flags,
   onFlags,
+  flagOptions = [],
 }: {
   slug: string;
   tickets: Ticket[];
@@ -68,6 +43,8 @@ export function WorkspaceControls({
   onQuery: (q: string) => void;
   flags: string[];
   onFlags: (flags: string[]) => void;
+  /** Quick filters (Needs you, Running, Has PR): chips on wide screens, inside this sheet on phones. */
+  flagOptions?: { id: string; label: string; count: number }[];
 }) {
   const compact = true,
     key = "esa.views." + slug;
@@ -116,6 +93,7 @@ export function WorkspaceControls({
       setSelected("");
   }, [filter, query, layout, flags.join(",")]);
   const labels = [...new Set(tickets.flatMap((t) => t.labels ?? []))].sort();
+  const activeCount = Object.values(filter).filter(Boolean).length + flags.length;
   const persist = (next: SavedView[]) => {
     try {
       localStorage.setItem(key, JSON.stringify(next));
@@ -129,8 +107,25 @@ export function WorkspaceControls({
       return false;
     }
   };
+  const toggleFlag = (id: string) => onFlags(flags.includes(id) ? flags.filter((f) => f !== id) : [...flags, id]);
+  const layoutToggle = (
+    <div className="view-toggle" role="group" aria-label="Board layout">
+      <button aria-pressed={layout === "board"} onClick={() => onLayout("board")}>Kanban</button>
+      <button aria-pressed={layout === "list"} onClick={() => onLayout("list")}>List</button>
+    </div>
+  );
   const options = (
     <>
+      {flagOptions.length > 0 && (
+        <div className="sheet-chips" role="group" aria-label="Show only">
+          {flagOptions.map((f) => (
+            <button key={f.id} type="button" className={`chip${flags.includes(f.id) ? " on" : ""}`} aria-pressed={flags.includes(f.id)} onClick={() => toggleFlag(f.id)}>
+              {f.label}{f.count > 0 && <span className="chip-count">{f.count}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="sheet-layout"><span>Layout</span>{layoutToggle}</div>
       <label className="control-select">
         <span className={compact ? "" : "sr-only"}>Priority</span>
         <select
@@ -192,7 +187,7 @@ export function WorkspaceControls({
             }
           }}
         >
-          <option value="">Choose a saved view</option>
+          <option value="">None</option>
           {views.map((v) => (
             <option value={v.id} key={v.id}>
               {v.name}
@@ -225,29 +220,17 @@ export function WorkspaceControls({
   );
   return (
     <div className="workspace-controls">
-      <div className="view-toggle" role="group" aria-label="Board layout">
-        <button
-          aria-pressed={layout === "board"}
-          onClick={() => onLayout("board")}
-        >
-          Kanban
-        </button>
-        <button
-          aria-pressed={layout === "list"}
-          onClick={() => onLayout("list")}
-        >
-          List
-        </button>
-      </div>
+      <span className="wide-only">{layoutToggle}</span>
       {compact ? (
         <button
           className="btn small mobile-filter-button"
+          aria-label={`Filters${activeCount ? `, ${activeCount} on` : ""}`}
+          title="Filters, layout and saved views"
           onClick={() => setEditing(true)}
         >
-          Filters & views
-          {Object.values(filter).filter(Boolean).length > 0
-            ? " · " + Object.values(filter).filter(Boolean).length
-            : ""}
+          <SlidersIcon size={16} />
+          <span className="filter-label">Filters</span>
+          {activeCount > 0 && <span className="chip-count">{activeCount}</span>}
         </button>
       ) : (
         options
@@ -348,7 +331,7 @@ export function TicketList({
     <section className="workspace-scroll" aria-label={title}>
       <div className="workspace-heading">
         <h2>{title}</h2>
-        <span className="muted">{tickets.length} tickets</span>
+        <span className="muted">{tickets.length} {tickets.length === 1 ? "ticket" : "tickets"}</span>
       </div>
       {sorted.length === 0 ? (
         <div className="workspace-empty">
@@ -367,9 +350,7 @@ export function TicketList({
               >
                 <span>{t.title}</span>
                 <span className="muted small">
-                  {COLUMNS.find((c) => c.id === t.status)?.label} ·{" "}
-                  {t.priority ?? "normal"}
-                  {t.labels?.length ? " · " + t.labels.join(", ") : ""}
+                  {[COLUMNS.find((c) => c.id === t.status)?.label, t.priority && t.priority !== "normal" && t.priority !== "none" ? `${capital(t.priority)} priority` : null, ...(t.labels ?? [])].filter(Boolean).join(", ")}
                 </span>
               </button>
               <span className="muted small">{timeAgo(t.updatedAt)}</span>
@@ -380,110 +361,54 @@ export function TicketList({
     </section>
   );
 }
-export function WorkspaceInbox({
-  items,
-  onPick,
-}: {
-  items: InboxItem[];
-  onPick: (item: InboxItem) => void;
-}) {
-  return (
-    <section className="workspace-scroll" aria-label="Inbox">
-      <div className="workspace-heading">
-        <h2>Needs your attention</h2>
-        <span className="muted">Across all boards</span>
-      </div>
-      {!items.length ? (
-        <div className="workspace-empty">
-          <CheckIcon size={28} />
-          <h3>You’re all caught up</h3>
-          <p>Questions, blocked work, and replies will appear here.</p>
-        </div>
-      ) : (
-        <div className="ticket-list">
-          {items.map((i) => (
-            <button
-              key={i.profile + "/" + i.id}
-              className="attention-row"
-              onClick={() => onPick(i)}
-            >
-              <span className="muted small">{i.profileName}</span>
-              <strong>{i.title}</strong>
-              <span className="attention-reason">{i.attention.label}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </section>
-  );
+const STATUS_LABEL = Object.fromEntries(COLUMNS.map((c) => [c.id, c.label]));
+const OUTCOME_LABEL: Record<string, string> = { done: "Finished", failed: "Run failed", blocked: "Blocked", stopped: "Stopped", needs_input: "Waiting for answers" };
+
+/** The server logs changes as "key: value"; show them as plain sentences. */
+function describeChange(change: string): string {
+  const [key, ...rest] = change.split(": ");
+  const value = rest.join(": ");
+  if (key === "Created ticket") return "Created";
+  if (key === "status") return `Moved to ${STATUS_LABEL[value] ?? value}`;
+  if (key === "outcome") return value === "none" ? "Outcome cleared" : OUTCOME_LABEL[value] ?? capital(value);
+  if (key === "agent") return `Agent: ${value === "codex" ? "Codex" : "Claude"}`;
+  if (key === "labels") return value ? `Labels: ${value}` : "Labels cleared";
+  return `${capital(key)}: ${capital(value)}`;
 }
-export function WorkspaceActivity({
-  slug,
-  onOpen,
-}: {
-  slug: string;
-  onOpen: (id: string) => void;
-}) {
-  const [items, setItems] = useState<
-      { id: string; title: string; at: string; changes: string[] }[] | null
-    >(null),
-    [error, setError] = useState("");
+
+/** Recent changes on this board, newest first. Boards older than the log fall back to each ticket's latest state. */
+export function WorkspaceActivity({ slug, tickets, onOpen }: { slug: string; tickets: Ticket[]; onOpen: (id: string) => void }) {
+  const [items, setItems] = useState<{ id: string; title: string; at: string; changes: string[] }[] | null>(null);
+  const [error, setError] = useState("");
   useEffect(() => {
     let active = true;
-    const load = () =>
-      api
-        .workspaceActivity(slug)
-        .then((x) => {
-          if (active) {
-            setItems(x);
-            setError("");
-          }
-        })
-        .catch((e) => {
-          if (active) setError(e.message);
-        });
+    const load = () => api.workspaceActivity(slug).then(
+      (x) => { if (active) { setItems(x); setError(""); } },
+      (e) => { if (active) setError(e.message); });
     load();
     const timer = setInterval(load, 15000);
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
+    return () => { active = false; clearInterval(timer); };
   }, [slug]);
+  const fallback = [...tickets].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 30).map((t) => ({
+    id: t.id, title: t.title, at: t.updatedAt,
+    changes: [t.standalone ? "Session" : STATUS_LABEL[t.status] ?? t.status, ...(t.outcome ? [OUTCOME_LABEL[t.outcome] ?? t.outcome] : [])],
+  }));
+  const shown = items?.length ? items.map((item) => ({ ...item, changes: item.changes.map(describeChange) })) : fallback;
+  if (error && !items) return <p role="alert" className="form-error">{error}</p>;
+  if (!items) return <p className="muted" role="status">Loading activity…</p>;
+  if (!shown.length) return <p className="muted">Nothing has happened on this board yet. New tickets and moves show up here.</p>;
   return (
-    <section className="workspace-scroll" aria-label="Activity">
-      <div className="workspace-heading">
-        <h2>Activity</h2>
-        <span className="muted">Recent ticket changes</span>
-      </div>
-      {error && <p role="alert">{error}</p>}
-      {!items ? (
-        <p className="muted">Loading activity…</p>
-      ) : !items.length ? (
-        <div className="workspace-empty">
-          <ClockIcon size={28} />
-          <h3>A fresh timeline</h3>
-          <p>
-            New tickets and status changes will appear here as work happens.
-          </p>
-        </div>
-      ) : (
-        <ol className="activity-timeline">
-          {items.map((item, i) => (
-            <li key={item.at + item.id + i}>
-              <ClockIcon />
-              <div>
-                <button className="link-btn" onClick={() => onOpen(item.id)}>
-                  {item.title}
-                </button>
-                <p>{item.changes.join(" · ")}</p>
-                <time className="muted small" dateTime={item.at}>
-                  {timeAgo(item.at)}
-                </time>
-              </div>
-            </li>
-          ))}
-        </ol>
-      )}
-    </section>
+    <ol className="activity-timeline">
+      {shown.map((item, i) => (
+        <li key={item.at + item.id + i}>
+          <ClockIcon />
+          <div>
+            <button className="link-btn" onClick={() => onOpen(item.id)}>{item.title}</button>
+            <p>{item.changes.join(", ")}</p>
+            <time className="muted small" dateTime={item.at}>{timeAgo(item.at)}</time>
+          </div>
+        </li>
+      ))}
+    </ol>
   );
 }

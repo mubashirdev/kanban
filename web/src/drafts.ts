@@ -59,3 +59,18 @@ export function prune(store: Store | null, now = Date.now()) {
     stale.forEach((k) => store.removeItem(k));
   } catch {}
 }
+
+/** A new session's first message, shown in its chat at once while the agent reads it (only on this device). */
+const firstKey = (id: string) => `esa.firstMessage.${id}`;
+export function rememberFirstMessage(id: string, text: string): void {
+  try { sessionStorage.setItem(firstKey(id), text); } catch {}
+}
+export function takeFirstMessage(id: string): { text: string; steer: boolean }[] {
+  try {
+    const text = sessionStorage.getItem(firstKey(id));
+    sessionStorage.removeItem(firstKey(id));
+    return text ? [{ text, steer: false }] : [];
+  } catch {
+    return [];
+  }
+}

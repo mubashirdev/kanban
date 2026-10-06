@@ -6,7 +6,7 @@ import { outcomeBadge } from "./Card";
 import { BugReportDialog } from "./BugReportDialog";
 import { Chat, useStop } from "./Chat";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { CheckIcon, ChevronDownIcon, ChevronUpIcon, CloseIcon, ExternalIcon, FileTextIcon, SparkIcon } from "./icons";
+import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronUpIcon, CloseIcon, ExternalIcon, FileTextIcon, SparkIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
 import { useFocusTrap, useLayer } from "./layers";
 import { complete, PlanPanel, PlanSummary } from "./PlanPanel";
@@ -355,6 +355,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
           title="Drag to resize · double-click to reset" {...handle} />
 
         <header className="panel-head">
+          <button className="icon-btn back-btn" onClick={onClose} aria-label="Back to board"><ChevronLeftIcon size={20} /></button>
           <button className={`icon-btn sidebar-toggle ${detailsOpen ? "on" : ""}`} onClick={() => setDetailsOpen((v) => !v)}
             aria-label={detailsOpen ? "Hide details" : "Show details"} aria-pressed={detailsOpen}
             title={`${detailsOpen ? "Hide" : "Show"} details (⌘\\)`}>
@@ -395,7 +396,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             onCheckPr={() => act(() => api.checkPr(slug, ticket.id))}
             onReportBug={() => setReportingBug(true)}
             onDelete={() => setConfirmDelete(true)} />
-          <button className="icon-btn" onClick={onClose} aria-label="Close" title="Close (Esc)"><CloseIcon /></button>
+          <button className="icon-btn close-btn" onClick={onClose} aria-label="Close" title="Close (Esc)"><CloseIcon /></button>
         </header>
 
         <div ref={bodyRef} className={`panel-body ${detailsOpen ? "" : "details-closed"} ${side.dragging ? "resizing" : ""}`}
