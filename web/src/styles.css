@@ -2145,3 +2145,20 @@ body { letter-spacing: -0.011em; }
 .conv-msg.user.pending { opacity: 1; background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
 .conv-msg.user.pending .conv-head b, .conv-msg.user.pending .conv-head .muted, .conv-msg.user.pending .conv-head time { color: var(--accent); opacity: 1; }
 .conv-msg.user.pending .md a { color: var(--accent); }
+
+/* Phone card: status, title, preview, chips, then the one-tap action, in that order. */
+@media (max-width: 767px) {
+  .card { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; }
+  .card .your-turn { order: 1; margin: 0; padding-right: 72px; }
+  .card .your-turn .yt-label { display: none; }
+  .card .card-properties { order: 1; margin: 0; }
+  .card .card-title-row { order: 2; }
+  .card:not(:has(.your-turn)) .card-title { padding-right: 68px; }
+  .card .card-title-row .agent-mark.small { position: absolute; top: 12px; right: 44px; margin: 0; }
+  .card .card-last, .card .card-activity { order: 3; margin: 0; }
+  .card .card-meta { order: 4; margin: 0; }
+  .card .card-quick { order: 5; align-self: flex-start; margin: 4px 0 0; }
+  .card-drag-handle { opacity: 0.55; }
+}
+  /* The quick action shares the meta row with the time and PR chip. */
+@media (max-width: 767px) { .card .card-quick { order: 0; align-self: auto; margin: 0; } .card .card-meta { align-items: center; margin-top: 2px; } }

@@ -54,6 +54,12 @@ export function Card({ ticket, onClick, dragging, queued, held, onQuick }: { tic
     : outcomeBadge(ticket);
   const showActivity = working && ticket.lastActivity && !QUIET_ACTIVITY.has(ticket.lastActivity);
   const last = ticket.session?.lastMessage;
+  const preview = last ? plainPreview(last.text) : "";
+  // Run / Done: one tap on a phone, kept in the meta row beside the time.
+  const quickButton = quick && onQuick && !working && (!att || att.kind === "review") ? (
+    <button type="button" className="card-quick" onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); onQuick(quick.to); }}>{quick.label}</button>
+  ) : null;
   useNow();
   const lastAt = ticket.session ? ticket.session.lastMessage?.at || ticket.session.updatedAt : null;
   return (
@@ -72,20 +78,17 @@ export function Card({ ticket, onClick, dragging, queued, held, onQuick }: { tic
         <div className="card-title" title={ticket.title}>{ticket.title}</div>
         <AgentMark agent={ticket.agent} size="small" />
       </div>
-      {quick && onQuick && !working && (!att || att.kind === "review") && (
-        <button type="button" className="card-quick" onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); onQuick(quick.to); }}>{quick.label}</button>
-      )}
       {showActivity ? (
         <div className="card-activity" title={ticket.lastActivity!}>{ticket.lastActivity}</div>
-      ) : last && (
+      ) : last && preview && (
         <div className="card-last" title={last.text}>
           <span className={`who ${last.role}`}>{last.role === "user" ? "You" : ticket.agent === "codex" ? "Codex" : "Claude"}:</span>{" "}
-          {plainPreview(last.text)}
+          {preview}
         </div>
       )}
-      {(badge || ticket.prUrl || ticket.runCount > 0 || ticket.workdir || ticket.session || ticket.scheduleId || ticket.plan) && (
+      {(quickButton || badge || ticket.prUrl || ticket.runCount > 0 || ticket.workdir || ticket.session || ticket.scheduleId || ticket.plan) && (
         <div className="card-meta">
+          {quickButton}
           {ticket.plan && ticket.plan.state !== "done" && (
             <span className={`badge plan ${ticket.plan.state}`} title="This ticket runs a plan of child tickets">
               Plan {ticket.plan.state === "finishing" ? "final check" : ticket.plan.state}

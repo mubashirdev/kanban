@@ -58,6 +58,7 @@ export function timeUntil(iso: string): string {
 /** Plain one-line preview of markdown text (for cards). */
 export function plainPreview(md: string, max = 160): string {
   return md
+    .replace(/CKANBAN_RESULT:[\s\S]*$/, " ")
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/[*_`~>#|]+/g, "")
