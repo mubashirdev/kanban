@@ -125,6 +125,8 @@ export class Notifications {
           ...this.keys!,
         },
         TTL: 3600,
+        // Delivered at once, even while the phone is idle or locked.
+        urgency: "high",
         timeout: 10000,
       });
     } catch (error: any) {
@@ -145,7 +147,7 @@ export class Notifications {
     await this.deliver(
       subscription,
       {
-        title: "Esa Kanban",
+        title: "Muba AI",
         body: "Notifications are connected.",
         url: "/",
         tag: "esa-test",
@@ -230,7 +232,7 @@ export class Notifications {
               .filter((s) => s.topics[topic])
               .map((s) =>
                 this.deliver(s, {
-                  title: "Esa Kanban",
+                  title: "Muba AI",
                   body,
                   url: `/#/${encodeURIComponent(
                     event.profile

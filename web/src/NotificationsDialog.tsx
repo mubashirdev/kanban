@@ -100,12 +100,13 @@ export function NotificationsDialog({ onClose }: { onClose: () => void }) {
       setMessage("Notifications enabled for this device.");
     });
   return (
-    <Modal title="Notifications" onClose={onClose}>
+    <Modal title="Notifications" sheet onClose={onClose}>
       <div className="form">
         <p>
           Get notified when work needs your input, finishes, or fails—even when
           the app is closed. Ticket titles and chat contents stay out of
-          notifications.
+          notifications. Your phone decides how it alerts you: a sound when the
+          ringer is on, a vibration when it&rsquo;s on silent.
         </p>
         {!supported ? (
           <div className="banner info">

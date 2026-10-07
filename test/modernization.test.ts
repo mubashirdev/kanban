@@ -223,6 +223,7 @@ test("push accepts only browser push services and keeps keys private, deduplicat
   await push.test(subscription().endpoint);
   expect(sent).toHaveLength(1);
   expect(sent[0][2].vapidDetails.subject).not.toContain("https://localhost");
+  expect(sent[0][2].urgency).toBe("high");
   const broken = new Notifications(store, async () => {
     throw { statusCode: 410 };
   });

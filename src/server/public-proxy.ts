@@ -74,7 +74,7 @@ export function createPublicProxy(options: PublicProxyOptions) {
         if (incoming.pathname === "/auth/setup" && ["GET", "HEAD"].includes(req.method)) return loginPage("", 200, {}, auth.hasSession(req));
         if (!auth.hasSession(req)) {
           if (!socket && ["GET", "HEAD"].includes(req.method) && ["/", "/index.html"].includes(incoming.pathname)) return loginPage();
-          return Response.json({ error: "Sign in to Esa Kanban", loginUrl: "/auth/login" }, { status: 401, headers: { "cache-control": "no-store" } });
+          return Response.json({ error: "Sign in to Muba AI", loginUrl: "/auth/login" }, { status: 401, headers: { "cache-control": "no-store" } });
         }
       }
       // Only the path/query come from the client; the upstream is fixed loopback.

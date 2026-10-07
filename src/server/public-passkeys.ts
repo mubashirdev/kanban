@@ -44,7 +44,7 @@ export class PublicPasskeys {
     if (register && !session) return reply({ error: "Sign in with your password before adding a passkey." }, 401);
     if (action === "register/options") {
       if (this.state.keys.length >= 10) return reply({ error: "This account already has ten passkeys." }, 409);
-      const options = await generateRegistrationOptions({ rpName: "Esa Kanban", rpID: this.rpID, userName: this.state.owner, userID: new Uint8Array(Buffer.from(this.state.userID, "base64url")), attestationType: "none", supportedAlgorithmIDs: [-7, -257], authenticatorSelection: { residentKey: "required", userVerification: "required", authenticatorAttachment: "platform" }, excludeCredentials: this.state.keys.map(({ id, transports }) => ({ id, transports })) });
+      const options = await generateRegistrationOptions({ rpName: "Muba AI", rpID: this.rpID, userName: this.state.owner, userID: new Uint8Array(Buffer.from(this.state.userID, "base64url")), attestationType: "none", supportedAlgorithmIDs: [-7, -257], authenticatorSelection: { residentKey: "required", userVerification: "required", authenticatorAttachment: "platform" }, excludeCredentials: this.state.keys.map(({ id, transports }) => ({ id, transports })) });
       return reply(options, 200, { "set-cookie": this.issue(options.challenge, "register", session) });
     }
     if (action === "authenticate/options") {

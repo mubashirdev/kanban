@@ -27,10 +27,11 @@ self.addEventListener('message', event => { if (event.data?.type === 'ACTIVATE_U
 self.addEventListener('push', event => {
   let payload = {}; try { const value = event.data ? event.data.json() : {}; if (value && typeof value === 'object' && !Array.isArray(value)) payload = value; } catch {}
   const url = typeof payload.url === 'string' && payload.url.startsWith('/#/') ? payload.url : '/';
+  // Sound or vibration is the phone's call: its silent switch decides. renotify makes a repeat alert for the same ticket ring again.
   event.waitUntil(self.registration.showNotification('Muba AI', {
     body: typeof payload.body === 'string' ? payload.body : 'A ticket has an update.',
     icon: '/icons/esa-192.png', badge: '/icons/esa-32.png',
-    tag: typeof payload.tag === 'string' ? payload.tag : 'esa-update', data: {url}
+    tag: typeof payload.tag === 'string' ? payload.tag : 'esa-update', renotify: true, silent: false, vibrate: [200, 100, 200], data: {url}
   }));
 });
 self.addEventListener('notificationclick', event => {
