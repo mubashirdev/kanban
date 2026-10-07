@@ -2309,3 +2309,10 @@ body { letter-spacing: -0.011em; }
   /* Desktop keeps the same card, centred under the conversation. */
   .composer.composer-card { margin: 0 16px 14px; }
 }
+
+/* Phones: every lane is the full width with the same margin on both sides, so the cards sit in the
+   same place on every lane, the last one too (a peeking next lane left the last lane off centre). */
+@media (max-width: 767px) {
+  .board > .column { flex: 0 0 100%; }
+  .board::after { content: none; }
+}
