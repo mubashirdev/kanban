@@ -205,6 +205,8 @@ export interface Question {
 }
 
 export interface SessionEntry {
+  /** A short progress note before a tool step (Codex commentary), shown quietly. */
+  note?: boolean;
   uuid: string;
   at: string;
   role: "user" | "assistant";

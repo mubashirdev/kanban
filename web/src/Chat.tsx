@@ -465,7 +465,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             );
           }
           return (
-            <div key={e.uuid} className={`conv-msg ${e.role}`}>
+            <div key={e.uuid} className={`conv-msg ${e.role}${e.note ? " note" : ""}`}>
               <div className="conv-head">
                 <b>{e.role === "user" ? "You" : agentName}</b>
                 {e.at && <time className="muted small" dateTime={e.at} title={fullTime(e.at)}>{timeAgo(e.at)}</time>}

@@ -46,7 +46,7 @@ export function rolloutEvents(text: string, firstLine = 0): any[] {
       const text = (p.item.content ?? []).map((part: any) => part.text ?? "").join("");
       if (!text) return;
       const role = p.item.type === "UserMessage" ? "user" : "assistant";
-      out.push({ ...base, type: role, ...(role === "user" ? { isReplay: true } : {}), message: { role, content: [{ type: "text", text }] } });
+      out.push({ ...base, type: role, ...(role === "user" ? { isReplay: true } : { phase: p.item.phase }), message: { role, content: [{ type: "text", text }] } });
     }
     else if (e.type === "response_item" && (p.type === "function_call" || p.type === "custom_tool_call"))
       out.push({ ...base, type: "assistant", message: { content: [{ type: "tool_use", id: p.call_id, name: "Bash", input: { command: toolCommand(p) } }] } });

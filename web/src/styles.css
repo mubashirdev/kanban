@@ -2135,3 +2135,8 @@ body { letter-spacing: -0.011em; }
 .daily-bar { height: 6px; margin: 6px 0 4px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
 .daily-bar span { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
 .daily-meta { font-size: 13px; }
+
+/* Progress notes ("I'll load your instructions") sit quietly above the tool steps; only the final answer reads as the reply. */
+.conv-msg.assistant.note { color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+.conv-msg.assistant.note .conv-head { display: none; }
+@media (max-width: 767px) { .conv-msg.assistant.note { font-size: 14px; } }

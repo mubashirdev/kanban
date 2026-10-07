@@ -50,6 +50,8 @@ export interface SessionEntry {
   moved?: "planning";
   /** A board block whose JSON couldn't be read (left visible as text; the chat says so). */
   unreadable?: BlockKind;
+  /** A short progress note the agent wrote before using a tool (Codex "commentary"), shown quietly. */
+  note?: boolean;
   /** A ticket-to-ticket message (ask_ticket / reply_ticket): in = from that ticket's Claude, out = to it. */
   peer?: { dir: "in" | "out"; ticketId: string | null };
 }
@@ -399,7 +401,7 @@ export function parseSession(raw: string): ParsedSession {
       if (b?.type === "tool_use" && typeof b.id === "string" && isPublisher(b)) publishers.add(b.id);
       const id = i ? `${uuid}:${i}` : uuid;
       const card = b?.type === "tool_use" && typeof b.id === "string" ? cardEntry(b) : null;
-      if (b?.type === "text" && b.text?.trim()) entries.push({ uuid: id, at, role: "assistant", kind: "text", ...assistantBlock(b.text.trim()) });
+      if (b?.type === "text" && b.text?.trim()) entries.push({ uuid: id, at, role: "assistant", kind: "text", ...assistantBlock(b.text.trim()), ...(ev.phase === "commentary" ? { note: true } : {}) });
       else if (b?.type === "tool_use" && ASK_TOOL.test(b.name ?? "") && typeof b.input?.question === "string") {
         const to = typeof b.input.id === "string" ? b.input.id : null;
         if (typeof b.id === "string") asks.set(b.id, to);
