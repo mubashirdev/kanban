@@ -21,10 +21,10 @@ function themeFromCss(): ITheme {
 
 /** The quick Claude chat is always dark (the page's dark-mode colours): Claude Code's colours assume a dark terminal. */
 const DARK_THEME: ITheme = {
-  background: "#242320",
+  background: "#1b1e22",
   foreground: "#ecebe6",
   cursor: "#e0805e",
-  cursorAccent: "#242320",
+  cursorAccent: "#1b1e22",
   selectionBackground: "#3d2a22",
   selectionForeground: "#ecebe6",
 };
