@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, subscribe, type ClaudeCommand, type DefaultModels, type Effort, type NewTicketDraft, type SessionEntry, type Ticket } from "./api";
 import { autoGrow } from "./autoGrow";
-import { ArrowDownIcon, ArrowUpIcon, CloseIcon, FileCodeIcon, ImageIcon, MicIcon, PlusIcon, SlashIcon, SlidersIcon } from "./icons";
+import { ArrowDownIcon, ArrowUpIcon, BoltIcon, CloseIcon, FileCodeIcon, ImageIcon, MicIcon, PlusIcon, ShieldAlertIcon, ShieldIcon, SlashIcon, SlidersIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
 import { NewTicketsCard } from "./NewTicketsCard";
 import { ProposalCard } from "./ProposalCard";
@@ -17,7 +17,7 @@ import { useDictation, dictationSupported } from "./useDictation";
 import { useMediaQuery } from "./useMediaQuery";
 import { useLayer } from "./layers";
 import { AgentSettings } from "./AgentSettings";
-import { chipLabel, QuickPick } from "./QuickPick";
+import { AccessPick, chipLabel, QuickPick } from "./QuickPick";
 import { ToolGroup } from "./ToolGroup";
 import { CliUsageCard, UsagePill } from "./UsagePill";
 import { parseCliUsage } from "./usage";
@@ -165,23 +165,14 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       .catch(() => {});
   }, []);
   const modelLabel = (value: string | null | undefined) => (value && modelNames[value]) || chipLabel(value, "Default model");
-  const statusChips = (["model", "effort"] as const).map((kind) => (
-    <span key={kind} className="status-pick">
-      <button type="button" className="status-chip" aria-haspopup="menu" aria-expanded={picking === kind} disabled={stopping}
-        onClick={() => { commands.close(); setPicking(picking === kind ? null : kind); }}>
-        {kind === "model"
-          ? modelLabel((codex ? ticket.codexModel : ticket.model === "default" ? null : ticket.model) ?? (codex ? defaults?.codexModel : defaults?.claudeModel))
-          : chipLabel((codex ? ticket.codexEffort : ticket.effort) ?? (codex ? defaults?.codexEffort : defaults?.claudeEffort), "Auto effort")}
-      </button>
-      {picking === kind && <QuickPick slug={slug} ticket={ticket} kind={kind} onClose={() => setPicking(null)}
-        onMore={() => setSettingsTab(codex || kind === "model" ? "model" : "effort")} />}
-    </span>
-  ));
+  const modelText = modelLabel((codex ? ticket.codexModel : ticket.model === "default" ? null : ticket.model) ?? (codex ? defaults?.codexModel : defaults?.claudeModel));
+  const effortValue = (codex ? ticket.codexEffort : ticket.effort) ?? (codex ? defaults?.codexEffort : defaults?.claudeEffort) ?? null;
+  const effortText = chipLabel(effortValue, "Auto");
+  const [accessOpen, setAccessOpen] = useState(false);
   // Phones have no hint line under the box, so the placeholder says what the agent may do.
   const placeholder = running
     ? (codex ? "Queue a message for Codex’s next turn…" : phone ? "Steer Claude…" : "Steer Claude: it reads this at its next step…")
-    : phone ? `Message ${agentName}${refine ? " (read only)" : ""}…`
-    : ticket.standalone ? `Message ${agentName}…` : refine ? `Describe your idea or answer ${agentName}…` : `Ask ${agentName} to change or continue something…`;
+    : ticket.standalone ? `Work on ${slug}` : refine ? `Describe your idea or answer ${agentName}…` : `Ask ${agentName} to change or continue something…`;
 
   const loadTail = useCallback(async () => {
     if (!ticket.sessionId && !codex) return setPage({ entries: [], start: 0 });
@@ -633,45 +624,12 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           {quickReplies.map((reply) => <button key={reply} type="button" className="chip" onClick={() => send(reply)}>{reply}</button>)}
         </div>
       )}
-      {phone ? (
-        // Phones: one row like a messaging app. Extra actions sit behind +, and the one round button
-        // is Stop while the agent works with nothing typed, otherwise Send.
-        <div className="composer composer-card" onClick={(e) => { if (!(e.target as HTMLElement).closest("button, textarea, .quick-pick")) composer.current?.focus(); }}>
-          {commands.popup}
-          {mentions.popup}
-          <textarea ref={composer} rows={phone ? 1 : 2} value={draft} disabled={stopping} className={images.dragOver ? "drop-target" : undefined} {...images.handlers} {...commands.aria} role="combobox" aria-label={`Message ${agentName}`}
-            placeholder={placeholder}
-            onFocus={commands.prefetch}
-            onChange={(e) => { setDraft(e.target.value); commands.select(e.target.value, e.target.selectionStart); mentions.select(e.target.value, e.target.selectionStart); }}
-            onSelect={(e) => { if (!settingsTab && !selectedCommand) commands.select(e.currentTarget.value, e.currentTarget.selectionStart); }}
-            onKeyDown={(e) => {
-              if (mentions.keyDown(e) || commands.keyDown(e)) return;
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !window.matchMedia("(pointer: coarse)").matches) {
-                e.preventDefault();
-                send(draft);
-              }
-            }} />
-          <div className="composer-bar">
-          <div className="composer-more">
-            <button type="button" className="icon-btn composer-plus" aria-label="More actions" aria-haspopup="menu" aria-expanded={moreOpen} disabled={stopping} onClick={() => setMoreOpen((v) => !v)}><PlusIcon size={20} /></button>
-            {moreOpen && <ComposerMenu onClose={() => setMoreOpen(false)} items={[
-              { label: "Attach images", icon: <ImageIcon size={18} />, onSelect: () => imageInput.current?.click() },
-              { label: `${agentName} settings`, icon: <SlidersIcon size={18} />, onSelect: () => { commands.close(); setSettingsTab("model"); } },
-              { label: "Commands", icon: <SlashIcon size={18} />, onSelect: commands.toggle },
-            ]} />}
-          </div>
-            <div className="composer-status phone-status">{statusChips}</div>
-          {micButton}
-          {running && !draft.trim()
-            ? <button type="button" className="btn danger send-round" aria-label={stopping ? "Stopping" : `Stop ${agentName}`} disabled={stopping} onClick={stop}><span className="stop-square" aria-hidden /></button>
-            : <button type="button" className="btn primary send-round" aria-label={images.uploading ? "Uploading" : "Send"} disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? <span className="spinner" /> : <ArrowUpIcon size={18} />}</button>}
-          </div>
-        </div>
-      ) : (
-      <div className="composer">
+      {/* One card on phone and desktop, like the Codex app: the text on top, then +, the access shield,
+          and on the right model, effort, dictation and one round button (Stop while the agent works). */}
+      <div className="composer composer-card" onClick={(e) => { if (!(e.target as HTMLElement).closest("button, textarea, .quick-pick")) composer.current?.focus(); }}>
         {commands.popup}
         {mentions.popup}
-        <textarea ref={composer} rows={phone ? 1 : 2} value={draft} disabled={stopping} className={images.dragOver ? "drop-target" : undefined} {...images.handlers} {...commands.aria} role="combobox" aria-label={`Message ${agentName}`}
+        <textarea ref={composer} rows={1} value={draft} disabled={stopping} className={images.dragOver ? "drop-target" : undefined} {...images.handlers} {...commands.aria} role="combobox" aria-label={`Message ${agentName}`}
           placeholder={placeholder}
           onFocus={commands.prefetch}
           onChange={(e) => { setDraft(e.target.value); commands.select(e.target.value, e.target.selectionStart); mentions.select(e.target.value, e.target.selectionStart); }}
@@ -683,24 +641,44 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
               send(draft);
             }
           }} />
-        {images.error && <div className="form-error">{images.error}</div>}
-        <div className="composer-foot">
-          {/* What the next reply runs with, at a glance; each opens its setting (like the CLI apps' status line). */}
-          <span className="composer-status">
-            <span className="muted small" title={refine ? `${agentName} won’t change files` : `${agentName} can change files`}>{refine ? (ticket.standalone ? "Read only" : "Refine mode") : "Can edit"}</span>
-            {statusChips}
-            <span className="muted small composer-keys">Enter to send · Shift+Enter for a new line</span>
-          </span>
-          <span className="composer-actions">
-            <button type="button" className="btn small composer-icon" aria-label="Attach images" title="Attach images" disabled={stopping || images.uploading} onClick={() => imageInput.current?.click()}><ImageIcon size={18} /></button>
-            {micButton}
-            {running && <button className="btn danger small" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop"}</button>}
-            <button className="btn primary small" disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? "Uploading…" : "Send"}</button>
-          </span>
+        <div className="composer-bar">
+          <div className="composer-more">
+            <button type="button" className="icon-btn composer-plus" aria-label="More actions" aria-haspopup="menu" aria-expanded={moreOpen} disabled={stopping} onClick={() => setMoreOpen((v) => !v)}><PlusIcon size={20} /></button>
+            {moreOpen && <ComposerMenu onClose={() => setMoreOpen(false)} items={[
+              { label: "Attach images", icon: <ImageIcon size={18} />, onSelect: () => imageInput.current?.click() },
+              { label: `${agentName} settings`, icon: <SlidersIcon size={18} />, onSelect: () => { commands.close(); setSettingsTab("model"); } },
+              { label: "Commands", icon: <SlashIcon size={18} />, onSelect: commands.toggle },
+            ]} />}
+          </div>
+          {ticket.standalone && (
+            <span className="status-pick">
+              <button type="button" className={`icon-btn composer-icon-btn access-shield${refine ? "" : " edit"}`} aria-haspopup="menu" aria-expanded={accessOpen}
+                aria-label={refine ? `${agentName} can only read. Change access` : `${agentName} can edit files. Change access`}
+                title={refine ? "Read only" : "Can edit"} onClick={() => { commands.close(); setAccessOpen((v) => !v); }}>
+                {refine ? <ShieldIcon size={20} /> : <ShieldAlertIcon size={20} />}
+              </button>
+              {accessOpen && <AccessPick slug={slug} ticket={ticket} onClose={() => setAccessOpen(false)} />}
+            </span>
+          )}
+          <span className="composer-spacer" />
+          {(["model", "effort"] as const).map((kind) => (
+            <span key={kind} className="status-pick">
+              <button type="button" className="icon-btn composer-icon-btn" aria-haspopup="menu" aria-expanded={picking === kind} disabled={stopping}
+                aria-label={kind === "model" ? `Model: ${modelText}` : `Reasoning effort: ${effortText}`} title={kind === "model" ? modelText : `Effort: ${effortText}`}
+                onClick={() => { commands.close(); setPicking(picking === kind ? null : kind); }}>
+                {kind === "model" ? <BoltIcon size={20} /> : <EffortGauge level={effortValue} />}
+              </button>
+              {picking === kind && <QuickPick slug={slug} ticket={ticket} kind={kind} onClose={() => setPicking(null)}
+                onMore={() => setSettingsTab(codex || kind === "model" ? "model" : "effort")} />}
+            </span>
+          ))}
+          {micButton}
+          {running && !draft.trim()
+            ? <button type="button" className="btn danger send-round" aria-label={stopping ? "Stopping" : `Stop ${agentName}`} disabled={stopping} onClick={stop}><span className="stop-square" aria-hidden /></button>
+            : <button type="button" className="btn primary send-round" aria-label={images.uploading ? "Uploading" : "Send"} disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? <span className="spinner" /> : <ArrowUpIcon size={18} />}</button>}
         </div>
       </div>
-      )}
-      {phone && images.error && <div className="form-error composer-error">{images.error}</div>}
+      {images.error && <div className="form-error composer-error">{images.error}</div>}
       {usageRequest > 0 && <UsagePill compact openRequest={usageRequest} />}
       {settingsTab && codex && <AgentSettings slug={slug} ticket={ticket} onClose={()=>setSettingsTab(null)}/>}
       {settingsTab && !codex && <ClaudeSettings slug={slug} ticket={ticket} initialTab={settingsTab} onClose={() => setSettingsTab(null)} onSaved={(kind) => {
@@ -739,5 +717,24 @@ function ComposerMenu({ items, onClose }: { items: { label: string; icon: JSX.El
         </button>
       ))}
     </div>
+  );
+}
+
+/** Effort as a dial, like Codex: the arc fills further for more reasoning; grey when it follows the default. */
+const EFFORT_SHARE: Record<string, number> = { low: 0.25, medium: 0.5, high: 0.75, xhigh: 0.88, max: 1, ultra: 1 };
+function EffortGauge({ level }: { level: string | null }) {
+  const share = level ? EFFORT_SHARE[level] ?? 0.5 : 0.5;
+  // A 270° dial open at the bottom; the needle points along the filled part.
+  const r = 8, length = 2 * Math.PI * r * 0.75;
+  const angle = (135 + 270 * share) * (Math.PI / 180);
+  return (
+    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden className="effort-gauge">
+      <circle cx="11" cy="11" r={r} fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2" strokeLinecap="round"
+        strokeDasharray={`${length} 100`} transform="rotate(135 11 11)" />
+      <circle cx="11" cy="11" r={r} fill="none" stroke={level ? "var(--accent)" : "currentColor"} strokeWidth="2" strokeLinecap="round"
+        strokeDasharray={`${length * share} 100`} transform="rotate(135 11 11)" />
+      <line x1="11" y1="11" x2={11 + Math.cos(angle) * 4.5} y2={11 + Math.sin(angle) * 4.5} stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="11" cy="11" r="1.6" fill="currentColor" />
+    </svg>
   );
 }
