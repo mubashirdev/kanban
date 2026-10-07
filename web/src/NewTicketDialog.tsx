@@ -115,6 +115,33 @@ export function NewTicketDialog({
           }
         }}
       >
+        <label>
+          Title
+          <input
+            autoFocus
+            value={title}
+            disabled={busy}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder={
+              kind === "bug" ? "What is broken?" : "What needs to happen?"
+            }
+          />
+        </label>
+        <label>
+          Description
+          <textarea
+            rows={5}
+            value={body}
+            disabled={busy}
+            onChange={(e) => setBody(e.target.value)}
+            placeholder="Context, expected result, and acceptance criteria…"
+            className={images.dragOver ? "drop-target" : undefined}
+            {...images.handlers}
+          />
+          <span className="muted small">
+            {template.hint} · Markdown and pasted images supported
+          </span>
+        </label>
         <div className="ticket-form-grid">
           <label>
             Ticket type
@@ -149,33 +176,6 @@ export function NewTicketDialog({
             </select>
           </label>
         </div>
-        <label>
-          Title
-          <input
-            autoFocus
-            value={title}
-            disabled={busy}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder={
-              kind === "bug" ? "What is broken?" : "What needs to happen?"
-            }
-          />
-        </label>
-        <label>
-          Description
-          <textarea
-            rows={5}
-            value={body}
-            disabled={busy}
-            onChange={(e) => setBody(e.target.value)}
-            placeholder="Context, expected result, and acceptance criteria…"
-            className={images.dragOver ? "drop-target" : undefined}
-            {...images.handlers}
-          />
-          <span className="muted small">
-            {template.hint} · Markdown and pasted images supported
-          </span>
-        </label>
         {images.error && (
           <p className="form-error" role="alert">
             {images.error}

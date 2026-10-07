@@ -315,7 +315,7 @@ export function Board({ tickets, sessions, onOpen, onMove, onAdd, onNewSession, 
             {BOARD_COLUMNS.map((c) => (
               <button key={c.id} data-column={c.id} aria-controls={`column-${c.id}`}
                 aria-current={activeColumn === c.id ? "true" : undefined} onClick={() => goToColumn(c.id)}>
-                {c.label}<span className="count">{shownIn(byColumn, c.id).length}</span>
+                {c.label}<span className={`count${shownIn(byColumn, c.id).some((t) => t.attention && !t.running) ? " needs-you" : ""}`}>{shownIn(byColumn, c.id).length}</span>
               </button>
             ))}
           </nav>

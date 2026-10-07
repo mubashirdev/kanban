@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, subscribe, type ClaudeCommand, type Effort, type NewTicketDraft, type SessionEntry, type Ticket } from "./api";
+import { api, subscribe, type ClaudeCommand, type DefaultModels, type Effort, type NewTicketDraft, type SessionEntry, type Ticket } from "./api";
 import { autoGrow } from "./autoGrow";
 import { ArrowDownIcon, ArrowUpIcon, CloseIcon, FileCodeIcon, ImageIcon, PlusIcon, SlashIcon, SlidersIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
@@ -148,6 +148,27 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const phone = useMediaQuery("(max-width: 767px)");
   const [moreOpen, setMoreOpen] = useState(false);
   const [picking, setPicking] = useState<"model" | "effort" | null>(null);
+  const [defaults, setDefaults] = useState<DefaultModels | null>(null);
+  useEffect(() => { api.settings().then(setDefaults).catch(() => {}); }, [picking]);
+  const [modelNames, setModelNames] = useState<Record<string, string>>({});
+  useEffect(() => {
+    Promise.all([api.claudeModels(), api.codexModels()])
+      .then(([claude, codex]) => setModelNames(Object.fromEntries([...claude, ...codex].map((m) => [m.value, m.displayName]))))
+      .catch(() => {});
+  }, []);
+  const modelLabel = (value: string | null | undefined) => (value && modelNames[value]) || chipLabel(value, "Default model");
+  const statusChips = (["model", "effort"] as const).map((kind) => (
+    <span key={kind} className="status-pick">
+      <button type="button" className="status-chip" aria-haspopup="menu" aria-expanded={picking === kind} disabled={stopping}
+        onClick={() => { commands.close(); setPicking(picking === kind ? null : kind); }}>
+        {kind === "model"
+          ? modelLabel((codex ? ticket.codexModel : ticket.model) ?? (codex ? defaults?.codexModel : defaults?.claudeModel))
+          : chipLabel((codex ? ticket.codexEffort : ticket.effort) ?? (codex ? defaults?.codexEffort : defaults?.claudeEffort), "Auto effort")}
+      </button>
+      {picking === kind && <QuickPick slug={slug} ticket={ticket} kind={kind} onClose={() => setPicking(null)}
+        onMore={() => setSettingsTab(codex || kind === "model" ? "model" : "effort")} />}
+    </span>
+  ));
   // Phones have no hint line under the box, so the placeholder says what the agent may do.
   const placeholder = running
     ? (codex ? "Queue a message for Codex’s next turn…" : phone ? "Steer Claude…" : "Steer Claude: it reads this at its next step…")
@@ -592,6 +613,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       {phone ? (
         // Phones: one row like a messaging app. Extra actions sit behind +, and the one round button
         // is Stop while the agent works with nothing typed, otherwise Send.
+        <>
+        <div className="composer-status phone-status">{statusChips}</div>
         <div className="composer composer-row">
           {commands.popup}
           {mentions.popup}
@@ -619,6 +642,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             ? <button type="button" className="btn danger send-round" aria-label={stopping ? "Stopping" : `Stop ${agentName}`} disabled={stopping} onClick={stop}><span className="stop-square" aria-hidden /></button>
             : <button type="button" className="btn primary send-round" aria-label={images.uploading ? "Uploading" : "Send"} disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? <span className="spinner" /> : <ArrowUpIcon size={18} />}</button>}
         </div>
+        </>
       ) : (
       <div className="composer">
         {commands.popup}
@@ -640,16 +664,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           {/* What the next reply runs with, at a glance; each opens its setting (like the CLI apps' status line). */}
           <span className="composer-status">
             <span className="muted small" title={refine ? `${agentName} won’t change files` : `${agentName} can change files`}>{refine ? (ticket.standalone ? "Read only" : "Refine mode") : "Can edit"}</span>
-            {(["model", "effort"] as const).map((kind) => (
-              <span key={kind} className="status-pick">
-                <button type="button" className="status-chip" aria-haspopup="menu" aria-expanded={picking === kind} disabled={stopping}
-                  onClick={() => { commands.close(); setPicking(picking === kind ? null : kind); }}>
-                  {kind === "model" ? chipLabel(codex ? ticket.codexModel : ticket.model, "Default model") : chipLabel(codex ? ticket.codexEffort : ticket.effort, "Auto effort")}
-                </button>
-                {picking === kind && <QuickPick slug={slug} ticket={ticket} kind={kind} onClose={() => setPicking(null)}
-                  onMore={() => setSettingsTab(codex || kind === "model" ? "model" : "effort")} />}
-              </span>
-            ))}
+            {statusChips}
             <span className="muted small composer-keys">Enter to send · Shift+Enter for a new line</span>
           </span>
           <span className="composer-actions">

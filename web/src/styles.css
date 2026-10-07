@@ -1742,6 +1742,8 @@ button.pill:hover { color: var(--text); }
 .composer-menu { top: auto; bottom: calc(100% + 8px); left: 0; right: auto; width: 230px; }
 .stop-square { display: block; width: 12px; height: 12px; border-radius: 2px; background: currentColor; }
 .composer-error { margin: 0 12px 8px; }
+.phone-status { gap: 6px; margin: 0 14px 4px; }
+.phone-status .status-chip { min-height: 32px; padding: 4px 12px; white-space: nowrap; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
 /* The keyboard already covers the home indicator: sit the box right on it. */
 :root[data-keyboard-open] .panel-main .composer.composer-row { margin-bottom: 6px; }
 :root[data-keyboard-open] .composer-row textarea { max-height: max(44px, calc(var(--viewport-height) * 0.25)); }
@@ -1783,6 +1785,7 @@ button.pill:hover { color: var(--text); }
 .quick-pick-key { font-size: 12px; color: var(--muted); }
 .quick-pick-check { color: var(--info); }
 .quick-pick-status { margin: 8px; color: var(--muted); font-size: 13px; }
+@media (pointer: coarse) { .quick-pick-key { display: none; } .quick-pick-item { min-height: 44px; } }
 .slash-help > span:not(.slash-args) { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 /* Agent steps: plain sentences, the raw command small underneath when opened */
 .conv-tools { font-family: inherit; font-size: 13px; opacity: 1; }

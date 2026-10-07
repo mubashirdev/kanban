@@ -8,7 +8,7 @@ const EFFORT_LABEL: Record<string, string> = { low: "Low", medium: "Medium", hig
 
 /** Short display text for a model or effort chip before the full catalog has loaded. */
 export const chipLabel = (value: string | null | undefined, fallback: string) =>
-  value ? EFFORT_LABEL[value] ?? value.charAt(0).toUpperCase() + value.slice(1) : fallback;
+  value ? EFFORT_LABEL[value] ?? value.charAt(0).toUpperCase() + value.slice(1).replace(/^pt-/, "PT-") : fallback;
 
 /**
  * Model or effort list that opens from its chip under the message box, like the Claude app:
@@ -28,8 +28,10 @@ export function QuickPick({ slug, ticket, kind, onClose, onMore }: {
     let cancelled = false;
     const load = async (): Promise<Option[]> => {
       if (codex) {
-        const models = await api.codexModels();
-        if (kind === "model") return [{ value: null, label: "Codex default", tag: "Default" }, ...models.map((m) => ({ value: m.value, label: m.displayName }))];
+        const [models, defaults] = await Promise.all([api.codexModels(), api.settings()]);
+        const defaultModel = models.find((m) => m.value === defaults.codexModel)?.displayName ?? defaults.codexModel;
+        const defaultLabel = defaultModel && kind === "model" ? `Board default (${defaultModel})` : "Codex default";
+        if (kind === "model") return [{ value: null, label: defaultLabel, tag: "Default" }, ...models.map((m) => ({ value: m.value, label: m.displayName }))];
         const efforts = models.find((m) => m.value === ticket.codexModel)?.efforts ?? ["low", "medium", "high", "xhigh"];
         return [{ value: null, label: "Codex default", tag: "Default" }, ...efforts.map((e) => ({ value: e, label: EFFORT_LABEL[e] ?? e }))];
       }
