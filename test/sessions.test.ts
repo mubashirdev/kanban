@@ -14,6 +14,7 @@ import type { Profile, Ticket } from "../src/server/types";
 import { makeRepo, tempDir } from "./helpers";
 import { run } from "../src/server/git";
 import { gitState, searchFiles } from "../src/server/git-actions";
+import { readableError } from "../src/server/codex-runner";
 
 const FAKE_CLAUDE = join(import.meta.dir, "fixtures", "fake-claude.ts");
 const FAKE_CODEX = join(import.meta.dir, "fixtures", "fake-codex.ts");
@@ -319,4 +320,10 @@ test("@ mentions find repo files by name first, leaving ignored files out", asyn
   expect(found.slice(0, 2).sort()).toEqual(["src/deep/parser.ts", "src/parse-utils.ts"]);
   expect(found[2]).toBe("parsers/index.ts");
   expect(await searchFiles(p.path, "secret")).toEqual([]);
+});
+
+test("a Codex model error says how to fix it", () => {
+  const raw = JSON.stringify({ type: "error", status: 400, error: { message: "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account." } });
+  expect(readableError(raw)).toBe("The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account. Update Codex (run `codex update`) or choose another model in the chat settings.");
+  expect(readableError("Network down")).toBe("Network down");
 });

@@ -38,12 +38,14 @@ export function codexArgs(options: {
 }
 /** Codex reports API errors as a JSON string inside the message; show just the human part. */
 export function readableError(message: string): string {
+  let text = message;
   try {
     const parsed = JSON.parse(message);
-    return parsed?.error?.message ?? parsed?.message ?? message;
-  } catch {
-    return message;
-  }
+    text = parsed?.error?.message ?? parsed?.message ?? message;
+  } catch {}
+  // An older CLI rejects models a newer one knows (e.g. the config's default model).
+  if (/model is not supported|model metadata .* not found/i.test(text)) text += " Update Codex (run `codex update`) or choose another model in the chat settings.";
+  return text;
 }
 
 /** Codex exec accepts one prompt per process. Later messages stay in the durable board queue. */
