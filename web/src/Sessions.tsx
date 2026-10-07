@@ -120,7 +120,7 @@ export function NewSessionDialog({ profile: initial, profiles, onClose, onStarte
   const started = (id: string) => onStarted(id, profile.slug);
   if (resuming) return <ResumeDialog profile={profile} onClose={() => setResuming(false)} onResumed={started} />;
   return (
-    <Modal title="New chat" onClose={onClose}>
+    <Modal title="New chat" sheet onClose={onClose}>
       <div className="form new-session">
         {profiles.length > 1 && (
           <label className="session-repo">
@@ -192,7 +192,7 @@ export function SessionStarter({ profile, onStarted }: { profile: Profile; onSta
           </div>
         )}
         <button type="submit" className="btn primary send-round" disabled={!text.trim() || busy} aria-label={`Start session with ${name}`}>
-          {busy ? <span className="spinner" /> : <ArrowUpIcon size={18} />}
+          {busy ? <span className="spinner" /> : <ArrowUpIcon size={18} />}<span className="starter-send-label">Start chat</span>
         </button>
       </div>
       <p className="starter-hint">{worktree ? "It works on its own branch in a separate copy, so your folder stays untouched." : ACCESS.find((a) => a.id === access)!.hint}</p>

@@ -2,10 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import type { InboxItem } from "./api";
 import { BellIcon } from "./icons";
 import { useLayer } from "./layers";
+import { Modal } from "./Modal";
+import { useMediaQuery } from "./useMediaQuery";
 
 /** Top-bar "N need you" across every board; the list jumps straight to a ticket. ↑↓ move, Esc closes. */
 export function Inbox({ items, onPick, landOnInbox = false }: { items: InboxItem[]; onPick: (i: InboxItem) => void; landOnInbox?: boolean }) {
   const [open, setOpen] = useState(false);
+  const phone = useMediaQuery("(max-width: 767px)");
   // Phones open straight onto what is waiting for you, once per browser session.
   useEffect(() => {
     if (!landOnInbox || !items.length) return;
@@ -64,7 +67,27 @@ export function Inbox({ items, onPick, landOnInbox = false }: { items: InboxItem
         <span className="inbox-text"><span className="yt-dot" aria-hidden /> {items.length} need you</span>
         <span className="inbox-compact" aria-hidden><BellIcon size={20} /><span className="inbox-count">{items.length > 99 ? "99+" : items.length}</span></span>
       </button>
-      {open && (
+      {open && phone && (
+        <Modal title="Needs you" sheet onClose={() => setOpen(false)}>
+          <div className="sheet-list">
+            {boards.map((b) => {
+              const group = items.filter((i) => i.profile === b);
+              return (
+                <div key={b}>
+                  {boards.length > 1 && <div className="sheet-heading">{group[0].profileName}</div>}
+                  {group.map((i) => (
+                    <button key={i.id} type="button" className="sheet-action inbox-row" onClick={() => { setOpen(false); onPick(i); }}>
+                      <span className="inbox-row-title">{i.title}</span>
+                      <span className={`inbox-why att-${i.attention.kind}`}>{i.attention.label}</span>
+                    </button>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </Modal>
+      )}
+      {open && !phone && (
         <div className="inbox-menu" role="menu" ref={menu} onKeyDown={onMenuKey}>
           {boards.map((b) => {
             const group = items.filter((i) => i.profile === b);

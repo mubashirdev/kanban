@@ -621,7 +621,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       {phone ? (
         // Phones: one row like a messaging app. Extra actions sit behind +, and the one round button
         // is Stop while the agent works with nothing typed, otherwise Send.
-        <div className="composer composer-card">
+        <div className="composer composer-card" onClick={(e) => { if (!(e.target as HTMLElement).closest("button, textarea, .quick-pick")) composer.current?.focus(); }}>
           {commands.popup}
           {mentions.popup}
           <textarea ref={composer} rows={phone ? 1 : 2} value={draft} disabled={stopping} className={images.dragOver ? "drop-target" : undefined} {...images.handlers} {...commands.aria} role="combobox" aria-label={`Message ${agentName}`}

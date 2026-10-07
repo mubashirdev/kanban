@@ -7,6 +7,8 @@ import { CSS } from "@dnd-kit/utilities";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BOARD_COLUMNS, COLUMNS, type Status, type Ticket } from "./api";
 import { Card } from "./Card";
+import { CardActions } from "./CardActions";
+import { buzz } from "./haptics";
 import { CollapseIcon, PlusIcon, SparkIcon } from "./icons";
 import { useMediaQuery } from "./useMediaQuery";
 
@@ -50,8 +52,15 @@ interface Props {
 }
 
 /** Drag with the mouse, or focus a card: Enter opens it, Space picks it up (arrows move, Space drops, Esc cancels). */
-function SortableCard({ ticket, onOpen, onQuick, queued, held }: { ticket: Ticket; onOpen: (id: string) => void; onQuick: (ticket: Ticket, to: Status) => void; queued?: number; held?: boolean }) {
+function SortableCard({ ticket, onOpen, onQuick, onActions, queued, held }: { ticket: Ticket; onOpen: (id: string) => void; onQuick: (ticket: Ticket, to: Status) => void; onActions: (ticket: Ticket) => void; queued?: number; held?: boolean }) {
   const touch = useMediaQuery("(pointer: coarse)");
+  // Touch: holding a card (without scrolling) opens its action sheet; the tap that ends the hold must not also open the card.
+  const press = useRef<{ timer: ReturnType<typeof setTimeout>; x: number; y: number } | null>(null);
+  const longPressed = useRef(false);
+  const cancelPress = () => {
+    if (press.current) clearTimeout(press.current.timer);
+    press.current = null;
+  };
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: ticket.id,
     data: { status: ticket.status },
@@ -64,6 +73,13 @@ function SortableCard({ ticket, onOpen, onQuick, queued, held }: { ticket: Ticke
       {...attributes}
       {...(touch ? {} : listeners)}
       aria-label={ticket.title}
+      onPointerDown={touch ? (e) => {
+        if ((e.target as HTMLElement).closest("button, a")) return;
+        press.current = { x: e.clientX, y: e.clientY, timer: setTimeout(() => { press.current = null; longPressed.current = true; setTimeout(() => { longPressed.current = false; }, 700); buzz(); onActions(ticket); }, 450) };
+      } : undefined}
+      onPointerMove={touch ? (e) => { if (press.current && Math.hypot(e.clientX - press.current.x, e.clientY - press.current.y) > 8) cancelPress(); } : undefined}
+      onPointerUp={touch ? cancelPress : undefined}
+      onPointerCancel={touch ? cancelPress : undefined}
       onKeyDown={(e) => {
         if (e.key === "Enter" && e.target === e.currentTarget) {
           e.preventDefault();
@@ -73,7 +89,7 @@ function SortableCard({ ticket, onOpen, onQuick, queued, held }: { ticket: Ticke
         listeners?.onKeyDown?.(e);
       }}
     >
-      <Card ticket={ticket} onClick={() => onOpen(ticket.id)} onQuick={(to) => onQuick(ticket, to)} queued={queued} held={held} />
+      <Card ticket={ticket} onClick={() => { if (longPressed.current) longPressed.current = false; else onOpen(ticket.id); }} onQuick={(to) => onQuick(ticket, to)} queued={queued} held={held} />
       {touch && <button ref={setActivatorNodeRef} className="icon-btn card-drag-handle" {...listeners}
         aria-label={`Drag ${ticket.title}`} title="Drag to move ticket" onClick={(e) => e.stopPropagation()}>
         <svg width="16" height="20" viewBox="0 0 16 20" fill="currentColor" aria-hidden>
@@ -96,13 +112,13 @@ const EMPTY_HINT: Record<Status, string> = {
 const DONE_LIMIT = 10;
 const CLAUDE_TAG = "The selected agent starts automatically here";
 
-function Column({ id, label, hint, claude, tickets, queue = [], held = false, onOpen, onQuick, onAdd, collapsed, onCollapse, filtered }: {
+function Column({ id, label, hint, claude, tickets, queue = [], held = false, onOpen, onQuick, onActions, onAdd, collapsed, onCollapse, filtered }: {
   id: Status; label: string; hint: string; claude: boolean; tickets: Ticket[];
   /** In Progress only: tickets waiting for a free run slot, in start order. */
   queue?: Ticket[];
   /** A pending daemon restart holds the queue. */
   held?: boolean;
-  onOpen: (id: string) => void; onQuick: (ticket: Ticket, to: Status) => void; onAdd: (s: Status) => void;
+  onOpen: (id: string) => void; onQuick: (ticket: Ticket, to: Status) => void; onActions: (ticket: Ticket) => void; onAdd: (s: Status) => void;
   collapsed: boolean; onCollapse: (v: boolean) => void; filtered: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `col:${id}`, data: { status: id } });
@@ -146,11 +162,11 @@ function Column({ id, label, hint, claude, tickets, queue = [], held = false, on
       <SortableContext items={[...shown, ...queue].map((t) => t.id)} strategy={verticalListSortingStrategy}>
         <div ref={setNodeRef} className="column-body">
           {shown.map((t) => (
-            <SortableCard key={t.id} ticket={t} onOpen={onOpen} onQuick={onQuick} />
+            <SortableCard key={t.id} ticket={t} onOpen={onOpen} onQuick={onQuick} onActions={onActions} />
           ))}
           {queue.length > 0 && <div className="queue-sep" title="These start in this order as run slots free up">Queued</div>}
           {queue.map((t, i) => (
-            <SortableCard key={t.id} ticket={t} onOpen={onOpen} onQuick={onQuick} queued={i + 1} held={held} />
+            <SortableCard key={t.id} ticket={t} onOpen={onOpen} onQuick={onQuick} onActions={onActions} queued={i + 1} held={held} />
           ))}
           {id === "done" && tickets.length > DONE_LIMIT && (
             <button className="btn ghost small show-all" onClick={() => setShowAll((v) => !v)}>
@@ -225,6 +241,7 @@ export function Board({ tickets, onOpen, onMove, onAdd, filtered = false, restar
     const button = nav?.querySelector<HTMLElement>(`[data-column="${activeColumn}"]`);
     if (nav && button) nav.scrollTo({ left: button.offsetLeft - nav.offsetLeft - (nav.clientWidth - button.clientWidth) / 2 });
   }, [activeColumn, compact]);
+  const [actionsFor, setActionsFor] = useState<Ticket | null>(null);
   // One-tap actions on a card go to the end of the target lane.
   const quickMove = (ticket: Ticket, to: Status) => {
     const last = (byColumn.get(to) ?? []).at(-1);
@@ -315,12 +332,17 @@ export function Board({ tickets, onOpen, onMove, onAdd, filtered = false, restar
         )}
         <main ref={boardRef} className="board" onScroll={compact ? syncColumn : undefined} aria-label="Kanban board">
           {BOARD_COLUMNS.map((c) => (
-            <Column key={c.id} {...c} tickets={byColumn.get(c.id) ?? []} queue={c.id === "in_progress" ? byColumn.get("ready") : undefined} held={restartPending} onOpen={onOpen} onQuick={quickMove} onAdd={onAdd} filtered={filtered}
+            <Column key={c.id} {...c} tickets={byColumn.get(c.id) ?? []} queue={c.id === "in_progress" ? byColumn.get("ready") : undefined} held={restartPending} onOpen={onOpen} onQuick={quickMove} onActions={setActionsFor} onAdd={onAdd} filtered={filtered}
               collapsed={!compact && collapsed.has(c.id)} onCollapse={(v) => setColumnCollapsed(c.id, v)} />
           ))}
         </main>
       </div>
       <DragOverlay>{dragging ? <Card ticket={dragging} dragging /> : null}</DragOverlay>
+      {actionsFor && (
+        <CardActions ticket={actionsFor} onClose={() => setActionsFor(null)}
+          onOpen={() => { onOpen(actionsFor.id); setActionsFor(null); }}
+          onMove={(to) => { quickMove(actionsFor, to); setActionsFor(null); }} />
+      )}
     </DndContext>
   );
 }

@@ -5,6 +5,7 @@ import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, normalize } from "node:path";
 import { ConflictError, type Board } from "./board";
+import { dailyUsage } from "./usage-daily";
 import { claudeDefaults, listClaudeProjects, listSessions, liveSessionMatch, pickFolder, processCommands } from "./claude";
 import type { Bus, BusEvent } from "./events";
 import { detectBaseBranch, isGitRepo, resolveBaseBranch, which } from "./git";
@@ -333,6 +334,7 @@ export function createServer(deps: ServerDeps) {
       throw new HttpError(404, "not found");
     }
 
+    if (parts[0] === "daily-usage" && m === "GET") return json(dailyUsage(store, 7));
     if (parts[0] === "settings" && parts.length === 1) {
       if (m === "PATCH") {
         const b = await body(req);

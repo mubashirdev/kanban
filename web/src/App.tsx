@@ -11,11 +11,13 @@ import { BugReportDialog } from "./BugReportDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
 import { HeaderMenu } from "./HeaderMenu";
 import { BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, ColumnsIcon, CopyIcon, GearIcon, KeyboardIcon, PlusIcon, PlugIcon, SearchIcon, TerminalIcon } from "./icons";
+import { buzz } from "./haptics";
 import { Inbox } from "./Inbox";
 import { UsagePill } from "./UsagePill";
 import { anyLayerOpen } from "./layers";
 import { Board, boardOrder } from "./Board";
 import { NewTicketDialog } from "./NewTicketDialog";
+import { DailyCostDialog } from "./DailyCostDialog";
 import { DefaultModelsDialog } from "./DefaultModelsDialog";
 import { ProfileDialog } from "./ProfileDialog";
 import { SchedulesDialog } from "./SchedulesDialog";
@@ -167,8 +169,12 @@ export function App() {
   const [dismissed, setDismissed] = useState(readDismissed);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [defaultModelsOpen, setDefaultModelsOpen] = useState(false);
+  const [dailyCostOpen, setDailyCostOpen] = useState(false);
   // Phones: search and filters sit behind a magnifier until needed.
   const [searchOpen, setSearchOpen] = useState(false);
+  const attentionSeen = useRef(new Map<string, string | null>());
+  // Tickets already on screen count as seen, so only later changes buzz.
+  useEffect(() => { for (const t of tickets) if (!attentionSeen.current.has(t.id)) attentionSeen.current.set(t.id, t.attention?.kind ?? null); }, [tickets]);
   // "#/<board>/<ticket>": a shared or reloaded ticket link should not be covered by the inbox.
   const startedOnTicket = useRef(!!openId);
   // The installed app's icon badge shows how many tickets and sessions wait on you.
@@ -297,7 +303,7 @@ export function App() {
 
   const needYou = inbox.length;
   useEffect(() => {
-    document.title = needYou ? `(${needYou}) Muba AI Canban` : "Muba AI Canban";
+    document.title = needYou ? `(${needYou}) Muba AI` : "Muba AI";
   }, [needYou]);
 
   useEffect(() => {
@@ -384,6 +390,13 @@ export function App() {
           loadProfiles().catch(() => {});
           refreshInboxSoon();
           return;
+        }
+        if (e.type === "ticket.updated") {
+          // A short buzz when a ticket starts waiting on you (finished, has questions, failed); the first sighting of a ticket never buzzes.
+          const now = e.ticket.attention?.kind ?? null;
+          const before = attentionSeen.current.get(e.ticket.id);
+          attentionSeen.current.set(e.ticket.id, now);
+          if (before !== undefined && now && now !== before && !e.ticket.running) buzz([30, 60, 30]);
         }
         if (e.type === "ticket.updated" || e.type === "ticket.deleted" || e.type === "session.updated") refreshInboxSoon();
         if (e.type === "schedule.updated" && e.profile === slug) refreshSchedulesSoon(slug);
@@ -492,7 +505,7 @@ export function App() {
       <header className="topbar">
         <div className="brand">
           <img className="brand-icon" src="/icons/esa-192.png?v=6" width="28" height="28" alt="" />
-          <span className="brand-name">Muba AI Canban</span>
+          <span className="brand-name">Muba AI</span>
         </div>
         {profiles && profiles.length > 0 && (
           <Select
@@ -592,7 +605,7 @@ export function App() {
           </button>
         )}
         <HeaderMenu items={[
-          ...(!pwa.installed ? [{ label: "Install Muba AI Canban", icon: <CopyIcon />, onSelect: pwa.install }] : []),
+          ...(!pwa.installed ? [{ label: "Install Muba AI", icon: <CopyIcon />, onSelect: pwa.install }] : []),
           ...(pwa.waiting ? [{ label: "Reload app update", icon: <CheckIcon />, onSelect: pwa.update }] : []),
           ...(narrow ? [{ label: "Usage & limits", icon: <ClockIcon />, onSelect: () => setUsageRequest((n) => n + 1) }] : []),
           ...(compact ? [
@@ -605,11 +618,12 @@ export function App() {
           ] : []),
           ...(profile ? [{ label: "Board settings", icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
           ...(profile ? [{ label: "Activity", icon: <ClockIcon />, onSelect: () => setActivityOpen(true) }] : []),
+          { label: "Daily cost", icon: <ClockIcon />, onSelect: () => setDailyCostOpen(true) },
           { label: "Default models", icon: <GearIcon />, onSelect: () => setDefaultModelsOpen(true) },
           { label: "Notifications", icon: <BellIcon />, onSelect: () => setNotificationsOpen(true) },
           { label: "Keyboard shortcuts", hint: "?", icon: <KeyboardIcon />, onSelect: () => setShortcuts(true) },
           { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
-        ]} footer={narrow && profile ? `${running}/${profile.maxParallel} running` : version && version.version !== "dev" ? `Muba AI Canban v${version.version}` : null} />
+        ]} footer={narrow && profile ? `${running}/${profile.maxParallel} running` : version && version.version !== "dev" ? `Muba AI v${version.version}` : null} />
       </header>
 
 
@@ -628,7 +642,7 @@ export function App() {
 
       {version?.updateAvailable && !dismissed.has(updateKey) && (
         <div className="banner info" role="status">
-          <span>Muba AI Canban v{version.latest} is available (you have v{version.version}). Run <code>ckanban update</code> in a terminal.</span>
+          <span>Muba AI v{version.latest} is available (you have v{version.version}). Run <code>ckanban update</code> in a terminal.</span>
           <button className="icon-btn" aria-label="Dismiss" title="Hide until next time" onClick={() => dismiss(updateKey)}><CloseIcon size={12} /></button>
         </div>
       )}
@@ -719,6 +733,7 @@ export function App() {
         <ConnectionsDialog state={mcp} onClose={() => setConnections(false)}
           onRunInTerminal={profile && health?.pty !== false ? (cmd) => { setConnections(false); runInTerminal(cmd); } : undefined} />
       )}
+      {dailyCostOpen && <DailyCostDialog onClose={() => setDailyCostOpen(false)} />}
       {defaultModelsOpen && <DefaultModelsDialog onClose={() => setDefaultModelsOpen(false)} />}
       {notificationsOpen && <NotificationsDialog onClose={() => setNotificationsOpen(false)} />}
       {activityOpen && profile && (
