@@ -1951,16 +1951,28 @@ body { letter-spacing: -0.011em; }
 .chat-pane-new { flex: 1; max-width: 720px; margin: 0 auto; padding: 48px 32px; display: flex; flex-direction: column; gap: 16px; }
 .chat-pane-new h2 { margin: 0; font-size: 20px; }
 
-/* Phones: a short iOS-style top bar (board name as the title, actions on the right).
-   Board | Chats is a labelled segmented control at the start of the search row. */
+/* Phones: like iOS Messages. Row 1: repo avatar, the Board | Chats switch centered, then + and ⋯.
+   Row 2: the repo name, which also opens the repo picker. */
+.repo-avatar { display: none; }
 @media (max-width: 767px) {
-  .topbar .brand { display: none; }
-  .topbar .profile-select .select-trigger, .topbar .profile-select > button { font-size: 17px; font-weight: 650; }
-  .board-bar .mode-switch, .chat-list-head .mode-switch { flex: none; }
-  .board-bar .mode-switch button, .chat-list-head .mode-switch button {
-    min-height: 40px; min-width: 0; padding: 0 12px; font-size: 14px; font-weight: 600; justify-content: center;
+  .topbar {
+    display: grid; grid-template-columns: 44px 1fr auto auto auto; grid-template-areas: "avatar mode inbox add menu" "repo repo repo repo repo";
+    align-items: center; column-gap: 6px; row-gap: 2px; padding-bottom: 6px;
   }
-  .mode-dot { top: 6px; right: 5px; }
+  .topbar > .brand, .topbar > .pill, .topbar > .spacer, .topbar > .usage-pill { display: none; }
+  .repo-avatar {
+    grid-area: avatar; display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 10px;
+    color: #fff; font-weight: 700; font-size: 16px; cursor: pointer; justify-self: start;
+  }
+  .topbar > .mode-switch { grid-area: mode; justify-self: center; }
+  .topbar > .mode-switch button { min-height: 36px; padding: 0 14px; font-size: 14px; font-weight: 600; gap: 5px; }
+  .topbar > .inbox { grid-area: inbox; }
+  .topbar > .new-ticket-btn { grid-area: add; background: transparent; border-color: transparent; color: var(--accent); box-shadow: none; }
+  .topbar > .header-menu { grid-area: menu; }
+  .topbar > .profile-select { grid-area: repo; justify-self: start; max-width: 100%; }
+  .topbar .profile-select .select-trigger { background: transparent; padding: 2px 0; min-height: 36px; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+  .mode-dot { top: 5px; right: 5px; }
   /* Room after the last lane, so it lines up like the others. */
   .board::after { content: ""; flex: 0 0 8px; }
+}
 }

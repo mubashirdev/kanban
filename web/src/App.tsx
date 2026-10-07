@@ -391,14 +391,14 @@ export function App() {
   const unreadChats = sessions.filter((t) => !t.running && t.attention).length;
   // Wide screens show an open chat inside Chats (two panes) instead of as a sliding panel.
   const wideChats = mode === "chats" && !narrow;
-  // Desktop: in the top bar. Phones: at the start of the search row, so the top bar stays short.
+  // Centered in the top bar on phones (like iOS Messages), next to the repo picker on desktop.
   const modeSwitch = (
     <div className="segmented mode-switch" role="radiogroup" aria-label="View">
       <button type="button" role="radio" aria-checked={mode === "board"} onClick={() => setMode("board")} title="Tickets in lanes">
-        {!compact && <ColumnsIcon size={16} />}Board
+        <ColumnsIcon size={16} />Board
       </button>
       <button type="button" role="radio" aria-checked={mode === "chats"} onClick={() => setMode("chats")} title="Chats with Claude and Codex">
-        {!compact && <ChatIcon size={16} />}Chats
+        <ChatIcon size={16} />Chats
         {unreadChats > 0 && <span className="mode-dot" aria-label={`${unreadChats} new`} />}
       </button>
     </div>
@@ -510,7 +510,14 @@ export function App() {
             Restart pending{restart.waiting > 0 ? ` · waiting for ${restart.waiting} ${restart.waiting === 1 ? "run" : "runs"}` : ""}
           </span>
         )}
-        {profile && !compact && modeSwitch}
+        {profile && compact && (
+          // Phones: the repo's avatar opens the repo picker (its name sits on the second row).
+          <button type="button" className="repo-avatar" aria-label={`Switch repo, now ${profile.name}`} style={{ background: avatarColor(profile.slug) }}
+            onClick={() => document.querySelector<HTMLButtonElement>(".topbar .profile-select .select-trigger")?.click()}>
+            {avatarLetter(profile.name)}
+          </button>
+        )}
+        {profile && modeSwitch}
         <div className="spacer" />
         <Inbox items={inbox} landOnInbox={narrow && !startedOnTicket.current} onPick={(i) => {
           if (i.profile !== slug) setSlug(i.profile);
@@ -624,11 +631,10 @@ export function App() {
         </div>
       ) : mode === "chats" ? (
         <ChatsView profile={profile} sessions={sessions} tickets={tickets} openId={openId} wide={wideChats}
-          switcher={compact ? modeSwitch : null} onOpen={(id) => openTicket(id)} onClose={closeTicket} onOpenTicket={(id) => openTicket(id)} />
+          onOpen={(id) => openTicket(id)} onClose={closeTicket} onOpenTicket={(id) => openTicket(id)} />
       ) : (
         <>
           <div className="board-bar">
-            {compact && modeSwitch}
             <div className="search">
               <SearchIcon className="icon search-icon" />
               <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder={compact ? "Search" : "Search tickets"}

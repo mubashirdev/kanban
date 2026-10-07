@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, copy, type ClaudeSession, type Profile, type Ticket } from "./api";
 import { autoGrow } from "./autoGrow";
 import { rememberFirstMessage } from "./drafts";
@@ -71,10 +71,8 @@ function SessionCard({ ticket, onOpen }: { ticket: Ticket; onOpen: () => void })
  * Chats mode: sessions as a messenger. Phones show the thread list (a thread opens full screen);
  * wide screens show the list on the left and the open chat, or a new-chat box, on the right.
  */
-export function ChatsView({ profile, sessions, tickets, openId, wide, switcher, onOpen, onClose, onOpenTicket }: {
+export function ChatsView({ profile, sessions, tickets, openId, wide, onOpen, onClose, onOpenTicket }: {
   profile: Profile; sessions: Ticket[]; tickets: Ticket[]; openId: string | null; wide: boolean;
-  /** The Board | Chats control, shown here on phones. */
-  switcher: ReactNode;
   onOpen: (id: string) => void; onClose: () => void; onOpenTicket: (id: string) => void;
 }) {
   useNow();
@@ -89,8 +87,7 @@ export function ChatsView({ profile, sessions, tickets, openId, wide, switcher, 
     <div className={`chats${wide ? " wide" : ""}`}>
       <section className="chat-list" aria-label="Chats">
         <div className="chat-list-head">
-          {switcher}
-          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={switcher ? "Search" : "Search chats"} aria-label="Search chats" />
+          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search chats" aria-label="Search chats" />
         </div>
         {threads.length === 0 ? (
           <p className="chat-list-empty">{q ? "No chats match." : "No chats yet. Start one to ask Claude or Codex anything about this repo."}</p>
