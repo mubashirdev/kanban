@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { safeHref, type Ticket } from "./api";
+import { safeHref, type Status, type Ticket } from "./api";
+import { SparkIcon, TerminalIcon } from "./icons";
 import { ClockIcon } from "./icons";
 import { elapsed, fullTime, plainPreview, timeAgo, useNow } from "./time";
 
@@ -36,8 +37,15 @@ export function outcomeBadge(t: Ticket) {
 }
 
 /** queued: 1-based place in the queue for a free run slot (status `ready`). held: a pending daemon restart holds it. */
-export function Card({ ticket, onClick, dragging, queued, held }: { ticket: Ticket; onClick?: () => void; dragging?: boolean; queued?: number; held?: boolean }) {
+const QUICK_ACTIONS: Partial<Record<Status, { label: string; to: Status }>> = {
+  backlog: { label: "Run", to: "ready" },
+  planning: { label: "Run", to: "ready" },
+  review: { label: "Done", to: "done" },
+};
+
+export function Card({ ticket, onClick, dragging, queued, held, onQuick }: { ticket: Ticket; onClick?: () => void; dragging?: boolean; queued?: number; held?: boolean; onQuick?: (to: Status) => void }) {
   const working = ticket.status === "in_progress" || !!ticket.running;
+  const quick = QUICK_ACTIONS[ticket.status];
   const att = working ? null : ticket.attention ?? null;
   const badge = att ? null
     : queued && !working ? (held
@@ -60,7 +68,16 @@ export function Card({ ticket, onClick, dragging, queued, held }: { ticket: Tick
         </div>
       )}
       {(ticket.kind && ticket.kind !== "task" || ticket.priority && !["normal","none"].includes(ticket.priority) || ticket.labels?.length) && <div className="card-properties">{ticket.kind && ticket.kind !== "task" && <span className="ticket-label">{ticket.kind}</span>}{ticket.priority && !["normal","none"].includes(ticket.priority) && <span className={`priority-tag priority-${ticket.priority}`}>{ticket.priority}</span>}{ticket.labels?.slice(0,3).map(label=><span key={label} className="ticket-label">{label}</span>)}{(ticket.labels?.length ?? 0)>3 && <span className="muted small">+{ticket.labels!.length-3}</span>}</div>}
-      <div className="card-title" title={ticket.title}>{ticket.title}</div>
+      <div className="card-title-row">
+        <div className="card-title" title={ticket.title}>{ticket.title}</div>
+        <span className="card-agent" title={ticket.agent === "codex" ? "Codex" : "Claude"} aria-label={ticket.agent === "codex" ? "Codex" : "Claude"}>
+          {ticket.agent === "codex" ? <TerminalIcon size={11} /> : <SparkIcon size={11} />}
+        </span>
+      </div>
+      {quick && onQuick && !working && (!att || att.kind === "review") && (
+        <button type="button" className="card-quick" onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onQuick(quick.to); }}>{quick.label}</button>
+      )}
       {showActivity ? (
         <div className="card-activity" title={ticket.lastActivity!}>{ticket.lastActivity}</div>
       ) : last && (

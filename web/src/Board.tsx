@@ -54,7 +54,7 @@ interface Props {
 }
 
 /** Drag with the mouse, or focus a card: Enter opens it, Space picks it up (arrows move, Space drops, Esc cancels). */
-function SortableCard({ ticket, onOpen, queued, held }: { ticket: Ticket; onOpen: (id: string) => void; queued?: number; held?: boolean }) {
+function SortableCard({ ticket, onOpen, onQuick, queued, held }: { ticket: Ticket; onOpen: (id: string) => void; onQuick: (ticket: Ticket, to: Status) => void; queued?: number; held?: boolean }) {
   const touch = useMediaQuery("(pointer: coarse)");
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: ticket.id,
@@ -77,7 +77,7 @@ function SortableCard({ ticket, onOpen, queued, held }: { ticket: Ticket; onOpen
         listeners?.onKeyDown?.(e);
       }}
     >
-      <Card ticket={ticket} onClick={() => onOpen(ticket.id)} queued={queued} held={held} />
+      <Card ticket={ticket} onClick={() => onOpen(ticket.id)} onQuick={(to) => onQuick(ticket, to)} queued={queued} held={held} />
       {touch && <button ref={setActivatorNodeRef} className="icon-btn card-drag-handle" {...listeners}
         aria-label={`Drag ${ticket.title}`} title="Drag to move ticket" onClick={(e) => e.stopPropagation()}>
         <svg width="16" height="20" viewBox="0 0 16 20" fill="currentColor" aria-hidden>
@@ -100,13 +100,13 @@ const EMPTY_HINT: Record<Status, string> = {
 const DONE_LIMIT = 10;
 const CLAUDE_TAG = "The selected agent starts automatically here";
 
-function Column({ id, label, hint, claude, tickets, queue = [], held = false, onOpen, onAdd, collapsed, onCollapse, filtered }: {
+function Column({ id, label, hint, claude, tickets, queue = [], held = false, onOpen, onQuick, onAdd, collapsed, onCollapse, filtered }: {
   id: Status; label: string; hint: string; claude: boolean; tickets: Ticket[];
   /** In Progress only: tickets waiting for a free run slot, in start order. */
   queue?: Ticket[];
   /** A pending daemon restart holds the queue. */
   held?: boolean;
-  onOpen: (id: string) => void; onAdd: (s: Status) => void;
+  onOpen: (id: string) => void; onQuick: (ticket: Ticket, to: Status) => void; onAdd: (s: Status) => void;
   collapsed: boolean; onCollapse: (v: boolean) => void; filtered: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `col:${id}`, data: { status: id } });
@@ -132,7 +132,7 @@ function Column({ id, label, hint, claude, tickets, queue = [], held = false, on
     );
   }
   return (
-    <section id={`column-${id}`} className={`column col-${id} ${claude ? "claude-zone" : ""} ${isOver ? "over" : ""}`} aria-label={label}>
+    <section id={`column-${id}`} className={`column col-${id} ${claude ? "claude-zone" : ""} ${isOver ? "over" : ""}`} aria-label={label} data-busy={id === "in_progress" && tickets.length > 0 ? "" : undefined}>
       <header className="column-head">
         <span className="column-title">{label}</span>
         {/* One badge: total count, turning amber with a dot while tickets wait on you. */}
@@ -150,11 +150,11 @@ function Column({ id, label, hint, claude, tickets, queue = [], held = false, on
       <SortableContext items={[...shown, ...queue].map((t) => t.id)} strategy={verticalListSortingStrategy}>
         <div ref={setNodeRef} className="column-body">
           {shown.map((t) => (
-            <SortableCard key={t.id} ticket={t} onOpen={onOpen} />
+            <SortableCard key={t.id} ticket={t} onOpen={onOpen} onQuick={onQuick} />
           ))}
           {queue.length > 0 && <div className="queue-sep" title="These start in this order as run slots free up">Queued</div>}
           {queue.map((t, i) => (
-            <SortableCard key={t.id} ticket={t} onOpen={onOpen} queued={i + 1} held={held} />
+            <SortableCard key={t.id} ticket={t} onOpen={onOpen} onQuick={onQuick} queued={i + 1} held={held} />
           ))}
           {id === "done" && tickets.length > DONE_LIMIT && (
             <button className="btn ghost small show-all" onClick={() => setShowAll((v) => !v)}>
@@ -231,6 +231,11 @@ export function Board({ tickets, sessions, onOpen, onMove, onAdd, onNewSession, 
     const button = nav?.querySelector<HTMLElement>(`[data-column="${activeColumn}"]`);
     if (nav && button) nav.scrollTo({ left: button.offsetLeft - nav.offsetLeft - (nav.clientWidth - button.clientWidth) / 2 });
   }, [activeColumn, compact]);
+  // One-tap actions on a card go to the end of the target lane.
+  const quickMove = (ticket: Ticket, to: Status) => {
+    const last = (byColumn.get(to) ?? []).at(-1);
+    onMove(ticket.id, to, last ? last.order + 1 : 1);
+  };
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     // Enter is kept for opening the card, so only Space picks up / drops.
@@ -323,7 +328,7 @@ export function Board({ tickets, sessions, onOpen, onMove, onAdd, onNewSession, 
         <main ref={boardRef} className="board" onScroll={compact ? syncColumn : undefined} aria-label="Kanban board">
           <SessionLane sessions={sessions} onOpen={onOpen} onNew={onNewSession} />
           {BOARD_COLUMNS.map((c) => (
-            <Column key={c.id} {...c} tickets={byColumn.get(c.id) ?? []} queue={c.id === "in_progress" ? byColumn.get("ready") : undefined} held={restartPending} onOpen={onOpen} onAdd={onAdd} filtered={filtered}
+            <Column key={c.id} {...c} tickets={byColumn.get(c.id) ?? []} queue={c.id === "in_progress" ? byColumn.get("ready") : undefined} held={restartPending} onOpen={onOpen} onQuick={quickMove} onAdd={onAdd} filtered={filtered}
               collapsed={!compact && collapsed.has(c.id)} onCollapse={(v) => setColumnCollapsed(c.id, v)} />
           ))}
         </main>

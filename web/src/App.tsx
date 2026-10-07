@@ -141,6 +141,8 @@ export function App() {
   const [dismissed, setDismissed] = useState(readDismissed);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [defaultModelsOpen, setDefaultModelsOpen] = useState(false);
+  // "#/<board>/<ticket>": a shared or reloaded ticket link should not be covered by the inbox.
+  const startedOnTicket = useRef(location.hash.split("/").filter(Boolean).length > 2);
   // The installed app's icon badge shows how many tickets and sessions wait on you.
   useEffect(() => {
     const nav = navigator as Navigator & { setAppBadge?: (count: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
@@ -492,7 +494,7 @@ export function App() {
           </span>
         )}
         <div className="spacer" />
-        <Inbox items={inbox} onPick={(i) => {
+        <Inbox items={inbox} landOnInbox={narrow && !startedOnTicket.current} onPick={(i) => {
           if (i.profile !== slug) setSlug(i.profile);
           openTicket(i.id, i.profile);
         }} />

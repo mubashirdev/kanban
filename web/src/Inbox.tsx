@@ -4,8 +4,17 @@ import { BellIcon } from "./icons";
 import { useLayer } from "./layers";
 
 /** Top-bar "N need you" across every board; the list jumps straight to a ticket. ↑↓ move, Esc closes. */
-export function Inbox({ items, onPick }: { items: InboxItem[]; onPick: (i: InboxItem) => void }) {
+export function Inbox({ items, onPick, landOnInbox = false }: { items: InboxItem[]; onPick: (i: InboxItem) => void; landOnInbox?: boolean }) {
   const [open, setOpen] = useState(false);
+  // Phones open straight onto what is waiting for you, once per browser session.
+  useEffect(() => {
+    if (!landOnInbox || !items.length) return;
+    try {
+      if (sessionStorage.getItem("ck-inbox-landed")) return;
+      sessionStorage.setItem("ck-inbox-landed", "1");
+    } catch { return; }
+    setOpen(true);
+  }, [landOnInbox, items.length]);
   const root = useRef<HTMLDivElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const pill = useRef<HTMLButtonElement>(null);
