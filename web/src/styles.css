@@ -2140,3 +2140,8 @@ body { letter-spacing: -0.011em; }
 .conv-msg.assistant.note { color: var(--muted); font-size: 13.5px; line-height: 1.5; }
 .conv-msg.assistant.note .conv-head { display: none; }
 @media (max-width: 767px) { .conv-msg.assistant.note { font-size: 14px; } }
+
+/* A queued message waits in a soft outlined bubble with readable text, instead of a faded blue one. */
+.conv-msg.user.pending { opacity: 1; background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+.conv-msg.user.pending .conv-head b, .conv-msg.user.pending .conv-head .muted, .conv-msg.user.pending .conv-head time { color: var(--accent); opacity: 1; }
+.conv-msg.user.pending .md a { color: var(--accent); }
