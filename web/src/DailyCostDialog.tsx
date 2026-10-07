@@ -15,7 +15,7 @@ export function DailyCostDialog({ onClose }: { onClose: () => void }) {
   const total = (days ?? []).reduce((sum, d) => sum + d.costUsd, 0);
 
   return (
-    <Modal title="Daily cost" sheet onClose={onClose}>
+    <Modal title="Daily cost" onClose={onClose}>
       <div className="daily-cost">
         {error && <div className="form-error">{error}</div>}
         {!days && !error && <p className="muted">Loading…</p>}
@@ -23,16 +23,19 @@ export function DailyCostDialog({ onClose }: { onClose: () => void }) {
           <>
             <p className="daily-total"><b>${total.toFixed(2)}</b> <span className="muted">in the last {days.length} days</span></p>
             <ul className="daily-list">
-              {days.map((d, i) => (
+              {days.map((d, i) => d.claudeRuns + d.codexRuns === 0 ? (
+                <li key={d.date} className="daily-row quiet">
+                  <span className="daily-day">{dayLabel(d.date, i)}</span>
+                  <span>No runs</span>
+                </li>
+              ) : (
                 <li key={d.date}>
                   <div className="daily-row">
                     <span className="daily-day">{dayLabel(d.date, i)}</span>
                     <span className="daily-amount">${d.costUsd.toFixed(2)}</span>
                   </div>
                   <div className="daily-bar" aria-hidden><span style={{ width: `${(d.costUsd / maxCost) * 100}%` }} /></div>
-                  <div className="daily-meta muted">
-                    {d.claudeRuns + d.codexRuns === 0 ? "No runs" : `${d.claudeRuns} Claude · ${d.codexRuns} Codex runs · ${duration(d.seconds)}`}
-                  </div>
+                  <div className="daily-meta muted">{d.claudeRuns} Claude · {d.codexRuns} Codex runs · {duration(d.seconds)}</div>
                 </li>
               ))}
             </ul>

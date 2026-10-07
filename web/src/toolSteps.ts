@@ -7,14 +7,31 @@ const base = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path
 const quote = (text: string) => `“${text.length > 40 ? `${text.slice(0, 39)}…` : text}”`;
 const words = (name: string) => name.replace(/[_-]+/g, " ").trim();
 
-function command(cmd: string): string {
-  const first = cmd.trim().replace(/^(cd \S+ && |sudo |bunx |npx )+/, "");
-  if (/\b(bun|npm|pnpm|yarn) (run )?test\b|\b(pytest|jest|vitest|go test|cargo test)\b/.test(first)) return "Ran tests";
-  if (/\btsc\b|\btypecheck\b/.test(first)) return "Checked types";
-  if (/\b(vite build|run build|build:web)\b/.test(first)) return "Built the app";
+/** Codex runs every command as `/bin/zsh -lc "..."`: show the command itself. */
+const unwrap = (cmd: string) => /^(?:\S*\/)?(?:ba|z)?sh\s+-\w*c\s+(["'])([\s\S]*)\1$/.exec(cmd.trim())?.[2].replaceAll('\\"', '"') ?? cmd;
+const operands = (cmd: string) => cmd.split("|")[0].trim().split(/\s+/).slice(1).filter((word) => !word.startsWith("-")).map((word) => word.replace(/^['"]|['"]$/g, ""));
+
+/** Commands that only look at files or code read as reading and searching, not as "Ran rg". */
+function inspect(first: string): Step | null {
+  const tool = first.split(/\s+/)[0];
+  const args = operands(first);
+  if (/^(rg|grep|ag|fd|find)$/.test(tool)) return { kind: "search", label: args[0] ? `Searched for ${quote(args[0])}` : "Searched the code", detail: first };
+  if (/^(cat|sed|head|tail|nl|bat)$/.test(tool) && args.length) return { kind: "read", label: `Read ${base(args.at(-1)!)}`, detail: first };
+  if (tool === "apply_patch" || first.startsWith("*** Begin Patch")) return { kind: "edit", label: "Edited files", detail: "" };
+  return null;
+}
+
+function command(cmd: string): Step {
+  const first = unwrap(cmd).trim().replace(/^(cd \S+ && |sudo |bunx |npx )+/, "");
+  const found = inspect(first);
+  if (found) return found;
+  const run = (label: string): Step => ({ kind: "run", label, detail: unwrap(cmd) });
+  if (/\b(bun|npm|pnpm|yarn) (run )?test\b|\b(pytest|jest|vitest|go test|cargo test)\b/.test(first)) return run("Ran tests");
+  if (/\btsc\b|\btypecheck\b/.test(first)) return run("Checked types");
+  if (/\b(vite build|run build|build:web)\b/.test(first)) return run("Built the app");
   const git = /^git (\w+)/.exec(first);
-  if (git) return `Git ${git[1]}`;
-  return `Ran ${base(first.split(/\s+/)[0] || "a command")}`;
+  if (git) return run(`Git ${git[1]}`);
+  return run(`Ran ${base(first.split(/\s+/)[0] || "a command")}`);
 }
 
 export function describeStep(text: string): Step {
@@ -22,7 +39,7 @@ export function describeStep(text: string): Step {
   const name = at > 0 ? text.slice(0, at) : text;
   const arg = at > 0 ? text.slice(at + 2) : "";
   switch (name) {
-    case "Bash": return { kind: "run", label: command(arg), detail: arg };
+    case "Bash": return command(arg);
     case "Read": return { kind: "read", label: `Read ${base(arg)}`, detail: arg };
     case "Edit": case "MultiEdit": case "NotebookEdit": return { kind: "edit", label: `Edited ${arg.includes(", ") ? "files" : base(arg)}`, detail: arg };
     case "Write": return { kind: "edit", label: `Wrote ${base(arg)}`, detail: arg };

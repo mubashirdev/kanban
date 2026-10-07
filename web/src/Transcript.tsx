@@ -1,7 +1,7 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { useEffect, useMemo, useRef } from "react";
-import type { ActivityEntry } from "./api";
+import { copy, type ActivityEntry } from "./api";
 
 function textOf(content: unknown): string {
   if (typeof content === "string") return content;
@@ -25,7 +25,8 @@ const PURIFY = {
 // Pasted images: the UI URL, or the absolute file path Claude was given in its prompt (seen in the chat history).
 const ATTACHMENT_SRC = /(?:^|\/)attachments\/([0-9a-f]{32}\.(?:png|jpg|gif|webp))$/;
 
-function thumbnails(html: string): string {
+/** Runs after sanitizing, so the copy button it adds is ours, not the agent's. */
+function enhance(html: string): string {
   const doc = new DOMParser().parseFromString(html, "text/html");
   doc.querySelectorAll("img").forEach((img) => {
     const m = (img.getAttribute("src") ?? "").match(ATTACHMENT_SRC);
@@ -33,16 +34,44 @@ function thumbnails(html: string): string {
     img.setAttribute("src", `/api/attachments/${m[1]}`);
     img.classList.add("attachment");
   });
+  doc.querySelectorAll("pre").forEach((pre) => {
+    const code = pre.querySelector("code");
+    const language = /language-([\w+-]+)/.exec(code?.className ?? "")?.[1] ?? "";
+    if (code && /^(diff|patch)$/.test(language)) colorDiff(doc, code);
+    const head = doc.createElement("div");
+    head.className = "code-head";
+    head.innerHTML = '<span class="code-lang"></span><button type="button" class="code-copy">Copy</button>';
+    head.firstElementChild!.textContent = language || "code";
+    const block = doc.createElement("div");
+    block.className = "code-block";
+    pre.replaceWith(block);
+    block.append(head, pre);
+  });
   return doc.body.innerHTML;
 }
 
+function colorDiff(doc: Document, code: Element) {
+  const lines = (code.textContent ?? "").replace(/\n$/, "").split("\n");
+  code.textContent = "";
+  for (const line of lines) {
+    const row = doc.createElement("span");
+    row.className = line.startsWith("@@") ? "code-hunk" : line.startsWith("+") ? "code-add" : line.startsWith("-") ? "code-del" : "code-ctx";
+    row.textContent = `${line}\n`;
+    code.append(row);
+  }
+}
+
 export function Markdown({ text }: { text: string }) {
-  const html = useMemo(() => thumbnails(DOMPurify.sanitize(marked.parse(text, { async: false, breaks: true }) as string, PURIFY)), [text]);
+  const html = useMemo(() => enhance(DOMPurify.sanitize(marked.parse(text, { async: false, breaks: true }) as string, PURIFY)), [text]);
   return (
     <div className="md" dangerouslySetInnerHTML={{ __html: html }}
       onClick={(e) => {
-        const img = e.target as HTMLElement;
-        if (img.tagName === "IMG" && img.classList.contains("attachment")) window.open(img.getAttribute("src")!, "_blank", "noopener");
+        const target = e.target as HTMLElement;
+        if (target.tagName === "IMG" && target.classList.contains("attachment")) window.open(target.getAttribute("src")!, "_blank", "noopener");
+        if (!target.classList.contains("code-copy")) return;
+        void copy(target.closest(".code-block")!.querySelector("pre")!.textContent ?? "");
+        target.textContent = "Copied";
+        setTimeout(() => { target.textContent = "Copy"; }, 1500);
       }} />
   );
 }

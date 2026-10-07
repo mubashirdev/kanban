@@ -102,7 +102,6 @@ export function NewTicketDialog({
         </div>
       }
       title="New ticket"
-      sheet
       onClose={onClose}
       guard={!busy && (!!title.trim() || !!body.trim())}
     >

@@ -26,6 +26,7 @@ import { codexModels } from "./codex-catalog";
 import { codexCommands, codexSkills } from "./codex-commands";
 import { searchFiles } from "./git-actions";
 import { CodexSessions, listCodexSessions } from "./codex-session";
+import { searchBoard } from "./search";
 import { SessionCache, mergeCommandEntries } from "./session";
 import { ptySupported, ShellManager, type PtyKind, type Shell } from "./shell";
 import type { TerminalWatcher } from "./terminals";
@@ -494,6 +495,11 @@ export function createServer(deps: ServerDeps) {
       })));
     }
 
+    // /profiles/:p/search?q= — tickets and chats whose title, description, comments or conversation contain the words
+    if (parts[2] === "search" && parts.length === 3 && m === "GET") {
+      return json(searchBoard(store, sessions, codexSessions, slug, url.searchParams.get("q") ?? ""));
+    }
+
     // /profiles/:p/files?path= (one directory level) and /profiles/:p/file?path= (read-only contents)
     if ((parts[2] === "files" || parts[2] === "file") && parts.length === 3 && m === "GET") {
       const rel = url.searchParams.get("path") ?? "";
@@ -776,6 +782,19 @@ export function createServer(deps: ServerDeps) {
       if (!text) throw new HttpError(400, "text is required");
       const t = await board.chat(slug, id, text);
       return json(view(profile, t), 202);
+    }
+    // POST .../fork { model?, text? }: a copy of this chat that continues the same conversation (on another model).
+    if (m === "POST" && action === "fork" && parts.length === 5) {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "chats can only be forked outside a board run");
+      const b = await body(req);
+      const model = typeof b.model === "string" && b.model ? b.model : undefined;
+      if (model && !/^[a-zA-Z0-9._:\[\]-]{1,100}$/.test(model)) throw new HttpError(400, "Use a valid Claude model ID");
+      try {
+        return json(view(profile, await board.fork(slug, id, { model, text: String(b.text ?? "").trim() || undefined })), 201);
+      } catch (e) {
+        if (e instanceof ConflictError) throw e;
+        throw new HttpError(400, (e as Error).message);
+      }
     }
     // A message Stop left unsent: POST .../queued/<msgId> sends it, DELETE discards it.
     if (action === "queued" && parts[5] && (m === "POST" || m === "DELETE")) {

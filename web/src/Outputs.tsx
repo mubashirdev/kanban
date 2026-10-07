@@ -130,7 +130,7 @@ export function Outputs({ slug, ticketId, onCount, focus }: {
       </div>
     );
   }
-  if (!files.length) return <div className="muted">No outputs yet. Research and writing tasks save their report here.</div>;
+  if (!files.length) return <div className="chat-empty outputs-empty"><p className="muted">No outputs yet. Research and writing tasks save their report here.</p></div>;
 
   const pad = (depth: number) => ({ paddingLeft: 8 + depth * 14 });
   const renderFolder = (d: Folder, depth: number): React.ReactNode => (

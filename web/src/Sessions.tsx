@@ -4,8 +4,9 @@ import { autoGrow } from "./autoGrow";
 import { rememberFirstMessage } from "./drafts";
 import { Chat, withoutAgentNotes } from "./Chat";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { ForkDialog } from "./ForkDialog";
 import { AgentMark } from "./AgentMark";
-import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, HistoryIcon, MoreIcon, TrashIcon } from "./icons";
+import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, HistoryIcon, MoreIcon, SplitIcon, TrashIcon } from "./icons";
 import { useLayer } from "./layers";
 import { Modal } from "./Modal";
 import { ReviewPanel } from "./ReviewPanel";
@@ -120,7 +121,7 @@ export function NewSessionDialog({ profile: initial, profiles, onClose, onStarte
   const started = (id: string) => onStarted(id, profile.slug);
   if (resuming) return <ResumeDialog profile={profile} onClose={() => setResuming(false)} onResumed={started} />;
   return (
-    <Modal title="New chat" sheet onClose={onClose}>
+    <Modal title="New chat" onClose={onClose}>
       <div className="form new-session">
         {profiles.length > 1 && (
           <label className="session-repo">
@@ -265,8 +266,9 @@ export function SessionView({ profile, ticket, tickets, onClose, onOpenTicket, e
   const [title, setTitle] = useState(ticket.title);
   const [menu, setMenu] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [forking, setForking] = useState(false);
   const onError = (message: string) => toast(message, { tone: "error" });
-  useLayer(onClose, { active: !embedded && !menu && !confirmDelete });
+  useLayer(onClose, { active: !embedded && !menu && !confirmDelete && !forking });
   useEffect(() => setTitle(ticket.title), [ticket.title]);
 
   // Looking at the session marks its latest reply as read.
@@ -308,7 +310,7 @@ export function SessionView({ profile, ticket, tickets, onClose, onOpenTicket, e
           </div>
           <div className="session-menu">
             <button className="icon-btn" aria-label="Session actions" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((v) => !v)}><MoreIcon /></button>
-            {menu && <SessionMenu ticket={ticket} onClose={() => setMenu(false)} onToBoard={toBoard} onDelete={() => { setMenu(false); setConfirmDelete(true); }} />}
+            {menu && <SessionMenu ticket={ticket} onClose={() => setMenu(false)} onToBoard={toBoard} onFork={() => { setMenu(false); setForking(true); }} onDelete={() => { setMenu(false); setConfirmDelete(true); }} />}
           </div>
           <button className="icon-btn close-btn" onClick={onClose} aria-label="Close" title="Close (Esc)"><CloseIcon /></button>
         </header>
@@ -325,6 +327,7 @@ export function SessionView({ profile, ticket, tickets, onClose, onOpenTicket, e
               : <Chat slug={slug} ticket={ticket} tickets={tickets} onOpenTicket={onOpenTicket} onError={onError} />}
           </div>
         </div>
+        {forking && <ForkDialog slug={slug} ticket={ticket} onClose={() => setForking(false)} onForked={onOpenTicket} />}
         {confirmDelete && (
           <ConfirmDialog title={`Delete "${ticket.title}"?`} confirmLabel="Delete session" busyLabel="Deleting…" onCancel={() => setConfirmDelete(false)}
             onConfirm={async () => { await api.deleteTicket(slug, ticket.id); onClose(); }}>
@@ -337,7 +340,7 @@ export function SessionView({ profile, ticket, tickets, onClose, onOpenTicket, e
   return <div className="drawer-wrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>{panel}</div>;
 }
 
-function SessionMenu({ ticket, onClose, onToBoard, onDelete }: { ticket: Ticket; onClose: () => void; onToBoard: () => void; onDelete: () => void }) {
+function SessionMenu({ ticket, onClose, onToBoard, onFork, onDelete }: { ticket: Ticket; onClose: () => void; onToBoard: () => void; onFork: () => void; onDelete: () => void }) {
   const root = useRef<HTMLDivElement>(null);
   useLayer(onClose);
   useEffect(() => {
@@ -349,6 +352,11 @@ function SessionMenu({ ticket, onClose, onToBoard, onDelete }: { ticket: Ticket;
   return (
     <div className="inbox-menu session-menu-list" role="menu" aria-label="Session actions" ref={root}>
       <button role="menuitem" className="menu-item" onClick={onToBoard}><span className="menu-icon"><ColumnsIcon /></span><span className="menu-label">Move to board</span></button>
+      {ticket.agent !== "codex" && (
+        <button role="menuitem" className="menu-item" disabled={!!ticket.running} title={ticket.running ? "Stop Claude first" : "Copy this conversation into a new chat"} onClick={onFork}>
+          <span className="menu-icon"><SplitIcon /></span><span className="menu-label">Fork chat…</span>
+        </button>
+      )}
       {ticket.resumeCommand && (
         <button role="menuitem" className="menu-item" onClick={() => { void copy(ticket.resumeCommand!); toast("Terminal command copied.", { tone: "ok" }); onClose(); }}>
           <span className="menu-icon"><CopyIcon /></span><span className="menu-label">Copy terminal command</span>

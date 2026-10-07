@@ -191,6 +191,26 @@ test("a Codex progress note is marked as a note, the final answer is not", () =>
   expect(parsed.entries.map((e) => [e.role, e.note ?? false])).toEqual([["user", false], ["assistant", true], ["assistant", false]]);
 });
 
+test("a tool step gets its result, duration and the change it made, for Claude and Codex", () => {
+  const claude = [
+    { type: "assistant", uuid: "a1", timestamp: "2026-10-07T10:00:00.000Z", message: { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Edit", input: { file_path: "/repo/a.ts", old_string: "let x = 1", new_string: "let x = 2" } }] } },
+    { type: "user", uuid: "u1", timestamp: "2026-10-07T10:00:02.500Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "File updated", is_error: false }] } },
+    { type: "assistant", uuid: "a2", timestamp: "2026-10-07T10:00:03.000Z", message: { role: "assistant", content: [{ type: "tool_use", id: "t2", name: "Bash", input: { command: "bun test" } }] } },
+    { type: "user", uuid: "u2", timestamp: "2026-10-07T10:00:04.000Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t2", content: [{ type: "text", text: "1 fail" }], is_error: true }] } },
+  ].map((e) => JSON.stringify(e)).join("\n");
+  const [edit, bash] = parseSession(claude).entries;
+  expect(edit.tool).toEqual({ diff: "-let x = 1\n+let x = 2", ok: true, output: "File updated", ms: 2500 });
+  expect(bash.tool).toMatchObject({ ok: false, output: "1 fail", ms: 1000 });
+
+  const patch = "*** Begin Patch\n*** Update File: a.ts\n@@\n-old\n+new\n*** End Patch";
+  const codex = [
+    { timestamp: "2026-10-07T10:00:00.000Z", type: "response_item", payload: { type: "custom_tool_call", call_id: "c1", name: "apply_patch", input: patch } },
+    { timestamp: "2026-10-07T10:00:01.000Z", type: "response_item", payload: { type: "custom_tool_call_output", call_id: "c1", output: "Done!" } },
+  ].map((l) => JSON.stringify(l)).join("\n");
+  const [applied] = parseSession(rolloutEvents(codex).map((e) => JSON.stringify(e)).join("\n")).entries;
+  expect(applied.tool).toMatchObject({ diff: patch, ok: true, output: "Done!", ms: 1000 });
+});
+
 test("an expired command list is served at once while a fresh one loads", async () => {
   let calls = 0, release = () => {};
   const commands = new ClaudeCommands("claude", async () => {

@@ -189,6 +189,8 @@ export class Board {
       if (active) throw new ConflictError("Stop the agent before starting a new conversation");
       return this.clearConversation(slug, id);
     }
+    // Stored quietly: the update that starts or queues this message announces it to the UI.
+    if (!opts.peer) this.store.updateTicket(slug, id, { lastPrompt: text.slice(0, 20_000) });
     if (t.agent === "codex") text = expandCodexCommand(text);
     if (active) {
       if (active.stopRequested || this.shuttingDown) throw new ConflictError("Claude is stopping; send your message once it has stopped");
@@ -207,6 +209,26 @@ export class Board {
     return this.store.getTicket(slug, id)!;
   }
 
+  /**
+   * Copies a Claude chat into a new chat that continues the same conversation, optionally on another model.
+   * With `text` the copy answers that message right away (ask the same question on a second model to compare).
+   */
+  async fork(slug: string, id: string, opts: { model?: string; text?: string } = {}): Promise<Ticket> {
+    const profile = this.store.getProfile(slug);
+    const t = this.store.getTicket(slug, id);
+    if (!profile || !t) throw new Error(`ticket ${id} not found`);
+    if (!t.standalone) throw new Error("Only chats can be forked");
+    if (t.agent === "codex") throw new Error("Codex chats can't be forked yet");
+    if (this.isRunning(slug, id)) throw new ConflictError("Stop the agent before forking this chat");
+    // Claude finds a session by folder, so the copy must run where the original did.
+    if (t.worktree || (t.workdir && t.workdir !== profile.path)) throw new Error("Chats in their own worktree can't be forked yet");
+    if (!t.sessionId || !(t.sessionStarted || this.sessionExists(t.sessionId))) throw new Error("Send a first message before forking this chat");
+    const copy = await this.createTicket(slug, { title: `Fork of ${t.title}`.slice(0, 80), body: "", status: "backlog", standalone: true, access: t.access });
+    this.patch(slug, copy.id, { forkOf: t.sessionId, model: opts.model ?? t.model, effort: t.effort, outputStyle: t.outputStyle });
+    if (opts.text) await this.chat(slug, copy.id, opts.text);
+    return this.store.getTicket(slug, copy.id)!;
+  }
+
   /** /clear: the next message starts a fresh agent conversation; the old one stays in the agent's own history. */
   private clearConversation(slug: string, id: string): Ticket {
     const t = this.store.getTicket(slug, id)!;
@@ -214,7 +236,7 @@ export class Board {
       this.store.appendActivity(slug, id, t.runCount, { type: "codex.clear", provider: "codex" });
       return this.patch(slug, id, { codexSessionId: null, queued: [] });
     }
-    return this.patch(slug, id, { sessionId: crypto.randomUUID(), sessionStarted: false, workdir: t.workdir, queued: [] });
+    return this.patch(slug, id, { sessionId: crypto.randomUUID(), sessionStarted: false, forkOf: null, lastPrompt: null, workdir: t.workdir, queued: [] });
   }
 
   /** Send a message that was left unsent by Stop, as if the user typed it now. */
@@ -417,6 +439,8 @@ export class Board {
       const common = await runCmd(["git", "rev-parse", "--git-common-dir"], session.dir);
       if (common.code === 0 && common.stdout.trim()) writableRoots.push(resolve(session.dir, common.stdout.trim()));
     }
+    // A fork's first run copies the parent session; once the new session exists it is resumed like any other.
+    const forkFrom = t.forkOf && !this.sessionExists(session.sessionId) ? t.forkOf : null;
     const systemPrompt = t.standalone ? sessionPrompt(t.access ?? "read") : command ? chatPrompt(t, "", run.chat!.mode, outputDir) : undefined;
     const launch = codex ? startCodexRun : startRun;
     run.handle = launch({
@@ -424,7 +448,7 @@ export class Board {
       cwd: session.dir,
       args: codex
         ? codexArgs({ sessionId: t.codexSessionId, refine, model: t.codexModel ?? this.store.config().codexModel, effort: t.codexEffort ?? this.store.config().codexEffort, writableRoots, instructions: t.standalone ? systemPrompt : undefined })
-        : buildArgs(session.sessionId, session.existed, (t.model === "default" ? null : t.model) ?? profile.model ?? this.store.config().claudeModel, refine ? "plan" : "bypassPermissions", mcpConfig(), systemPrompt, t.effort ?? this.store.config().claudeEffort, t.outputStyle),
+        : buildArgs(session.sessionId, session.existed, (t.model === "default" ? null : t.model) ?? profile.model ?? this.store.config().claudeModel, refine ? "plan" : "bypassPermissions", mcpConfig(), systemPrompt, t.effort ?? this.store.config().claudeEffort, t.outputStyle, forkFrom),
       input: prompt,
       // CKANBAN_TICKET marks board runs: the ckanban MCP/CLI refuses board changes there (no runs starting runs).
       env: { CKANBAN_OUTPUT_DIR: outputDir, CKANBAN_TICKET: `${slug}/${id}`, ...(t.effort ? { CLAUDE_CODE_EFFORT_LEVEL: t.effort } : {}) },
@@ -488,6 +512,7 @@ export class Board {
     const base: Partial<Ticket> = {
       ...this.endStatus(run),
       ...(t.agent === "codex" ? {} : {sessionStarted: true}),
+      ...(forkFrom && out.code === 0 ? { forkOf: null } : {}),
       ...(refine || quiet ? {} : { lastRunAt: startedAt, runCount: runNo }),
       lastActivity: pendingActivity ?? this.store.getTicket(slug, id)?.lastActivity ?? null,
     };

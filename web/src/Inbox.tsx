@@ -68,7 +68,7 @@ export function Inbox({ items, onPick, landOnInbox = false }: { items: InboxItem
         <span className="inbox-compact" aria-hidden><BellIcon size={20} /><span className="inbox-count">{items.length > 99 ? "99+" : items.length}</span></span>
       </button>
       {open && phone && (
-        <Modal title="Needs you" sheet onClose={() => setOpen(false)}>
+        <Modal title="Needs you" onClose={() => setOpen(false)}>
           <div className="sheet-list">
             {boards.map((b) => {
               const group = items.filter((i) => i.profile === b);

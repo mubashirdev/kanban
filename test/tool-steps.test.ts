@@ -14,6 +14,13 @@ test("agent steps read as plain sentences", () => {
   expect(describeStep("Bash: git status --short").detail).toBe("git status --short");
 });
 
+test("Codex shell commands read like the equivalent Claude steps", () => {
+  expect(describeStep(`Bash: /bin/zsh -lc "rg -n 'theme' src | head -20"`)).toMatchObject({ kind: "search", label: "Searched for “theme”" });
+  expect(describeStep("Bash: sed -n '1,120p' src/settings/Settings.tsx")).toMatchObject({ kind: "read", label: "Read Settings.tsx" });
+  expect(describeStep("Bash: *** Begin Patch")).toMatchObject({ kind: "edit", label: "Edited files" });
+  expect(describeStep(`Bash: bash -lc 'git status --short'`)).toMatchObject({ kind: "run", label: "Git status", detail: "git status --short" });
+});
+
 test("a folded group of steps is summed up by kind", () => {
   expect(summarizeSteps(["Read: a.ts"])).toBe("Read a.ts");
   expect(summarizeSteps(["Read: a.ts", "Read: b.ts", "Edit: a.ts", "Bash: ls", "Bash: bun test"])).toBe("Read 2 files · edited 1 · ran 2 commands");

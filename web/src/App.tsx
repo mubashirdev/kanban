@@ -10,7 +10,7 @@ import { avatarColor, avatarLetter } from "./avatar";
 import { BugReportDialog } from "./BugReportDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
 import { HeaderMenu } from "./HeaderMenu";
-import { BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, ColumnsIcon, CopyIcon, GearIcon, KeyboardIcon, PlusIcon, PlugIcon, SearchIcon, TerminalIcon } from "./icons";
+import { BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, ColumnsIcon, CopyIcon, DollarIcon, GearIcon, HistoryIcon, KeyboardIcon, PlusIcon, PlugIcon, RefreshIcon, SearchIcon, SlidersIcon, TerminalIcon } from "./icons";
 import { buzz } from "./haptics";
 import { Inbox } from "./Inbox";
 import { UsagePill } from "./UsagePill";
@@ -22,6 +22,7 @@ import { DefaultModelsDialog } from "./DefaultModelsDialog";
 import { ProfileDialog } from "./ProfileDialog";
 import { SchedulesDialog } from "./SchedulesDialog";
 import { Select } from "./Select";
+import { SearchDialog } from "./SearchDialog";
 import { QuickSwitcher, ShortcutsDialog } from "./Shortcuts";
 import { TicketDrawer } from "./TicketDrawer";
 import { toast, Toaster } from "./toast";
@@ -186,6 +187,7 @@ export function App() {
   const [shortcuts, setShortcuts] = useState(false);
   const [bugReport, setBugReport] = useState(false);
   const [switcher, setSwitcher] = useState(false);
+  const [fullSearch, setFullSearch] = useState(false);
   // Command to type into the dock's terminal (e.g. "claude mcp login x"); n makes repeats count.
   const [dockCommand, setDockCommand] = useState<{ text: string; n: number } | null>(null);
   // Tab the dock should switch to (C opens the quick Claude chat).
@@ -617,14 +619,15 @@ export function App() {
             ...(profile ? [
               { label: "Terminal & files", icon: <TerminalIcon />, onSelect: () => openDockOn("terminal") },
               { label: "Quick Claude chat", icon: <ChatIcon />, onSelect: () => openDockOn("claude") },
-              { label: `Schedules${scheduleErrors ? ` · ${scheduleErrors} need you` : ""}`, icon: <ClockIcon />, onSelect: () => setSchedulesOpen(true) },
+              { label: `Schedules${scheduleErrors ? ` · ${scheduleErrors} need you` : ""}`, icon: <RefreshIcon />, onSelect: () => setSchedulesOpen(true) },
             ] : []),
             { label: `Connections${mcpAttention ? ` · ${mcpAttention} need you` : ""}`, icon: <PlugIcon />, onSelect: () => setConnections(true) },
           ] : []),
-          ...(profile ? [{ label: "Board settings", icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
-          ...(profile ? [{ label: "Activity", icon: <ClockIcon />, onSelect: () => setActivityOpen(true) }] : []),
-          { label: "Daily cost", icon: <ClockIcon />, onSelect: () => setDailyCostOpen(true) },
-          { label: "Default models", icon: <GearIcon />, onSelect: () => setDefaultModelsOpen(true) },
+          ...(profile ? [{ label: "Board settings", groupStart: true, icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
+          ...(profile ? [{ label: "Search tickets & chats", icon: <SearchIcon />, onSelect: () => setFullSearch(true) }] : []),
+          ...(profile ? [{ label: "Activity", icon: <HistoryIcon />, onSelect: () => setActivityOpen(true) }] : []),
+          { label: "Daily cost", icon: <DollarIcon />, onSelect: () => setDailyCostOpen(true) },
+          { label: "Default models", groupStart: true, icon: <SlidersIcon />, onSelect: () => setDefaultModelsOpen(true) },
           { label: "Notifications", icon: <BellIcon />, onSelect: () => setNotificationsOpen(true) },
           { label: "Keyboard shortcuts", hint: "?", icon: <KeyboardIcon />, onSelect: () => setShortcuts(true) },
           { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
@@ -750,6 +753,7 @@ export function App() {
         onStarted={(id, board) => { setNewSession(false); if (board !== slug) setSlug(board); openTicket(id, board); }} />}
       {shortcuts && <ShortcutsDialog onClose={() => setShortcuts(false)} />}
       {bugReport && <BugReportDialog onClose={() => setBugReport(false)} />}
+      {fullSearch && profile && <SearchDialog slug={profile.slug} onClose={() => setFullSearch(false)} onPick={(id) => { setFullSearch(false); openTicket(id); }} />}
       {switcher && profile && (
         <QuickSwitcher tickets={tickets} onClose={() => setSwitcher(false)} onPick={(id) => { setSwitcher(false); openTicket(id); }} />
       )}

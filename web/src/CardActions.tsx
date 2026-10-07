@@ -14,7 +14,7 @@ export function CardActions({ ticket, onOpen, onMove, onClose }: { ticket: Ticke
   const working = ticket.status === "in_progress" || !!ticket.running;
   const moves = MOVES.filter((m) => m.to !== ticket.status && !(working && m.to === "ready"));
   return (
-    <Modal title={ticket.title} sheet onClose={onClose}>
+    <Modal title={ticket.title} onClose={onClose}>
       <div className="sheet-list">
         <button type="button" className="sheet-action primary" onClick={onOpen}>Open</button>
         {moves.map((m) => (

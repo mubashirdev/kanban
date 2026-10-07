@@ -36,13 +36,16 @@ export function buildArgs(
   appendSystemPrompt?: string,
   effort?: import("./commands").Effort | null,
   outputStyle?: string | null,
+  /** Session to copy: this run continues it under `sessionId` and leaves the original untouched. */
+  forkFrom?: string | null,
 ): string[] {
   // Prompts go in on stdin (see startRun) so more messages can follow while Claude works;
   // --replay-user-messages echoes each one back when Claude picks it up.
   // --include-partial-messages: token-level stream events, used for live replies in the chat.
   const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--replay-user-messages",
     "--include-partial-messages", "--permission-mode", permissionMode];
-  args.push(resume ? "--resume" : "--session-id", sessionId);
+  if (forkFrom) args.push("--resume", forkFrom, "--fork-session", "--session-id", sessionId);
+  else args.push(resume ? "--resume" : "--session-id", sessionId);
   if (model) args.push("--model", model);
   if (effort) args.push("--effort", effort);
   if (outputStyle) args.push("--settings", JSON.stringify({ outputStyle }));

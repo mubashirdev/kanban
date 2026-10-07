@@ -31,6 +31,30 @@ export interface NewTicketDraft extends TicketProposal {
   dependsOn?: string[];
 }
 
+export interface ToolDetail {
+  ok?: boolean;
+  /** Start of the tool's output, capped so a long log doesn't bloat every chat refresh. */
+  output?: string;
+  ms?: number;
+  /** For edits: the lines taken out and put in (or a Codex patch). */
+  diff?: string;
+}
+
+const OUTPUT_LIMIT = 4000;
+const DIFF_LIMIT = 20_000;
+
+/** The change an edit tool made, as "- old / + new" lines, or Codex's patch text as it came. */
+function toolDiff(block: any): string | undefined {
+  const input = block.input ?? {};
+  const lines = (prefix: string, text: unknown) => (typeof text === "string" && text ? text.split("\n").map((l) => `${prefix}${l}`) : []);
+  let out: string[] = [];
+  if (typeof input.patch === "string") return input.patch.slice(0, DIFF_LIMIT);
+  if (block.name === "Edit") out = [...lines("-", input.old_string), ...lines("+", input.new_string)];
+  else if (block.name === "Write") out = lines("+", input.content);
+  else if (block.name === "MultiEdit" && Array.isArray(input.edits)) out = input.edits.flatMap((e: any) => [...lines("-", e?.old_string), ...lines("+", e?.new_string)]);
+  return out.length ? out.join("\n").slice(0, DIFF_LIMIT) : undefined;
+}
+
 export interface SessionEntry {
   uuid: string;
   at: string;
@@ -50,6 +74,8 @@ export interface SessionEntry {
   moved?: "planning";
   /** A board block whose JSON couldn't be read (left visible as text; the chat says so). */
   unreadable?: BlockKind;
+  /** What a tool step did, once its result is in: success, output, how long it took, and the change it made. */
+  tool?: ToolDetail;
   /** A short progress note the agent wrote before using a tool (Codex "commentary"), shown quietly. */
   note?: boolean;
   /** A ticket-to-ticket message (ask_ticket / reply_ticket): in = from that ticket's Claude, out = to it. */
@@ -342,6 +368,8 @@ export function parseSession(raw: string): ParsedSession {
   /** Card tool calls (by tool_use id) and those whose result was an error: those don't render. */
   const cards = new Set<string>();
   const failed = new Set<string>();
+  /** Tool steps by tool_use id, so their result can be attached when it arrives. */
+  const steps = new Map<string, { entry: SessionEntry; started: number }>();
   const peerEntry = (u: NonNullable<ReturnType<typeof userText>>, uuid: string, at: string): SessionEntry => {
     if (u.from && u.question) askers.set(u.question, u.from);
     return { uuid, at, role: "user", kind: u.kind, text: u.text, ...(u.from ? { peer: { dir: "in" as const, ticketId: u.from } } : {}) };
@@ -372,6 +400,12 @@ export function parseSession(raw: string): ParsedSession {
       if (Array.isArray(content)) {
         for (const [i, b] of content.entries()) {
           if (b?.type === "tool_result" && b.is_error && cards.has(b.tool_use_id)) failed.add(b.tool_use_id);
+          const step = b?.type === "tool_result" ? steps.get(b.tool_use_id) : undefined;
+          if (step) {
+            const output = resultText(b.content).trim();
+            const ms = Date.parse(at) - step.started;
+            step.entry.tool = { ...step.entry.tool, ok: !b.is_error, ...(output ? { output: output.slice(0, OUTPUT_LIMIT) } : {}), ...(ms >= 0 ? { ms } : {}) };
+          }
           // The reply an ask_ticket call came back with: shown as that ticket's message.
           if (b?.type === "tool_result" && asks.has(b.tool_use_id) && !b.is_error) {
             const m = REPLY_HEAD.exec(resultText(b.content));
@@ -413,7 +447,12 @@ export function parseSession(raw: string): ParsedSession {
         // The tool_use id keeps the uuid stable, so form drafts and answered/applied state stick to it.
         cards.add(b.id);
         entries.push({ uuid: b.id, at, role: "assistant", kind: "text", text: "", ...card });
-      } else if (b?.type === "tool_use") entries.push({ uuid: id, at, role: "assistant", kind: "tool", text: toolLabel(b) });
+      } else if (b?.type === "tool_use") {
+        const diff = toolDiff(b);
+        const entry: SessionEntry = { uuid: id, at, role: "assistant", kind: "tool", text: toolLabel(b), ...(diff ? { tool: { diff } } : {}) };
+        entries.push(entry);
+        if (typeof b.id === "string") steps.set(b.id, { entry, started: Date.parse(at) });
+      }
     });
   }
 

@@ -100,7 +100,7 @@ export function NotificationsDialog({ onClose }: { onClose: () => void }) {
       setMessage("Notifications enabled for this device.");
     });
   return (
-    <Modal title="Notifications" sheet onClose={onClose}>
+    <Modal title="Notifications" onClose={onClose}>
       <div className="form">
         <p>
           Get notified when work needs your input, finishes, or fails—even when

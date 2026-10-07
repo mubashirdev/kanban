@@ -29,6 +29,10 @@ export interface Ticket {
   access?: "read" | "edit";
   /** Standalone sessions only: runs in its own worktree and branch instead of the repo folder. */
   isolated?: boolean;
+  /** Claude session this chat was forked from: its first run continues that conversation under the new session id. */
+  forkOf?: string | null;
+  /** The last message the user sent here, so a failed or stopped run can be retried or edited. */
+  lastPrompt?: string | null;
   /** Standalone sessions only: when the user last looked at it, so a reply counts as unread after this. */
   readAt?: string | null;
   id: string;

@@ -49,7 +49,7 @@ export function rolloutEvents(text: string, firstLine = 0): any[] {
       out.push({ ...base, type: role, ...(role === "user" ? { isReplay: true } : { phase: p.item.phase }), message: { role, content: [{ type: "text", text }] } });
     }
     else if (e.type === "response_item" && (p.type === "function_call" || p.type === "custom_tool_call"))
-      out.push({ ...base, type: "assistant", message: { content: [{ type: "tool_use", id: p.call_id, name: "Bash", input: { command: toolCommand(p) } }] } });
+      out.push({ ...base, type: "assistant", message: { content: [{ type: "tool_use", id: p.call_id, name: "Bash", input: { command: toolCommand(p), ...(String(p.input ?? "").startsWith("*** Begin Patch") ? { patch: String(p.input) } : {}) } }] } });
     else if (e.type === "response_item" && (p.type === "function_call_output" || p.type === "custom_tool_call_output")) {
       const output = Array.isArray(p.output) ? p.output.map((o: any) => o.text ?? "").join("") : String(p.output ?? "");
       out.push({ ...base, type: "user", message: { content: [{ type: "tool_result", tool_use_id: p.call_id, content: output }] } });

@@ -86,10 +86,20 @@ export interface Profile {
   running?: number;
 }
 
+export interface SearchHit {
+  id: string;
+  title: string;
+  standalone: boolean;
+  status: Status;
+  field: "title" | "description" | "comment" | "message";
+  snippet: string;
+}
+
 export interface Ticket {
   agent?: "claude" | "codex";
   codexSessionId?: string | null;
   codexModel?: string | null;
+  lastPrompt?: string | null;
   codexEffort?: "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | null;
   priority?: "none" | "low" | "normal" | "high" | "urgent";
   kind?: "task" | "bug" | "feature" | "refactor" | "research";
@@ -204,7 +214,11 @@ export interface Question {
   multiSelect: boolean;
 }
 
+/** What a tool step did, once its result is in. */
+export interface ToolDetail { ok?: boolean; output?: string; ms?: number; diff?: string }
+
 export interface SessionEntry {
+  tool?: ToolDetail;
   /** A short progress note before a tool step (Codex commentary), shown quietly. */
   note?: boolean;
   uuid: string;
@@ -468,6 +482,8 @@ export const api = {
   comments: (slug: string, id: string) => req<Comment[]>("GET", `${t(slug, id)}/comments`),
   addComment: (slug: string, id: string, text: string) => req<Comment>("POST", `${t(slug, id)}/comments`, { text }),
   chat: (slug: string, id: string, text: string) => req<Ticket>("POST", `${t(slug, id)}/chat`, { text }),
+  fork: (slug: string, id: string, input: { model?: string; text?: string }) => req<Ticket>("POST", `${t(slug, id)}/fork`, input),
+  search: (slug: string, q: string) => req<SearchHit[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/search?q=${encodeURIComponent(q)}`),
   sendQueued: (slug: string, id: string, msgId: string) => req<Ticket>("POST", `${t(slug, id)}/queued/${msgId}`),
   discardQueued: (slug: string, id: string, msgId: string) => req<Ticket>("DELETE", `${t(slug, id)}/queued/${msgId}`),
   conversation: (slug: string, id: string, before?: number) =>

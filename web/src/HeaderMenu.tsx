@@ -1,17 +1,22 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { MoreIcon } from "./icons";
 import { useLayer } from "./layers";
+import { Modal } from "./Modal";
+import { useMediaQuery } from "./useMediaQuery";
 
 export interface MenuItem {
   label: string;
   onSelect: () => void;
   icon?: ReactNode;
   hint?: string;
+  /** Starts a new group of items. */
+  groupStart?: boolean;
 }
 
 /** "⋯" overflow menu at the end of the top bar for things you need now and then. ↑↓ move, Esc closes. */
 export function HeaderMenu({ items, footer }: { items: MenuItem[]; footer?: string | null }) {
   const [open, setOpen] = useState(false);
+  const phone = useMediaQuery("(max-width: 767px)");
   const root = useRef<HTMLDivElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
@@ -45,14 +50,33 @@ export function HeaderMenu({ items, footer }: { items: MenuItem[]; footer?: stri
         onClick={() => setOpen((v) => !v)}>
         <MoreIcon size={16} />
       </button>
-      {open && (
+      {open && phone && (
+        <Modal title="Menu" onClose={() => setOpen(false)}>
+          <div className="sheet-list">
+            {items.map((it, i) => (
+              <Fragment key={it.label}>
+                {it.groupStart && i > 0 && <div className="sheet-gap" />}
+                <button type="button" className="sheet-action menu-row" onClick={() => { setOpen(false); it.onSelect(); }}>
+                  <span className="menu-icon" aria-hidden>{it.icon}</span>
+                  <span>{it.label}</span>
+                </button>
+              </Fragment>
+            ))}
+            {footer && <div className="menu-footer muted small">{footer}</div>}
+          </div>
+        </Modal>
+      )}
+      {open && !phone && (
         <div className="inbox-menu header-menu-list" role="menu" ref={menu} onKeyDown={onKey}>
-          {items.map((it) => (
-            <button key={it.label} role="menuitem" className="menu-item" onClick={() => { setOpen(false); it.onSelect(); }}>
-              <span className="menu-icon" aria-hidden>{it.icon}</span>
-              <span className="menu-label">{it.label}</span>
-              {it.hint && <kbd>{it.hint}</kbd>}
-            </button>
+          {items.map((it, i) => (
+            <Fragment key={it.label}>
+              {it.groupStart && i > 0 && <div className="menu-sep" role="separator" />}
+              <button role="menuitem" className="menu-item" onClick={() => { setOpen(false); it.onSelect(); }}>
+                <span className="menu-icon" aria-hidden>{it.icon}</span>
+                <span className="menu-label">{it.label}</span>
+                {it.hint && <kbd>{it.hint}</kbd>}
+              </button>
+            </Fragment>
           ))}
           {footer && <div className="menu-footer muted small">{footer}</div>}
         </div>

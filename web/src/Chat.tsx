@@ -18,7 +18,7 @@ import { useMediaQuery } from "./useMediaQuery";
 import { useLayer } from "./layers";
 import { AgentSettings } from "./AgentSettings";
 import { chipLabel, QuickPick } from "./QuickPick";
-import { describeStep, summarizeSteps } from "./toolSteps";
+import { ToolGroup } from "./ToolGroup";
 import { CliUsageCard, UsagePill } from "./UsagePill";
 import { parseCliUsage } from "./usage";
 import { ClaudeSettings, type SettingKind } from "./ClaudeSettings";
@@ -273,6 +273,13 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     } catch (failure: any) { onError(failure.message); }
   };
 
+  // After a failed or stopped run: send your last message again, or load it into the box to change it first.
+  const retryButtons = ticket.lastPrompt && (
+    <div className="run-actions">
+      <button type="button" className="btn small" onClick={() => send(ticket.lastPrompt!, true)}>Retry</button>
+      <button type="button" className="btn ghost small" onClick={() => { setDraft(ticket.lastPrompt!); composer.current?.focus(); }}>Edit and resend</button>
+    </div>
+  );
   const send = async (text: string, preserveDraft = false) => {
     const t = text.trim();
     if (!t || stopping || images.uploading) return;
@@ -342,6 +349,13 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const answeredAfter = (index: number) => replying || entries.slice(index + 1).some((e) => e.role === "user" && e.kind === "text" && !e.peer);
   const isApplied = (p: { title: string; description: string }) =>
     (!p.title || p.title === ticket.title) && (!p.description || p.description.trim() === ticket.body.trim());
+
+  const blocks = group(entries);
+  // Only the first message of an agent's turn carries the name and time; the rest read as one reply.
+  const continuesTurn = (i: number) => {
+    const prev = blocks.slice(0, i).findLast((b) => b.kind === "entry");
+    return prev?.kind === "entry" && prev.e.role === "assistant" && prev.e.kind === "text" && !prev.e.note && !prev.e.peer;
+  };
 
   const empty = page !== null && !loadError && entries.length === 0 && !pending.length && !queued.length && !running;
   // The agent ended on a question and waits: offer one-tap answers instead of typing on a phone.
@@ -420,7 +434,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             ) : ticket.status === "backlog" ? (
               <>
                 <p><b>Parked.</b> Move it to Planning when you want your agent to help shape it: it will ask a few questions, then propose a clear title and description.</p>
-                <button className="btn" onClick={() => api.updateTicket(slug, ticket.id, { status: "planning" }).catch((e) => onError(e.message))}>
+                <button className="btn primary" onClick={() => api.updateTicket(slug, ticket.id, { status: "planning" }).catch((e) => onError(e.message))}>
                   Move to Planning
                 </button>
               </>
@@ -428,7 +442,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
               <>
                 {/* Only shown if the automatic start didn't happen (e.g. session was open in a terminal). */}
                 <p><b>Shape this ticket with your agent.</b> Describe your idea below, or let your agent start the interview.</p>
-                <button className="btn" onClick={() => send("Help me refine this ticket. Interview me about what's unclear, then propose an improved title and description.")}>
+                <button className="btn primary" onClick={() => send("Help me refine this ticket. Interview me about what's unclear, then propose an improved title and description.")}>
                   Start the interview
                 </button>
               </>
@@ -437,17 +451,9 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             )}
           </div>
         )}
-        {group(entries).map((b) => {
+        {blocks.map((b, i) => {
           if (b.kind === "tools") {
-            return (
-              <details key={b.items[0].uuid} className="conv-tools">
-                <summary>{summarizeSteps(b.items.map((t) => t.text))}</summary>
-                <ul>{b.items.map((t) => {
-                  const step = describeStep(t.text);
-                  return <li key={t.uuid}><span className="step-label">{step.label}</span>{step.detail && <code className="step-detail">{step.detail}</code>}</li>;
-                })}</ul>
-              </details>
-            );
+            return <ToolGroup key={b.items[0].uuid} texts={b.items.map((t) => t.text)} details={b.items.map((t) => t.tool)} working={running && !live && i === blocks.length - 1} />;
           }
           const e = b.e;
           if (e.kind === "board") {
@@ -465,7 +471,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             );
           }
           return (
-            <div key={e.uuid} className={`conv-msg ${e.role}${e.note ? " note" : ""}`}>
+            <div key={e.uuid} title={e.role === "user" && e.at ? fullTime(e.at) : undefined}
+              className={`conv-msg ${e.role}${e.note ? " note" : ""}${e.role === "assistant" && continuesTurn(i) ? " continued" : ""}`}>
               <div className="conv-head">
                 <b>{e.role === "user" ? "You" : agentName}</b>
                 {e.at && <time className="muted small" dateTime={e.at} title={fullTime(e.at)}>{timeAgo(e.at)}</time>}
@@ -572,9 +579,17 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           </div>
         ))}
         {!running && ticket.error && !ticket.error.startsWith("corrupt") && (
-          <div className="banner error inline">
+          <div className="banner error inline run-error" role="alert">
+            <b>{agentName} stopped with an error</b>
             <pre>{ticket.error}</pre>
             {/model/i.test(ticket.error) && <button className="btn small" onClick={() => setSettingsTab("model")}>Choose model</button>}
+            {retryButtons}
+          </div>
+        )}
+        {!running && !ticket.error && ticket.outcome === "stopped" && ticket.lastPrompt && (
+          <div className="banner info inline run-stopped" role="status">
+            <span>{agentName} was stopped.</span>
+            {retryButtons}
           </div>
         )}
         {ticket.notice && (
