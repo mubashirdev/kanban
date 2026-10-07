@@ -432,13 +432,18 @@ export function App() {
   const unreadChats = sessions.filter((t) => !t.running && t.attention).length;
   // Wide screens show an open chat inside Chats (two panes) instead of as a sliding panel.
   const wideChats = mode === "chats" && !narrow;
+  // Leaving Chats closes the open chat; otherwise Board would show it again as a side panel.
+  const switchMode = (next: "board" | "chats") => {
+    if (next === "board" && open?.standalone) closeTicket();
+    setMode(next);
+  };
   // Centered in the top bar on phones (like iOS Messages), next to the repo picker on desktop.
   const modeSwitch = (
     <div className="segmented mode-switch" role="radiogroup" aria-label="View">
-      <button type="button" role="radio" aria-checked={mode === "board"} onClick={() => setMode("board")} title="Tickets in lanes">
+      <button type="button" role="radio" aria-checked={mode === "board"} onClick={() => switchMode("board")} title="Tickets in lanes">
         <ColumnsIcon size={16} />Board
       </button>
-      <button type="button" role="radio" aria-checked={mode === "chats"} onClick={() => setMode("chats")} title="Chats with Claude and Codex">
+      <button type="button" role="radio" aria-checked={mode === "chats"} onClick={() => switchMode("chats")} title="Chats with Claude and Codex">
         <ChatIcon size={16} />Chats
         {unreadChats > 0 && <span className="mode-dot" aria-label={`${unreadChats} new`} />}
       </button>
@@ -754,10 +759,10 @@ export function App() {
       )}
       {profile && compact && (
         <nav className="tabbar" aria-label="View">
-          <button type="button" aria-current={mode === "board" ? "page" : undefined} onClick={() => setMode("board")}>
+          <button type="button" aria-current={mode === "board" ? "page" : undefined} onClick={() => switchMode("board")}>
             <ColumnsIcon size={22} /><span>Board</span>
           </button>
-          <button type="button" aria-current={mode === "chats" ? "page" : undefined} onClick={() => setMode("chats")}>
+          <button type="button" aria-current={mode === "chats" ? "page" : undefined} onClick={() => switchMode("chats")}>
             <ChatIcon size={22} /><span>Chats</span>
             {unreadChats > 0 && <span className="mode-dot" aria-label={`${unreadChats} new`} />}
           </button>
