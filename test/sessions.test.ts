@@ -171,6 +171,16 @@ test("a Codex rollout reads as the user's words, replies and tool calls", async 
   expect(await listCodexSessions("/other", home)).toEqual([]);
 });
 
+test("a Codex 0.160 rollout reads its user and agent messages from completed items", () => {
+  const rollout = [
+    { timestamp: "t1", type: "event_msg", payload: { type: "item_completed", item: { type: "UserMessage", content: [{ type: "text", text: "Say hi" }] } } },
+    { timestamp: "t2", type: "event_msg", payload: { type: "item_completed", item: { type: "Reasoning", summary_text: [] } } },
+    { timestamp: "t3", type: "event_msg", payload: { type: "item_completed", item: { type: "AgentMessage", content: [{ type: "Text", text: "hi" }] } } },
+  ].map((l) => JSON.stringify(l)).join("\n");
+  const parsed = parseSession(rolloutEvents(rollout).map((e) => JSON.stringify(e)).join("\n"));
+  expect(parsed.entries.map((e) => [e.role, e.text])).toEqual([["user", "Say hi"], ["assistant", "hi"]]);
+});
+
 test("an expired command list is served at once while a fresh one loads", async () => {
   let calls = 0, release = () => {};
   const commands = new ClaudeCommands("claude", async () => {

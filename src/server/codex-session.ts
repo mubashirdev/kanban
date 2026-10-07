@@ -41,6 +41,13 @@ export function rolloutEvents(text: string, firstLine = 0): any[] {
       out.push({ ...base, type: "user", isReplay: true, message: { role: "user", content: [{ type: "text", text: p.message }] } });
     else if (e.type === "event_msg" && p.type === "agent_message" && typeof p.message === "string")
       out.push({ ...base, type: "assistant", message: { role: "assistant", content: [{ type: "text", text: p.message }] } });
+    else if (e.type === "event_msg" && p.type === "item_completed" && (p.item?.type === "UserMessage" || p.item?.type === "AgentMessage")) {
+      // Codex 0.160+ no longer writes user_message/agent_message events; its messages arrive as completed items.
+      const text = (p.item.content ?? []).map((part: any) => part.text ?? "").join("");
+      if (!text) return;
+      const role = p.item.type === "UserMessage" ? "user" : "assistant";
+      out.push({ ...base, type: role, ...(role === "user" ? { isReplay: true } : {}), message: { role, content: [{ type: "text", text }] } });
+    }
     else if (e.type === "response_item" && (p.type === "function_call" || p.type === "custom_tool_call"))
       out.push({ ...base, type: "assistant", message: { content: [{ type: "tool_use", id: p.call_id, name: "Bash", input: { command: toolCommand(p) } }] } });
     else if (e.type === "response_item" && (p.type === "function_call_output" || p.type === "custom_tool_call_output")) {
