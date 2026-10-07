@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, subscribe, type ClaudeCommand, type DefaultModels, type Effort, type NewTicketDraft, type SessionEntry, type Ticket } from "./api";
 import { autoGrow } from "./autoGrow";
-import { ArrowDownIcon, ArrowUpIcon, CloseIcon, FileCodeIcon, ImageIcon, PlusIcon, SlashIcon, SlidersIcon } from "./icons";
+import { ArrowDownIcon, ArrowUpIcon, CloseIcon, FileCodeIcon, ImageIcon, MicIcon, PlusIcon, SlashIcon, SlidersIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
 import { NewTicketsCard } from "./NewTicketsCard";
 import { ProposalCard } from "./ProposalCard";
@@ -13,6 +13,7 @@ import { Markdown } from "./Transcript";
 import { usePersistentState } from "./usePersistentState";
 import { useSlashCommands } from "./SlashCommands";
 import { useFileMentions } from "./FileMentions";
+import { useDictation, dictationSupported } from "./useDictation";
 import { useMediaQuery } from "./useMediaQuery";
 import { useLayer } from "./layers";
 import { AgentSettings } from "./AgentSettings";
@@ -148,6 +149,13 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const phone = useMediaQuery("(max-width: 767px)");
   const [moreOpen, setMoreOpen] = useState(false);
   const [picking, setPicking] = useState<"model" | "effort" | null>(null);
+  const dictation = useDictation((text) => setDraft((d) => (d && !/\s$/.test(d) ? `${d} ${text}` : d + text)), onError);
+  const micButton = dictationSupported && (
+    <button type="button" className={`icon-btn composer-mic${dictation.listening ? " listening" : ""}`} aria-pressed={dictation.listening}
+      aria-label={dictation.listening ? "Stop dictating" : "Dictate a message"} disabled={stopping} onClick={dictation.toggle}>
+      <MicIcon size={18} />
+    </button>
+  );
   const [defaults, setDefaults] = useState<DefaultModels | null>(null);
   useEffect(() => { api.settings().then(setDefaults).catch(() => {}); }, [picking]);
   const [modelNames, setModelNames] = useState<Record<string, string>>({});
@@ -638,6 +646,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                 send(draft);
               }
             }} />
+          {micButton}
           {running && !draft.trim()
             ? <button type="button" className="btn danger send-round" aria-label={stopping ? "Stopping" : `Stop ${agentName}`} disabled={stopping} onClick={stop}><span className="stop-square" aria-hidden /></button>
             : <button type="button" className="btn primary send-round" aria-label={images.uploading ? "Uploading" : "Send"} disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? <span className="spinner" /> : <ArrowUpIcon size={18} />}</button>}
@@ -669,6 +678,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           </span>
           <span className="composer-actions">
             <button type="button" className="btn small composer-icon" aria-label="Attach images" title="Attach images" disabled={stopping || images.uploading} onClick={() => imageInput.current?.click()}><ImageIcon size={18} /></button>
+            {micButton}
             {running && <button className="btn danger small" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop"}</button>}
             <button className="btn primary small" disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? "Uploading…" : "Send"}</button>
           </span>
