@@ -503,10 +503,8 @@ export const api = {
   agentInstall: (id: AgentStatus["id"]) => req<AgentStatus[]>("POST", `/api/agents/${id}/install`),
   agentUninstall: (id: AgentStatus["id"]) => req<AgentStatus[]>("POST", `/api/agents/${id}/uninstall`),
   openFile: (slug: string, path: string) => req<{ ok: true }>("POST", `/api/profiles/${encodeURIComponent(slug)}/open-file`, { path }),
-  stop: (slug: string, id: string) => req<{ stopped: boolean }>("POST", `${t(slug, id)}/stop`).then((r) => {
-    if (!r.stopped) throw new Error("Claude is not running on this ticket.");
-    return r;
-  }),
+  // stopped:false means the run already ended (e.g. a second tap), which is what the user wanted.
+  stop: (slug: string, id: string) => req<{ stopped: boolean }>("POST", `${t(slug, id)}/stop`),
   checkPr: (slug: string, id: string) => req<{ state: string | null }>("POST", `${t(slug, id)}/check-pr`),
   planningCommand: (slug: string, id: string) => req<{ command: string }>("POST", `${t(slug, id)}/planning-command`),
   /** Raw image bytes; the server saves them and returns the URL to put in markdown. */
