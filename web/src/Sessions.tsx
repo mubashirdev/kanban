@@ -4,7 +4,7 @@ import { autoGrow } from "./autoGrow";
 import { rememberFirstMessage } from "./drafts";
 import { Chat, withoutAgentNotes } from "./Chat";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, HistoryIcon, MoreIcon, PlusIcon, SparkIcon, TerminalIcon, TrashIcon } from "./icons";
+import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, HistoryIcon, MoreIcon, SparkIcon, TerminalIcon, TrashIcon } from "./icons";
 import { useLayer } from "./layers";
 import { Modal } from "./Modal";
 import { ReviewPanel } from "./ReviewPanel";
@@ -42,29 +42,6 @@ const titleFrom = (text: string) => {
   return line.length > 60 ? `${line.slice(0, 57).trimEnd()}…` : line;
 };
 
-/** First lane of the board: chats with Claude or Codex that never became tickets. Newest activity first. */
-export function SessionLane({ sessions, onOpen, onNew }: { sessions: Ticket[]; onOpen: (id: string) => void; onNew: () => void }) {
-  useNow();
-  const sorted = [...sessions].sort((a, b) => lastAt(b).localeCompare(lastAt(a)));
-  const waiting = sorted.filter((t) => !t.running && t.attention).length;
-  const label = `${sorted.length} ${sorted.length === 1 ? "session" : "sessions"}${waiting ? `, ${waiting} new` : ""}`;
-  return (
-    <section id="column-sessions" className="column col-sessions" aria-label="Sessions">
-      <header className="column-head">
-        <span className="column-title">Sessions</span>
-        <span className={`count ${waiting ? "needs-you" : ""}`} title={label} aria-label={label}>{sorted.length}</span>
-        <span className="spacer" />
-        <button className="icon-btn" title="New session" aria-label="New session" onClick={onNew}><PlusIcon /></button>
-      </header>
-      <div className="column-hint">Chat with Claude or Codex in this repo</div>
-      <div className="column-body">
-        {sorted.map((t) => <SessionCard key={t.id} ticket={t} onOpen={() => onOpen(t.id)} />)}
-        <button className="session-new" onClick={onNew}><PlusIcon /> New session</button>
-      </div>
-    </section>
-  );
-}
-
 function SessionCard({ ticket, onOpen }: { ticket: Ticket; onOpen: () => void }) {
   const last = ticket.session?.lastMessage;
   const att = ticket.attention;
@@ -90,6 +67,56 @@ function SessionCard({ ticket, onOpen }: { ticket: Ticket; onOpen: () => void })
   );
 }
 
+/**
+ * Chats mode: sessions as a messenger. Phones show the thread list (a thread opens full screen);
+ * wide screens show the list on the left and the open chat, or a new-chat box, on the right.
+ */
+export function ChatsView({ profile, sessions, tickets, openId, wide, onOpen, onClose, onOpenTicket }: {
+  profile: Profile; sessions: Ticket[]; tickets: Ticket[]; openId: string | null; wide: boolean;
+  onOpen: (id: string) => void; onClose: () => void; onOpenTicket: (id: string) => void;
+}) {
+  useNow();
+  const [query, setQuery] = useState("");
+  const [resuming, setResuming] = useState(false);
+  const q = query.trim().toLowerCase();
+  const threads = sessions
+    .filter((t) => !q || `${t.title}\n${t.session?.lastMessage?.text ?? ""}`.toLowerCase().includes(q))
+    .sort((a, b) => lastAt(b).localeCompare(lastAt(a)));
+  const open = wide ? sessions.find((t) => t.id === openId) ?? null : null;
+  return (
+    <div className={`chats${wide ? " wide" : ""}`}>
+      <section className="chat-list" aria-label="Chats">
+        <div className="chat-list-head">
+          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search chats" aria-label="Search chats" />
+        </div>
+        {threads.length === 0 ? (
+          <p className="chat-list-empty">{q ? "No chats match." : "No chats yet. Start one to ask Claude or Codex anything about this repo."}</p>
+        ) : (
+          <ul>
+            {threads.map((t) => (
+              <li key={t.id} className={t.id === openId && wide ? "active" : undefined}><SessionCard ticket={t} onOpen={() => onOpen(t.id)} /></li>
+            ))}
+          </ul>
+        )}
+        <button className="link-btn small chat-resume" onClick={() => setResuming(true)}><HistoryIcon size={14} /> Resume a session from a terminal</button>
+      </section>
+      {wide && (
+        <div className="chat-pane">
+          {open ? (
+            <SessionView key={open.id} profile={profile} ticket={open} tickets={tickets} onClose={onClose} onOpenTicket={onOpenTicket} embedded />
+          ) : (
+            <div className="chat-pane-new">
+              <h2>New chat in {profile.name}</h2>
+              <SessionStarter key={profile.slug} profile={profile} onStarted={onOpen} />
+            </div>
+          )}
+        </div>
+      )}
+      {resuming && <ResumeDialog profile={profile} onClose={() => setResuming(false)} onResumed={(id) => { setResuming(false); onOpen(id); }} />}
+    </div>
+  );
+}
+
 /** Start a chat, or pick up one begun in a terminal. */
 export function NewSessionDialog({ profile: initial, profiles, onClose, onStarted }: {
   profile: Profile; profiles: Profile[]; onClose: () => void; onStarted: (id: string, slug: string) => void;
@@ -101,7 +128,7 @@ export function NewSessionDialog({ profile: initial, profiles, onClose, onStarte
   const started = (id: string) => onStarted(id, profile.slug);
   if (resuming) return <ResumeDialog profile={profile} onClose={() => setResuming(false)} onResumed={started} />;
   return (
-    <Modal title="New session" onClose={onClose}>
+    <Modal title="New chat" onClose={onClose}>
       <div className="form new-session">
         {profiles.length > 1 && (
           <label className="session-repo">
@@ -118,7 +145,7 @@ export function NewSessionDialog({ profile: initial, profiles, onClose, onStarte
   );
 }
 
-function SessionStarter({ profile, onStarted }: { profile: Profile; onStarted: (id: string) => void }) {
+export function SessionStarter({ profile, onStarted }: { profile: Profile; onStarted: (id: string) => void }) {
   const [agent, setAgent] = usePersistentState<Agent>("esa.session.agent", () => "claude", () => false, (v) => v === "claude" || v === "codex");
   const [access, setAccess] = usePersistentState<Access>("esa.session.access", () => "read", () => false, (v) => v === "read" || v === "edit");
   const [isolated, setIsolated] = usePersistentState<boolean>("esa.session.isolated", () => false, () => false, (v) => typeof v === "boolean");
@@ -236,8 +263,10 @@ function ResumeDialog({ profile, onClose, onResumed }: { profile: Profile; onClo
 }
 
 /** One session, full screen on a phone: the chat, and the changes it made. */
-export function SessionView({ profile, ticket, tickets, onClose, onOpenTicket }: {
+export function SessionView({ profile, ticket, tickets, onClose, onOpenTicket, embedded = false }: {
   profile: Profile; ticket: Ticket; tickets: Ticket[]; onClose: () => void; onOpenTicket: (id: string) => void;
+  /** Shown in the right pane of Chats on wide screens instead of as a sliding panel. */
+  embedded?: boolean;
 }) {
   const slug = profile.slug;
   const [tab, setTab] = useState<"chat" | "changes">("chat");
@@ -245,7 +274,7 @@ export function SessionView({ profile, ticket, tickets, onClose, onOpenTicket }:
   const [menu, setMenu] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const onError = (message: string) => toast(message, { tone: "error" });
-  useLayer(onClose, { active: !menu && !confirmDelete });
+  useLayer(onClose, { active: !embedded && !menu && !confirmDelete });
   useEffect(() => setTitle(ticket.title), [ticket.title]);
 
   // Looking at the session marks its latest reply as read.
@@ -272,11 +301,10 @@ export function SessionView({ profile, ticket, tickets, onClose, onOpenTicket }:
     } catch (e: any) { onError(e.message); }
   };
 
-  return (
-    <div className="drawer-wrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <aside className="panel session-panel" role="dialog" aria-modal="true" aria-label={ticket.title}>
+  const panel = (
+      <aside className={`panel session-panel${embedded ? " embedded" : ""}`} role={embedded ? "region" : "dialog"} aria-modal={embedded ? undefined : true} aria-label={ticket.title}>
         <header className="panel-head session-head">
-          <button className="icon-btn back-btn" onClick={onClose} aria-label="Back to sessions"><ChevronLeftIcon size={20} /></button>
+          <button className="icon-btn back-btn" onClick={onClose} aria-label="Back to chats"><ChevronLeftIcon size={20} /></button>
           <AgentMark agent={ticket.agent} />
           <input className="title-input" value={title} aria-label="Session name" onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
             onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); else if (e.key === "Escape") { setTitle(ticket.title); e.currentTarget.blur(); } }} />
@@ -312,8 +340,9 @@ export function SessionView({ profile, ticket, tickets, onClose, onOpenTicket }:
           </ConfirmDialog>
         )}
       </aside>
-    </div>
   );
+  if (embedded) return panel;
+  return <div className="drawer-wrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>{panel}</div>;
 }
 
 function SessionMenu({ ticket, onClose, onToBoard, onDelete }: { ticket: Ticket; onClose: () => void; onToBoard: () => void; onDelete: () => void }) {

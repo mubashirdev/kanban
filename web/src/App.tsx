@@ -1,7 +1,7 @@
 import { NotificationsDialog } from "./NotificationsDialog";
 import { WorkspaceControls, WorkspaceActivity, TicketList, EMPTY_FILTER, type WorkspaceFilter } from "./Workspace";
 import { metadataMatches } from "./ticketTemplates";
-import { NewSessionDialog, SessionView } from "./Sessions";
+import { ChatsView, NewSessionDialog, SessionView } from "./Sessions";
 import { Modal } from "./Modal";
 import { usePersistentState } from "./usePersistentState";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -10,7 +10,7 @@ import { avatarColor, avatarLetter } from "./avatar";
 import { BugReportDialog } from "./BugReportDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
 import { HeaderMenu } from "./HeaderMenu";
-import { BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, CopyIcon, GearIcon, KeyboardIcon, PlusIcon, PlugIcon, SearchIcon, TerminalIcon } from "./icons";
+import { BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, ColumnsIcon, CopyIcon, GearIcon, KeyboardIcon, PlusIcon, PlugIcon, SearchIcon, TerminalIcon } from "./icons";
 import { Inbox } from "./Inbox";
 import { UsagePill } from "./UsagePill";
 import { anyLayerOpen } from "./layers";
@@ -135,6 +135,8 @@ export function App() {
   const setError = (msg: string) => toast(msg, { tone: "error" });
   const [activityOpen, setActivityOpen] = useState(false);
   const [newSession, setNewSession] = useState(false);
+  // Board: tickets in lanes. Chats: sessions as a messenger, off the board.
+  const [mode, setMode] = usePersistentState<"board" | "chats">("esa.mode", () => "board", () => false, (v) => v === "board" || v === "chats");
   const [layout, setLayout] = useState<"board" | "list">("board");
   const [metadataFilter, setMetadataFilter] = useState<WorkspaceFilter>(EMPTY_FILTER);
   const [filters, setFilters] = useState<Set<FilterId>>(new Set());
@@ -385,7 +387,10 @@ export function App() {
   // Sessions live on their own page; the board, its filters and counts only see board tickets.
   const boardTickets = tickets.filter((t) => !t.standalone);
   // The Sessions lane follows the search; ticket filters (priority, PR…) don't apply to chats.
-  const shownSessions = tickets.filter((t) => t.standalone && (!q || t.title.toLowerCase().includes(q)));
+  const sessions = tickets.filter((t) => t.standalone);
+  const unreadChats = sessions.filter((t) => !t.running && t.attention).length;
+  // Wide screens show an open chat inside Chats (two panes) instead of as a sliding panel.
+  const wideChats = mode === "chats" && !narrow;
   const shownTickets = boardTickets.filter((t) =>
     metadataMatches(t, metadataFilter) && (!q || `${t.title}\n${t.body}`.toLowerCase().includes(q)) && (!activeFilters.length || activeFilters.some((f) => f.test(t))));
   const filtering = !!q || activeFilters.length > 0 || Object.values(metadataFilter).some(Boolean);
@@ -493,6 +498,17 @@ export function App() {
             Restart pending{restart.waiting > 0 ? ` · waiting for ${restart.waiting} ${restart.waiting === 1 ? "run" : "runs"}` : ""}
           </span>
         )}
+        {profile && (
+          <div className="segmented mode-switch" role="radiogroup" aria-label="View">
+            <button type="button" role="radio" aria-checked={mode === "board"} onClick={() => setMode("board")} title="Board: tickets in lanes">
+              <ColumnsIcon size={16} /><span className="mode-label">Board</span>
+            </button>
+            <button type="button" role="radio" aria-checked={mode === "chats"} onClick={() => setMode("chats")} title="Chats: sessions with Claude and Codex">
+              <ChatIcon size={16} /><span className="mode-label">Chats</span>
+              {unreadChats > 0 && <span className="mode-dot" aria-label={`${unreadChats} new`} />}
+            </button>
+          </div>
+        )}
         <div className="spacer" />
         <Inbox items={inbox} landOnInbox={narrow && !startedOnTicket.current} onPick={(i) => {
           if (i.profile !== slug) setSlug(i.profile);
@@ -526,8 +542,9 @@ export function App() {
           {mcpAttention > 0 && <span className="need-chip">{mcpAttention}</span>}
         </button>}
         {profile && (
-          <button className="btn primary new-ticket-btn" onClick={() => setNewTicket(true)} title="New ticket (N)" aria-label="New ticket">
-            <PlusIcon size={21} className="icon new-ticket-symbol" /><span className="new-ticket-label">New ticket</span>
+          <button className="btn primary new-ticket-btn" onClick={() => (mode === "chats" ? (wideChats ? closeTicket() : setNewSession(true)) : setNewTicket(true))}
+            title={mode === "chats" ? "New chat" : "New ticket (N)"} aria-label={mode === "chats" ? "New chat" : "New ticket"}>
+            <PlusIcon size={21} className="icon new-ticket-symbol" /><span className="new-ticket-label">{mode === "chats" ? "New chat" : "New ticket"}</span>
           </button>
         )}
         <HeaderMenu items={[
@@ -603,6 +620,9 @@ export function App() {
             Create profile
           </button>
         </div>
+      ) : mode === "chats" ? (
+        <ChatsView profile={profile} sessions={sessions} tickets={tickets} openId={openId} wide={wideChats}
+          onOpen={(id) => openTicket(id)} onClose={closeTicket} onOpenTicket={(id) => openTicket(id)} />
       ) : (
         <>
           <div className="board-bar">
@@ -637,7 +657,7 @@ export function App() {
               </span>
             )}
           </div>
-          {layout === "list" ? <TicketList tickets={shownTickets} onOpen={openTicket} /> : <Board key={profile.slug} tickets={shownTickets} sessions={shownSessions} filtered={filtering} onOpen={(id) => openTicket(id)} onMove={move} onAdd={() => setNewTicket(true)} onNewSession={() => setNewSession(true)} restartPending={restart.pending} />}
+          {layout === "list" ? <TicketList tickets={shownTickets} onOpen={openTicket} /> : <Board key={profile.slug} tickets={shownTickets} filtered={filtering} onOpen={(id) => openTicket(id)} onMove={move} onAdd={() => setNewTicket(true)} restartPending={restart.pending} />}
         </>
       )}
 
@@ -673,7 +693,7 @@ export function App() {
         <SchedulesDialog profile={profile} schedules={schedules} tickets={tickets} onClose={() => setSchedulesOpen(false)}
           onOpenTicket={(id) => { setSchedulesOpen(false); openTicket(id); }} />
       )}
-      {open && profile && open.standalone && <SessionView key={open.id} profile={profile} ticket={open} tickets={tickets} onClose={closeTicket} onOpenTicket={openTicket} />}
+      {open && profile && open.standalone && !wideChats && <SessionView key={open.id} profile={profile} ticket={open} tickets={tickets} onClose={closeTicket} onOpenTicket={openTicket} />}
       {open && profile && !open.standalone && <TicketDrawer key={open.id} profile={profile} ticket={open} tickets={tickets} onOpenTicket={openTicket} onClose={closeTicket}
         nav={{ prev: prevId, next: nextId, go: stepTicket }} slideIn={!stepped.current} />}
       {profileDialog && (
