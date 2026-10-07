@@ -14,6 +14,7 @@ function svg(paths: ReactNode, { size = 14, ...rest }: IconProps) {
 
 export const CloseIcon = (p: IconProps) => svg(<path d="M4 4l8 8M12 4l-8 8" />, p);
 export const PlusIcon = (p: IconProps) => svg(<path d="M8 3v10M3 8h10" />, p);
+export const PlayIcon = (p: IconProps) => svg(<path d="M5.5 3.5v9l7-4.5-7-4.5z" fill="currentColor" />, p);
 export const CheckIcon = (p: IconProps) => svg(<path d="M3.5 8.5l3 3 6-7" />, p);
 export const CopyIcon = (p: IconProps) => svg(<><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V3.8c0-.7-.6-1.3-1.3-1.3H3.8c-.7 0-1.3.6-1.3 1.3v5.4c0 .7.6 1.3 1.3 1.3h1.7" /></>, p);
 export const ExternalIcon = (p: IconProps) => svg(<><path d="M9 3h4v4M13 3L7.5 8.5" /><path d="M11 9.5v2.7c0 .7-.6 1.3-1.3 1.3H3.8c-.7 0-1.3-.6-1.3-1.3V6.3c0-.7.6-1.3 1.3-1.3h2.7" /></>, p);

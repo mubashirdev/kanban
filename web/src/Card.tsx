@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { safeHref, type Status, type Ticket } from "./api";
 import { AgentMark } from "./AgentMark";
-import { ClockIcon } from "./icons";
+import { CheckIcon, ClockIcon, PlayIcon } from "./icons";
 import { elapsed, fullTime, plainPreview, timeAgo, useNow } from "./time";
 
 /** Live running time: ticks every second for the first minute, then every 30s. */
@@ -55,10 +55,12 @@ export function Card({ ticket, onClick, dragging, queued, held, onQuick }: { tic
   const showActivity = working && ticket.lastActivity && !QUIET_ACTIVITY.has(ticket.lastActivity);
   const last = ticket.session?.lastMessage;
   const preview = last ? plainPreview(last.text) : "";
-  // Run / Done: one tap on a phone, kept in the meta row beside the time.
+  // Run / Done: one tap, as a small round button beside the title.
   const quickButton = quick && onQuick && !working && (!att || att.kind === "review") ? (
-    <button type="button" className="card-quick" onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => { e.stopPropagation(); onQuick(quick.to); }}>{quick.label}</button>
+    <button type="button" className="kc-act" aria-label={quick.label === "Done" ? "Mark done" : "Run now"} title={quick.label === "Done" ? "Mark done" : "Run now"}
+      onPointerDown={(e) => e.stopPropagation()} onClick={(e) => { e.stopPropagation(); onQuick(quick.to); }}>
+      {quick.label === "Done" ? <CheckIcon size={16} strokeWidth={2.2} /> : <PlayIcon size={15} />}
+    </button>
   ) : null;
   useNow();
   const lastAt = ticket.session ? ticket.session.lastMessage?.at || ticket.session.updatedAt : null;
@@ -66,53 +68,42 @@ export function Card({ ticket, onClick, dragging, queued, held, onQuick }: { tic
     <article
       className={`card ${dragging ? "dragging" : ""} ${queued && !working ? "is-queued" : ""} ${working ? "is-running" : ""} ${att ? `needs-you att-${att.kind}` : ""}`}
       onClick={onClick}>
-      {att && (
-        <div className={`your-turn att-${att.kind}`}>
-          <span className="yt-dot" aria-hidden />
-          <span className="yt-label">Your turn</span>
-          <span className="yt-why" title={ticket.error ?? undefined}>{att.label}</span>
-        </div>
-      )}
       {(ticket.kind && ticket.kind !== "task" || ticket.priority && !["normal","none"].includes(ticket.priority) || ticket.labels?.length) && <div className="card-properties">{ticket.kind && ticket.kind !== "task" && <span className="ticket-label">{ticket.kind}</span>}{ticket.priority && !["normal","none"].includes(ticket.priority) && <span className={`priority-tag priority-${ticket.priority}`}>{ticket.priority}</span>}{ticket.labels?.slice(0,3).map(label=><span key={label} className="ticket-label">{label}</span>)}{(ticket.labels?.length ?? 0)>3 && <span className="muted small">+{ticket.labels!.length-3}</span>}</div>}
-      <div className="card-title-row">
-        <div className="card-title" title={ticket.title}>{ticket.title}</div>
-        <AgentMark agent={ticket.agent} size="small" />
+      <div className="kc-head">
+        <div className="kc-title" title={ticket.title}>{ticket.title}</div>
+        {quickButton}
       </div>
       {showActivity ? (
-        <div className="card-activity" title={ticket.lastActivity!}>{ticket.lastActivity}</div>
-      ) : last && preview && (
-        <div className="card-last" title={last.text}>
-          <span className={`who ${last.role}`}>{last.role === "user" ? "You" : ticket.agent === "codex" ? "Codex" : "Claude"}:</span>{" "}
-          {preview}
-        </div>
+        <div className="kc-preview" title={ticket.lastActivity!}>{ticket.lastActivity}</div>
+      ) : preview && (
+        <div className="kc-preview" title={last!.text}>{last!.role === "user" ? "You: " : ""}{preview}</div>
       )}
-      {(quickButton || badge || ticket.prUrl || ticket.runCount > 0 || ticket.workdir || ticket.session || ticket.scheduleId || ticket.plan) && (
-        <div className="card-meta">
-          {quickButton}
-          {ticket.plan && ticket.plan.state !== "done" && (
-            <span className={`badge plan ${ticket.plan.state}`} title="This ticket runs a plan of child tickets">
-              Plan {ticket.plan.state === "finishing" ? "final check" : ticket.plan.state}
-            </span>
-          )}
-          {ticket.scheduleId && (
-            <span className="badge sched" title="Created by a schedule" aria-label="Scheduled">
-              <ClockIcon size={11} strokeWidth={1.8} />
-            </span>
-          )}
-          {badge}
-          {ticket.prUrl && (
-            <a className="badge pr" href={safeHref(ticket.prUrl)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
-              PR #{ticket.prUrl.split("/").pop()}
-            </a>
-          )}
-          {ticket.workdir && (ticket.terminalOpen
-            ? <span className="badge running" title="This ticket's Claude session is open in a terminal"><span className="live-dot" /> In terminal</span>
-            : <span className="badge stopped" title="Linked to an existing Claude session">session</span>)}
-          {lastAt && !working && (
-            <time className="card-time" dateTime={lastAt} title={fullTime(lastAt)}>{timeAgo(lastAt)}</time>
-          )}
-        </div>
-      )}
+      <div className="kc-foot">
+        {att && <span className={`kc-status att-${att.kind}`} title={ticket.error ?? undefined}><span className="kc-dot" aria-hidden />{att.label}</span>}
+        {ticket.plan && ticket.plan.state !== "done" && (
+          <span className={`badge plan ${ticket.plan.state}`} title="This ticket runs a plan of child tickets">
+            Plan {ticket.plan.state === "finishing" ? "final check" : ticket.plan.state}
+          </span>
+        )}
+        {ticket.scheduleId && (
+          <span className="badge sched" title="Created by a schedule" aria-label="Scheduled">
+            <ClockIcon size={11} strokeWidth={1.8} />
+          </span>
+        )}
+        {badge}
+        {ticket.prUrl && (
+          <a className="badge pr" href={safeHref(ticket.prUrl)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+            PR #{ticket.prUrl.split("/").pop()}
+          </a>
+        )}
+        {ticket.workdir && (ticket.terminalOpen
+          ? <span className="badge running" title="This ticket's Claude session is open in a terminal"><span className="live-dot" /> In terminal</span>
+          : <span className="badge stopped" title="Linked to an existing Claude session">session</span>)}
+        <span className="kc-end">
+          <AgentMark agent={ticket.agent} size="small" />
+          {lastAt && !working && <time dateTime={lastAt} title={fullTime(lastAt)}>{timeAgo(lastAt)}</time>}
+        </span>
+      </div>
     </article>
   );
 }

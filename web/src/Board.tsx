@@ -61,7 +61,7 @@ function SortableCard({ ticket, onOpen, onQuick, onActions, queued, held }: { ti
     if (press.current) clearTimeout(press.current.timer);
     press.current = null;
   };
-  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: ticket.id,
     data: { status: ticket.status },
   });
@@ -90,12 +90,6 @@ function SortableCard({ ticket, onOpen, onQuick, onActions, queued, held }: { ti
       }}
     >
       <Card ticket={ticket} onClick={() => { if (longPressed.current) longPressed.current = false; else onOpen(ticket.id); }} onQuick={(to) => onQuick(ticket, to)} queued={queued} held={held} />
-      {touch && <button ref={setActivatorNodeRef} className="icon-btn card-drag-handle" {...listeners}
-        aria-label={`Drag ${ticket.title}`} title="Drag to move ticket" onClick={(e) => e.stopPropagation()}>
-        <svg width="16" height="20" viewBox="0 0 16 20" fill="currentColor" aria-hidden>
-          {[5, 10, 15].map((y) => <g key={y}><circle cx="5" cy={y} r="1.4" /><circle cx="11" cy={y} r="1.4" /></g>)}
-        </svg>
-      </button>}
     </div>
   );
 }

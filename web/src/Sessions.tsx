@@ -28,7 +28,7 @@ export const agentName = (t: Pick<Ticket, "agent">) => (t.agent === "codex" ? "C
 /** Claude gets a spark on coral, Codex a prompt on blue, so the two are told apart at a glance. */
 const lastAt = (t: Ticket) => t.session?.lastMessage?.at ?? t.createdAt;
 /** Markdown marks read as noise in a one-line preview. */
-const plainText = (text: string) => withoutAgentNotes(text).replace(/!\[[^\]]*\]\([^)]*\)/g, "[image]").replace(/[`*_#>]+/g, "").replace(/\s+/g, " ").trim();
+const plainText = (text: string) => withoutAgentNotes(text).replace(/```[\s\S]*?(```|$)/g, " ").replace(/^\s*\|.*$/gm, " ").replace(/!\[[^\]]*\]\([^)]*\)/g, "[image]").replace(/[`*_#>]+/g, "").replace(/\s+/g, " ").trim();
 /** A short title from the first message, like a chat app names a new thread. */
 const titleFrom = (text: string) => {
   const line = text.trim().split("\n")[0].replace(/^\/\S+\s*/, "").trim() || text.trim();
@@ -40,15 +40,15 @@ function SessionCard({ ticket, onOpen }: { ticket: Ticket; onOpen: () => void })
   const att = ticket.attention;
   const state = ticket.running ? "running" : att?.kind === "reply" ? "unread" : att ? "waiting" : null;
   return (
-    <button className={`card session-card ${state ?? ""}`} onClick={onOpen}
+    <button className={`chat-row ${state ?? ""}`} onClick={onOpen}
       aria-label={`${ticket.title}, ${agentName(ticket)}${state === "unread" ? ", new reply" : state === "waiting" ? `, ${att!.label}` : ""}`}>
       <AgentMark agent={ticket.agent} />
-      <span className="session-card-main">
-        <span className="session-card-top">
-          <span className="session-card-title">{ticket.title}</span>
-          <time className="session-card-time" dateTime={lastAt(ticket)}>{timeAgo(lastAt(ticket))}</time>
+      <span className="chat-row-main">
+        <span className="chat-row-top">
+          <span className="chat-row-title">{ticket.title}</span>
+          <time className="chat-row-time" dateTime={lastAt(ticket)}>{timeAgo(lastAt(ticket))}</time>
         </span>
-        <span className="session-card-preview">
+        <span className="chat-row-preview">
           {ticket.running ? <><span className="spinner" /> {ticket.lastActivity ?? `${agentName(ticket)} is working…`}</>
             : att && att.kind !== "reply" ? <b>{att.label}</b>
             : last ? <>{last.role === "user" ? "You: " : ""}{plainText(last.text)}</>
