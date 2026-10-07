@@ -1,4 +1,4 @@
-# Esa Kanban
+# Muba AI Canban
 
 Local kanban board for [Claude Code](https://claude.com/claude-code). Drop a ticket into **Ready** and a headless `claude -p` session picks it up, works it, and moves it to **Review** (opening a GitHub PR when it changed code). All data lives in plain files under `~/.claude-kanban/`.
 
@@ -39,7 +39,7 @@ Columns: Backlog → Planning → Ready → In Progress → Review → Done.
 You need [Claude Code](https://claude.com/claude-code) installed and logged in, plus `git`. For PRs, also install `gh` and run `gh auth login`.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/leoawesome/kanban/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mubashirdev/kanban/main/install.sh | bash
 ```
 
 This downloads one self-contained binary to `~/.local/bin/ckanban` (no Bun/Node needed), starts it as a background service that launches at login, and opens http://localhost:7777.
@@ -51,8 +51,8 @@ Then click the profile menu → **New profile…**, pick a folder you've used Cl
 Paste this into Claude Code (or any coding assistant with a terminal):
 
 ```text
-Install Claude Kanban for me by following
-https://raw.githubusercontent.com/leoawesome/kanban/main/docs/install-ai.md
+Install Muba AI Canban for me by following
+https://raw.githubusercontent.com/mubashirdev/kanban/main/docs/install-ai.md
 ```
 
 The guide walks the assistant through prerequisites, install, PATH, verification and troubleshooting.
@@ -116,14 +116,14 @@ ckanban ticket chat <id> "also handle the empty state"
 ckanban ticket comment <id> "note for the next run"
 ckanban ticket stop <id>
 ckanban ticket delete <id>
-ckanban ticket report-bug [<id>] --title "Chat froze" --body "1. ..."   # files a Claude Kanban bug on GitHub
+ckanban ticket report-bug [<id>] --title "Chat froze" --body "1. ..."   # files a Muba AI Canban bug on GitHub
 ```
 
 Add `--profile <slug>` to pick a board explicitly and `--json` for machine-readable output. The daemon must be running.
 
 ### Reporting bugs
 
-Found a bug in Claude Kanban? Use **⋯ → Report a bug** in the header, or **Report a bug in Claude Kanban** in a ticket's details to attach that ticket. You see everything that will be sent (version and OS, ticket details, last run result and log tail) and can untick any of it; home and data paths and secret-looking values are hidden. It's filed as an issue on `leoawesome/kanban` with `gh`. Without `gh` (or logged out) you get a prefilled GitHub link instead. `gh` can't upload images, so screenshots are listed for you to drag into the issue. In a ticket chat you can also ask Claude to "report this as a ckanban bug": it drafts the issue, asks you to confirm, then files it.
+Found a bug in Muba AI Canban? Use **⋯ → Report a bug** in the header, or **Report a bug in Muba AI Canban** in a ticket's details to attach that ticket. You see everything that will be sent (version and OS, ticket details, last run result and log tail) and can untick any of it; home and data paths and secret-looking values are hidden. It's filed as an issue on `mubashirdev/kanban` with `gh`. Without `gh` (or logged out) you get a prefilled GitHub link instead. `gh` can't upload images, so screenshots are listed for you to drag into the issue. In a ticket chat you can also ask Claude to "report this as a ckanban bug": it drafts the issue, asks you to confirm, then files it.
 
 ### claude.ai artifacts from board runs
 
@@ -173,7 +173,7 @@ Use separate LaunchAgents with `RunAtLoad` and `KeepAlive` for the board, bridge
 
 ## Install as an app
 
-Open Esa Kanban through your HTTPS address and sign in, then choose **More → Install Esa Kanban**. On iPhone/iPad, use Safari’s **Share → Add to Home Screen**. On Android, use Chrome’s **Install app** option. It opens in its own window with the AI-inspired Esa Kanban icon; the existing responsive layout supports portrait, landscape, and the phone keyboard. Installation on a phone requires HTTPS; a plain LAN IP can still be used as a website.
+Open Muba AI Canban through your HTTPS address and sign in, then choose **More → Install Muba AI Canban**. On iPhone/iPad, use Safari’s **Share → Add to Home Screen**. On Android, use Chrome’s **Install app** option. It opens in its own window with the AI-inspired Muba AI Canban icon; the existing responsive layout supports portrait, landscape, and the phone keyboard. Installation on a phone requires HTTPS; a plain LAN IP can still be used as a website.
 
 The app caches versioned UI files and a reconnect screen. Board data, chats, terminal streams, login pages, and credentials are never cached by the service worker. Your Mac must remain awake and online to use them. If a new version is ready, choose **Reload** when convenient; updates do not interrupt open work automatically. There is no offline write queue.
 

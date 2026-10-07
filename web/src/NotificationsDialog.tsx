@@ -71,7 +71,7 @@ export function NotificationsDialog({ onClose }: { onClose: () => void }) {
       const registration = await navigator.serviceWorker.getRegistration("/");
       if (!registration?.active)
         throw new Error(
-          "The app is still installing its background worker. Reload Esa Kanban and try again."
+          "The app is still installing its background worker. Reload Muba AI Canban and try again."
         );
       const permission = await Notification.requestPermission();
       if (permission !== "granted")
@@ -109,7 +109,7 @@ export function NotificationsDialog({ onClose }: { onClose: () => void }) {
         </p>
         {!supported ? (
           <div className="banner info">
-            On iPhone, open Esa Kanban from your Home Screen using its HTTPS
+            On iPhone, open Muba AI Canban from your Home Screen using its HTTPS
             address. Notifications also require browser support.
           </div>
         ) : (

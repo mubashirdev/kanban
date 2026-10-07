@@ -126,7 +126,7 @@ test("Safari installation metadata and app icons load without a session, while a
     expect(metadata.status).toBe(200);
     expect(metadata.headers.get("content-type")).toContain("application/manifest+json");
     const manifest = await metadata.json() as { name: string; icons: { src: string }[] };
-    expect(manifest.name).toBe("Esa Kanban");
+    expect(manifest.name).toBe("Muba AI Canban");
     for (const path of ["/icons/esa-apple-touch.png?v=5", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/icons/esa-32.png", ...manifest.icons.map((icon) => icon.src)]) {
       const icon = await fetch(base + path, { headers: probe });
       expect(icon.status).toBe(200);

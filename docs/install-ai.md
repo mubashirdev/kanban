@@ -1,6 +1,6 @@
-# Installing Claude Kanban — guide for AI assistants
+# Installing Muba AI Canban — guide for AI assistants
 
-You are helping a user install **Claude Kanban**: a local web kanban board where tickets are worked by headless Claude Code sessions. Follow these steps in order. Run each command, check its result, and only move on when the check passes. Tell the user briefly what you did at the end.
+You are helping a user install **Muba AI Canban**: a local web kanban board where tickets are worked by headless Claude Code sessions. Follow these steps in order. Run each command, check its result, and only move on when the check passes. Tell the user briefly what you did at the end.
 
 Supported: **macOS only** (Apple Silicon or Intel). If `uname -s` is not `Darwin`, stop and tell the user it is not supported yet.
 
@@ -20,7 +20,7 @@ command -v gh && gh auth status
 ## 2. Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/leoawesome/kanban/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mubashirdev/kanban/main/install.sh | bash
 ```
 
 This downloads the `ckanban` binary to `~/.local/bin/ckanban`, installs a launchd agent (`~/Library/LaunchAgents/io.ckanban.daemon.plist`), starts it, and opens http://localhost:7777.
