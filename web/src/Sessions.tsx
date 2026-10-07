@@ -4,7 +4,8 @@ import { autoGrow } from "./autoGrow";
 import { rememberFirstMessage } from "./drafts";
 import { Chat, withoutAgentNotes } from "./Chat";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, HistoryIcon, MoreIcon, SparkIcon, TerminalIcon, TrashIcon } from "./icons";
+import { AgentMark } from "./AgentMark";
+import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, HistoryIcon, MoreIcon, TrashIcon } from "./icons";
 import { useLayer } from "./layers";
 import { Modal } from "./Modal";
 import { ReviewPanel } from "./ReviewPanel";
@@ -24,15 +25,6 @@ const ACCESS: { id: Access; label: string; hint: string }[] = [
 
 export const agentName = (t: Pick<Ticket, "agent">) => (t.agent === "codex" ? "Codex" : "Claude");
 /** Claude gets a spark on coral, Codex a prompt on blue, so the two are told apart at a glance. */
-export function AgentMark({ agent, size = "normal" }: { agent?: Ticket["agent"]; size?: "normal" | "small" }) {
-  const codex = agent === "codex";
-  const px = size === "small" ? 11 : 16;
-  return (
-    <span className={`agent-mark ${codex ? "codex" : "claude"}${size === "small" ? " small" : ""}`} aria-hidden>
-      {codex ? <TerminalIcon size={px} /> : <SparkIcon size={px} />}
-    </span>
-  );
-}
 const lastAt = (t: Ticket) => t.session?.lastMessage?.at ?? t.createdAt;
 /** Markdown marks read as noise in a one-line preview. */
 const plainText = (text: string) => withoutAgentNotes(text).replace(/!\[[^\]]*\]\([^)]*\)/g, "[image]").replace(/[`*_#>]+/g, "").replace(/\s+/g, " ").trim();

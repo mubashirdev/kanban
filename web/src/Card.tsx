@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { safeHref, type Status, type Ticket } from "./api";
-import { SparkIcon, TerminalIcon } from "./icons";
+import { AgentMark } from "./AgentMark";
 import { ClockIcon } from "./icons";
 import { elapsed, fullTime, plainPreview, timeAgo, useNow } from "./time";
 
@@ -70,9 +70,7 @@ export function Card({ ticket, onClick, dragging, queued, held, onQuick }: { tic
       {(ticket.kind && ticket.kind !== "task" || ticket.priority && !["normal","none"].includes(ticket.priority) || ticket.labels?.length) && <div className="card-properties">{ticket.kind && ticket.kind !== "task" && <span className="ticket-label">{ticket.kind}</span>}{ticket.priority && !["normal","none"].includes(ticket.priority) && <span className={`priority-tag priority-${ticket.priority}`}>{ticket.priority}</span>}{ticket.labels?.slice(0,3).map(label=><span key={label} className="ticket-label">{label}</span>)}{(ticket.labels?.length ?? 0)>3 && <span className="muted small">+{ticket.labels!.length-3}</span>}</div>}
       <div className="card-title-row">
         <div className="card-title" title={ticket.title}>{ticket.title}</div>
-        <span className="card-agent" title={ticket.agent === "codex" ? "Codex" : "Claude"} aria-label={ticket.agent === "codex" ? "Codex" : "Claude"}>
-          {ticket.agent === "codex" ? <TerminalIcon size={11} /> : <SparkIcon size={11} />}
-        </span>
+        <AgentMark agent={ticket.agent} size="small" />
       </div>
       {quick && onQuick && !working && (!att || att.kind === "review") && (
         <button type="button" className="card-quick" onPointerDown={(e) => e.stopPropagation()}

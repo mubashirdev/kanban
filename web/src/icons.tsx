@@ -49,6 +49,9 @@ export const SparkIcon = ({ size = 11, ...rest }: IconProps) => (
 );
 
 export const MicIcon = (p: IconProps) => svg(<><rect x="6" y="2" width="4" height="7" rx="2" /><path d="M3.5 7.5a4.5 4.5 0 009 0M8 12v2" /></>, p);
+/** Agent glyphs: Claude's starburst and Codex's prompt. */
+export const ClaudeMarkIcon = (p: IconProps) => svg(<path d="M8 2v12M2 8h12M3.8 3.8l8.4 8.4M12.2 3.8l-8.4 8.4" />, { strokeWidth: 1.9, ...p });
+export const CodexMarkIcon = (p: IconProps) => svg(<path d="M3.5 5l3.2 3-3.2 3M8.5 11.5h4" />, { strokeWidth: 1.9, ...p });
 export const SlashIcon = (p: IconProps) => svg(<><path d="M9.5 3l-3 10M4 5H2v6h2M12 5h2v6h-2" /></>, p);
 export const ImageIcon = (p: IconProps) => svg(<><rect x="2" y="2" width="12" height="12" rx="2" /><circle cx="5.5" cy="5.5" r="1" /><path d="M3 12l4-4 2.5 2.5L11 9l2 3" /></>, p);
 
