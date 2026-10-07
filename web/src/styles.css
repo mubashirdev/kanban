@@ -2575,3 +2575,9 @@ body { letter-spacing: -0.011em; }
   .board > .column { flex: 0 0 100%; }
   .board::after { content: none; }
 }
+
+/* Your messages: a soft grey bubble with normal text, like the Claude and Codex apps (not solid blue). */
+.conv-msg.user { background: var(--surface-2); color: var(--text); }
+.conv-msg.user code { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.conv-msg.user a { color: var(--accent); }
+.conv-msg.user.pending { background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); }
