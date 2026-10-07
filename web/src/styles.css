@@ -1873,7 +1873,6 @@ body { letter-spacing: -0.011em; }
 .card-title-row { display: flex; align-items: flex-start; gap: 8px; }
 .card-title-row .card-title { flex: 1; min-width: 0; }
 .card-title { font-size: 15px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.35; }
-.card-agent { flex: none; margin-top: 1px; width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; color: var(--muted); background: var(--bg); }
 .card.needs-you, .card.is-running { border-left: 0; }
 .card.needs-you { box-shadow: inset 3px 0 0 var(--warn), var(--card-shadow); }
 .card.needs-you.att-failed, .card.needs-you.att-blocked { box-shadow: inset 3px 0 0 var(--err), var(--card-shadow); }
@@ -2042,3 +2041,36 @@ body { letter-spacing: -0.011em; }
 .composer-card .send-round.danger { background: var(--err); color: #fff; }
 .composer-card .send-round:disabled { background: var(--surface-2); color: var(--muted); }
 :root[data-keyboard-open] .composer.composer-card { margin-bottom: 6px; }
+
+/* Narrow phones (320-400px): keep the composer row on one line and give the chat title room. */
+.composer-card .phone-status { flex-wrap: nowrap; min-width: 0; flex: 0 1 auto; }
+.composer-card .phone-status .status-pick { min-width: 0; }
+.composer-card .phone-status .status-chip { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 400px) {
+  .panel-head .your-turn .yt-why { display: none; }
+  .panel-head .your-turn.inline { padding: 3px 8px; }
+  .composer-card .phone-status .status-chip { padding: 0 4px; font-size: 13px; }
+  .composer.composer-card { margin-inline: 8px; padding-left: 14px; }
+}
+/* Tablet header: the status pill hugs its text instead of filling the row. */
+.panel-head .your-turn.inline { flex: 0 0 auto; width: max-content; max-width: 100%; }
+
+/* Short screens (phone in landscape): one header row, a slimmer composer, more room for the conversation. */
+@media (max-height: 500px) {
+  .panel-head { grid-template-columns: 40px minmax(0, 1fr) auto auto 40px 40px; padding-block: 6px; }
+  .panel-head .title-input { grid-column: 2; grid-row: 1; width: auto; min-width: 0; font-size: 16px; padding: 4px 0; }
+  .panel-head > .your-turn, .panel-head > .badge { grid-column: 3; grid-row: 1; }
+  .panel-head .ticket-nav { grid-column: 4; grid-row: 1; }
+  .panel-head .ticket-menu-wrap { grid-column: 5; grid-row: 1; }
+  .panel-head > button:last-child { grid-column: 6; grid-row: 1; }
+  .composer { padding: 6px 10px; gap: 4px; }
+  .composer textarea { min-height: 32px; }
+  .composer-foot .composer-keys { display: none; }
+}
+
+/* Agent identity: Claude is a clay square with a starburst, Codex a graphite circle with a prompt. */
+.agent-mark.claude { background: #c96442; color: #fff; }
+.agent-mark.codex { background: #1c1c1e; color: #fff; }
+@media (prefers-color-scheme: dark) { .agent-mark.codex { background: #f5f5f7; color: #1c1c1e; } }
+.card-title-row .agent-mark.small { width: 22px; height: 22px; margin-top: 1px; border-radius: 7px; }
+.card-title-row .agent-mark.small.codex { border-radius: 50%; }
