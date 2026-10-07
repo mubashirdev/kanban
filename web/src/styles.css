@@ -2553,3 +2553,25 @@ body { letter-spacing: -0.011em; }
 .chat-row.unread .chat-row-time { color: var(--accent); }
 .chat-row .unread-dot { margin-top: 7px; }
 .chat-row:active, .chat-list li.active .chat-row { background: var(--accent-soft); }
+
+/* Codex-style message box on every screen: text on top, one icon row below. */
+.composer-card .composer-bar { gap: 2px; }
+.composer-spacer { flex: 1; }
+.composer-icon-btn { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; padding: 0; color: var(--text); flex: none; }
+.composer-icon-btn[aria-expanded="true"] { background: var(--surface-2); }
+.access-shield { color: var(--muted); }
+.access-shield.edit { color: #d9663a; }
+.effort-gauge { display: block; }
+.quick-pick-hint { display: block; font-size: 12px; color: var(--muted); font-weight: 400; margin-top: 2px; }
+.quick-pick-item .quick-pick-label:has(.quick-pick-hint) { flex-direction: column; align-items: flex-start; gap: 0; }
+@media (min-width: 768px) {
+  /* Desktop keeps the same card, centred under the conversation. */
+  .composer.composer-card { margin: 0 16px 14px; }
+}
+
+/* Phones: every lane is the full width with the same margin on both sides, so the cards sit in the
+   same place on every lane, the last one too (a peeking next lane left the last lane off centre). */
+@media (max-width: 767px) {
+  .board > .column { flex: 0 0 100%; }
+  .board::after { content: none; }
+}

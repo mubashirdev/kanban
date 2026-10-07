@@ -88,3 +88,42 @@ export function QuickPick({ slug, ticket, kind, onClose, onMore }: {
     </div>
   );
 }
+
+const ACCESS_OPTIONS = [
+  { value: "read" as const, label: "Read only", hint: "Looks at code and answers, won't change files" },
+  { value: "edit" as const, label: "Can edit", hint: "Changes files in this folder" },
+];
+
+/** What a chat's agent may do, from the shield in the message box (like Codex's access menu). */
+export function AccessPick({ slug, ticket, onClose }: { slug: string; ticket: Ticket; onClose: () => void }) {
+  const root = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState("");
+  const current = ticket.access ?? "read";
+  useLayer(onClose);
+  useEffect(() => {
+    const outside = (e: PointerEvent) => { if (!root.current?.parentElement?.contains(e.target as Node)) onClose(); };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, []);
+  const choose = async (access: "read" | "edit") => {
+    if (access === current) return onClose();
+    try {
+      await api.updateTicket(slug, ticket.id, { access });
+      onClose();
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+  return (
+    <div className="quick-pick" role="menu" aria-label="What the agent may do" ref={root}>
+      {error && <p className="form-error">{error}</p>}
+      {ticket.running && <p className="quick-pick-status">Stop the agent to change this.</p>}
+      {ACCESS_OPTIONS.map((o) => (
+        <button key={o.value} role="menuitemradio" aria-checked={o.value === current} className="quick-pick-item" disabled={!!ticket.running} onClick={() => choose(o.value)}>
+          <span className="quick-pick-label">{o.label}<span className="quick-pick-hint">{o.hint}</span></span>
+          {o.value === current && <CheckIcon size={16} className="icon quick-pick-check" />}
+        </button>
+      ))}
+    </div>
+  );
+}

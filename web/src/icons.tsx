@@ -72,3 +72,7 @@ export const ColumnsIcon = (p: IconProps) => svg(<><rect x="2" y="2.5" width="12
 export const HistoryIcon = (p: IconProps) => svg(<><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9" /><path d="M2.5 2.5v2.5H5" /><path d="M8 5.5V8l1.8 1.3" /></>, p);
 export const DollarIcon = (p: IconProps) => svg(<><circle cx="8" cy="8" r="6.2" /><path d="M8 4v8M10 6.3c0-.8-.9-1.3-2-1.3s-2 .5-2 1.3c0 1.9 4 .9 4 2.8 0 .8-.9 1.4-2 1.4s-2-.6-2-1.4" /></>, p);
 export const SplitIcon = (p: IconProps) => svg(<path d="M5 2.5v3.2c0 1 .8 1.8 1.8 1.8h2.4c1 0 1.8.8 1.8 1.8v3.2M5 2.5L3.2 4.3M5 2.5l1.8 1.8M11 13.5l-1.8-1.8M11 13.5l1.8-1.8" />, p);
+export const ShieldIcon = (p: IconProps) => svg(<path d="M8 1.8l5 2v4c0 3.1-2.1 5.4-5 6.4-2.9-1-5-3.3-5-6.4v-4l5-2z" />, p);
+/** Shield with "!": the agent may change files (Codex shows elevated access this way). */
+export const ShieldAlertIcon = (p: IconProps) => svg(<><path d="M8 1.8l5 2v4c0 3.1-2.1 5.4-5 6.4-2.9-1-5-3.3-5-6.4v-4l5-2z" /><path d="M8 5.2v3.4M8 10.8v.1" /></>, p);
+export const BoltIcon = (p: IconProps) => svg(<path d="M9 1.8L3.6 9h4l-1 5.2L12.4 7h-4l.6-5.2z" fill="currentColor" stroke="none" />, p);

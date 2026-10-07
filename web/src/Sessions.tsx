@@ -284,9 +284,6 @@ export function SessionView({ profile, ticket, tickets, onClose, onOpenTicket, e
     if (!next || next === ticket.title) return setTitle(ticket.title);
     api.updateTicket(slug, ticket.id, { title: next }).catch((e) => onError(e.message));
   };
-  const setAccess = (access: Access) => {
-    if (access !== ticket.access) api.updateTicket(slug, ticket.id, { access }).catch((e) => onError(e.message));
-  };
   const toBoard = async () => {
     setMenu(false);
     try {
@@ -302,12 +299,6 @@ export function SessionView({ profile, ticket, tickets, onClose, onOpenTicket, e
           <AgentMark agent={ticket.agent} />
           <input className="title-input" value={title} aria-label="Session name" onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
             onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); else if (e.key === "Escape") { setTitle(ticket.title); e.currentTarget.blur(); } }} />
-          <div className="segmented compact" role="radiogroup" aria-label="What it may do">
-            {ACCESS.map((a) => (
-              <button type="button" key={a.id} role="radio" aria-checked={(ticket.access ?? "read") === a.id} disabled={!!ticket.running}
-                title={ticket.running ? "Stop the agent to change this" : a.hint} onClick={() => setAccess(a.id)}>{a.id === "read" ? "Read" : "Edit"}</button>
-            ))}
-          </div>
           <div className="session-menu">
             <button className="icon-btn" aria-label="Session actions" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu((v) => !v)}><MoreIcon /></button>
             {menu && <SessionMenu ticket={ticket} onClose={() => setMenu(false)} onToBoard={toBoard} onFork={() => { setMenu(false); setForking(true); }} onDelete={() => { setMenu(false); setConfirmDelete(true); }} />}
