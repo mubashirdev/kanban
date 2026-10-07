@@ -1951,28 +1951,58 @@ body { letter-spacing: -0.011em; }
 .chat-pane-new { flex: 1; max-width: 720px; margin: 0 auto; padding: 48px 32px; display: flex; flex-direction: column; gap: 16px; }
 .chat-pane-new h2 { margin: 0; font-size: 20px; }
 
-/* Phones: like iOS Messages. Row 1: repo avatar, the Board | Chats switch centered, then + and ⋯.
-   Row 2: the repo name, which also opens the repo picker. */
-.repo-avatar { display: none; }
+/* Phones: one slim top bar (repo, search, inbox, menu), a bottom tab bar for Board | Chats, and a labelled New button. */
+.repo-avatar, .search-toggle, .tabbar, .fab { display: none; }
 @media (max-width: 767px) {
   .topbar {
-    display: grid; grid-template-columns: 44px 1fr auto auto auto; grid-template-areas: "avatar mode inbox add menu" "repo repo repo repo repo";
-    align-items: center; column-gap: 6px; row-gap: 2px; padding-bottom: 6px;
+    display: grid; grid-template-columns: 36px minmax(0, 1fr) auto auto auto; grid-template-areas: "avatar repo search inbox menu";
+    align-items: center; column-gap: 8px; padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
   }
   .topbar > .brand, .topbar > .pill, .topbar > .spacer, .topbar > .usage-pill { display: none; }
   .repo-avatar {
     grid-area: avatar; display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 10px;
     color: #fff; font-weight: 700; font-size: 16px; cursor: pointer; justify-self: start;
   }
-  .topbar > .mode-switch { grid-area: mode; justify-self: center; }
-  .topbar > .mode-switch button { min-height: 36px; padding: 0 14px; font-size: 14px; font-weight: 600; gap: 5px; }
+  .topbar > .profile-select { grid-area: repo; justify-self: start; max-width: 100%; min-width: 0; }
+  .topbar .profile-select .select-trigger { background: transparent; padding: 2px 0; min-height: 36px; font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+  .search-toggle { grid-area: search; position: relative; display: inline-flex; width: 44px; height: 44px; border-radius: 12px; color: var(--muted); }
+  .search-toggle.on { color: var(--accent); background: var(--accent-soft); }
+  .search-dot { position: absolute; top: 9px; right: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface); }
   .topbar > .inbox { grid-area: inbox; }
-  .topbar > .new-ticket-btn { grid-area: add; background: transparent; border-color: transparent; color: var(--accent); box-shadow: none; }
   .topbar > .header-menu { grid-area: menu; }
-  .topbar > .profile-select { grid-area: repo; justify-self: start; max-width: 100%; }
-  .topbar .profile-select .select-trigger { background: transparent; padding: 2px 0; min-height: 36px; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
-  .mode-dot { top: 5px; right: 5px; }
-  /* Room after the last lane, so it lines up like the others. */
-  .board::after { content: ""; flex: 0 0 8px; }
+  .topbar .inbox > .inbox-menu { top: calc(60px + env(safe-area-inset-top)); }
+  .board-bar.is-collapsed { display: none; }
+
+  .tabbar {
+    display: flex; flex: none; padding: 2px 12px calc(2px + env(safe-area-inset-bottom));
+    background: color-mix(in srgb, var(--surface) 88%, transparent); -webkit-backdrop-filter: saturate(180%) blur(18px); backdrop-filter: saturate(180%) blur(18px);
+    border-top: 1px solid var(--border);
+  }
+  .tabbar button {
+    position: relative; flex: 1; display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 7px;
+    min-height: 40px; border: 0; background: none; color: var(--muted); font-size: 13.5px; font-weight: 600; cursor: pointer;
+  }
+  .tabbar button[aria-current] { color: var(--accent); }
+  .tabbar .mode-dot { top: 7px; right: calc(50% - 46px); }
+  :root[data-keyboard-open] .tabbar { display: none; }
+
+  .fab {
+    position: fixed; right: 16px; bottom: calc(56px + env(safe-area-inset-bottom)); z-index: 25; display: inline-flex; align-items: center; gap: 8px;
+    height: 48px; padding: 0 20px 0 14px; border: 0; border-radius: 24px; background: var(--accent); color: var(--on-accent);
+    font-weight: 600; font-size: 15px; cursor: pointer; box-shadow: 0 6px 18px rgba(0, 113, 227, 0.35), 0 1px 3px rgba(0, 0, 0, 0.2);
+  }
+  :root[data-keyboard-open] .fab { display: none; }
+  /* Last cards stay clear of the button. */
+  .column-body { padding-bottom: 88px; }
 }
+
+/* Chat tables scroll sideways instead of squeezing each column to a letter. */
+.md table { display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 10px 0; font-size: 13.5px; -webkit-overflow-scrolling: touch; }
+.md th, .md td { overflow-wrap: normal; word-break: normal; min-width: 72px; max-width: 20em; padding: 6px 10px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+.md th { background: var(--surface-2); font-weight: 650; }
+
+@media (max-width: 767px) {
+  /* Chat header: the Read | Edit switch no longer eats the title. */
+  .session-head .segmented button { min-height: 32px; padding: 0 10px; font-size: 13px; }
+  .session-head .title-input { min-width: 0; }
 }

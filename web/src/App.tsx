@@ -49,6 +49,25 @@ const Dock = lazy(() => import("./Dock").then((m) => {
 const DOCK_OPEN = "ckanban.dock.open";
 
 const LAST_PROFILE = "ckanban.profile";
+const LAST_OPEN = "ckanban.open";
+
+/** The chat or ticket that was open in each repo, so coming back to a repo reopens it. */
+function readOpenMap(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(LAST_OPEN) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveOpen(slug: string, id: string | null) {
+  try {
+    const map = readOpenMap();
+    if (id) map[slug] = id;
+    else delete map[slug];
+    localStorage.setItem(LAST_OPEN, JSON.stringify(map));
+  } catch {}
+}
 
 /** URL hash is the source of truth for what's open: #/<profile> or #/<profile>/<ticketId>. */
 function parseHash(): { slug: string | null; ticket: string | null } {
@@ -108,6 +127,11 @@ export function App() {
   const [usageRequest, setUsageRequest] = useState(0);
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
   const [slug, setSlug] = useState<string | null>(parseHash().slug ?? readLast());
+  // Switching repos reopens what was open there last.
+  const switchRepo = (next: string) => {
+    setSlug(next);
+    setOpenId(readOpenMap()[next] ?? null);
+  };
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
   const [dockOpen, setDockOpen] = useState(() => {
@@ -117,7 +141,7 @@ export function App() {
       return false;
     }
   });
-  const [openId, setOpenId] = useState<string | null>(parseHash().ticket);
+  const [openId, setOpenId] = useState<string | null>(() => parseHash().ticket ?? (slug ? readOpenMap()[slug] ?? null : null));
   // True when the open ticket was pushed onto browser history by us, so closing can go Back.
   const pushedOpen = useRef(false);
   // Board shown before that push: going Back to a different board would leave the ticket's board.
@@ -143,8 +167,10 @@ export function App() {
   const [dismissed, setDismissed] = useState(readDismissed);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [defaultModelsOpen, setDefaultModelsOpen] = useState(false);
+  // Phones: search and filters sit behind a magnifier until needed.
+  const [searchOpen, setSearchOpen] = useState(false);
   // "#/<board>/<ticket>": a shared or reloaded ticket link should not be covered by the inbox.
-  const startedOnTicket = useRef(location.hash.split("/").filter(Boolean).length > 2);
+  const startedOnTicket = useRef(!!openId);
   // The installed app's icon badge shows how many tickets and sessions wait on you.
   useEffect(() => {
     const nav = navigator as Navigator & { setAppBadge?: (count: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
@@ -225,8 +251,10 @@ export function App() {
 
   // Keep the URL in step with the board shown (replace, so switching boards doesn't pile up history).
   useEffect(() => {
-    if (slug && parseHash().slug !== slug) history.replaceState(null, "", hashFor(slug, openId));
+    if (slug && (parseHash().slug !== slug || parseHash().ticket !== openId)) history.replaceState(null, "", hashFor(slug, openId));
   }, [slug]);
+
+  useEffect(() => { if (slug) saveOpen(slug, openId); }, [slug, openId]);
 
   const openTicket = useCallback((id: string, board = slug) => {
     if (!board) return;
@@ -471,7 +499,7 @@ export function App() {
             className="profile-select"
             ariaLabel="Profile"
             value={slug ?? ""}
-            onChange={setSlug}
+            onChange={switchRepo}
             menuClassName="profile-menu"
             menuMaxHeight={440}
             options={profiles.map((p) => ({ value: p.slug, label: p.name, hint: tildePath(p.path) }))}
@@ -517,7 +545,14 @@ export function App() {
             {avatarLetter(profile.name)}
           </button>
         )}
-        {profile && modeSwitch}
+        {profile && !compact && modeSwitch}
+        {profile && compact && mode === "board" && (
+          <button type="button" className={`icon-btn search-toggle${searchOpen || query ? " on" : ""}`} aria-label="Search and filter" aria-pressed={searchOpen}
+            onClick={() => { setSearchOpen((o) => !o); if (!searchOpen) setTimeout(() => searchRef.current?.focus(), 50); }}>
+            <SearchIcon size={20} />
+            {(query || activeFilters.length > 0) && <span className="search-dot" aria-hidden />}
+          </button>
+        )}
         <div className="spacer" />
         <Inbox items={inbox} landOnInbox={narrow && !startedOnTicket.current} onPick={(i) => {
           if (i.profile !== slug) setSlug(i.profile);
@@ -550,7 +585,7 @@ export function App() {
           <PlugIcon /><span className="label">Connections</span>
           {mcpAttention > 0 && <span className="need-chip">{mcpAttention}</span>}
         </button>}
-        {profile && (
+        {profile && !compact && (
           <button className="btn primary new-ticket-btn" onClick={() => (mode === "chats" ? (wideChats ? closeTicket() : setNewSession(true)) : setNewTicket(true))}
             title={mode === "chats" ? "New chat" : "New ticket (N)"} aria-label={mode === "chats" ? "New chat" : "New ticket"}>
             <PlusIcon size={21} className="icon new-ticket-symbol" /><span className="new-ticket-label">{mode === "chats" ? "New chat" : "New ticket"}</span>
@@ -634,7 +669,7 @@ export function App() {
           onOpen={(id) => openTicket(id)} onClose={closeTicket} onOpenTicket={(id) => openTicket(id)} />
       ) : (
         <>
-          <div className="board-bar">
+          <div className={`board-bar${compact && !searchOpen && !query && activeFilters.length === 0 ? " is-collapsed" : ""}`}>
             <div className="search">
               <SearchIcon className="icon search-icon" />
               <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder={compact ? "Search" : "Search tickets"}
@@ -701,6 +736,22 @@ export function App() {
       {schedulesOpen && profile && (
         <SchedulesDialog profile={profile} schedules={schedules} tickets={tickets} onClose={() => setSchedulesOpen(false)}
           onOpenTicket={(id) => { setSchedulesOpen(false); openTicket(id); }} />
+      )}
+      {profile && compact && (
+        <nav className="tabbar" aria-label="View">
+          <button type="button" aria-current={mode === "board" ? "page" : undefined} onClick={() => setMode("board")}>
+            <ColumnsIcon size={22} /><span>Board</span>
+          </button>
+          <button type="button" aria-current={mode === "chats" ? "page" : undefined} onClick={() => setMode("chats")}>
+            <ChatIcon size={22} /><span>Chats</span>
+            {unreadChats > 0 && <span className="mode-dot" aria-label={`${unreadChats} new`} />}
+          </button>
+        </nav>
+      )}
+      {profile && compact && !open && (
+        <button type="button" className="fab" onClick={() => (mode === "chats" ? (wideChats ? closeTicket() : setNewSession(true)) : setNewTicket(true))}>
+          <PlusIcon size={20} />{mode === "chats" ? "New chat" : "New ticket"}
+        </button>
       )}
       {open && profile && open.standalone && !wideChats && <SessionView key={open.id} profile={profile} ticket={open} tickets={tickets} onClose={closeTicket} onOpenTicket={openTicket} />}
       {open && profile && !open.standalone && <TicketDrawer key={open.id} profile={profile} ticket={open} tickets={tickets} onOpenTicket={openTicket} onClose={closeTicket}
