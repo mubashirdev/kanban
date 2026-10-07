@@ -140,6 +140,13 @@ export function readCodexServer(toml: string): string[] | null {
   return command ? [command, ...args] : null;
 }
 
+const BUNDLED_CODEX = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
+
+/** CKANBAN_CODEX_BIN, then `codex` on PATH, then the CLI bundled in the ChatGPT app. */
+export function resolveCodexBin(): string {
+  return process.env.CKANBAN_CODEX_BIN ?? Bun.which("codex") ?? (existsSync(BUNDLED_CODEX) ? BUNDLED_CODEX : "codex");
+}
+
 // --- Manager ----------------------------------------------------------------------------------
 
 export class AgentRegistry {
@@ -151,7 +158,7 @@ export class AgentRegistry {
 
   constructor(opts: AgentOptions = {}) {
     this.claudeBin = opts.claudeBin ?? process.env.CKANBAN_CLAUDE_BIN ?? "claude";
-    this.codexBin = opts.codexBin ?? "codex";
+    this.codexBin = opts.codexBin ?? resolveCodexBin();
     this.claudeConfig = opts.claudeConfig ?? join(process.env.CLAUDE_CONFIG_DIR ?? homedir(), ".claude.json");
     this.codexConfig = opts.codexConfig ?? join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "config.toml");
     this.serverArgv = opts.serverArgv ?? [...helperArgv(), "mcp"];
@@ -177,7 +184,7 @@ export class AgentRegistry {
         current: sameArgv(claude, this.serverArgv), command: display(claude), configPath: this.claudeConfig,
       },
       {
-        id: "codex", label: "Codex", available: !!codexAt || existsSync(dirname(this.codexConfig)), installed: !!codex,
+        id: "codex", label: "Codex", available: !!codexAt, installed: !!codex,
         current: sameArgv(codex, this.serverArgv), command: display(codex), configPath: this.codexConfig,
       },
     ];

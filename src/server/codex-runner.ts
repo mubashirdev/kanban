@@ -221,7 +221,9 @@ export function startCodexRun(options: {
         events,
       };
     } catch (error) {
-      return { code: -1, stderr: (error as Error).message, events };
+      const message = (error as Error).message;
+      const missing = message.startsWith("Executable not found");
+      return { code: -1, stderr: missing ? `Codex CLI not found (${options.bin}). Install Codex or set CKANBAN_CODEX_BIN.` : message, events };
     }
   })();
   return {

@@ -141,7 +141,7 @@ function fakeClient() {
     chat: rec("chat", () => ticket({ running: true })),
     stop: rec("stop", () => ({ stopped: true })),
     comment: rec("comment", () => ({ id: "c2", author: "user", text: "x", at: "" })),
-    reportBug: rec("reportBug", () => ({ url: "https://github.com/leoawesome/kanban/issues/7", fallbackUrl: "", error: null, screenshots: [] })),
+    reportBug: rec("reportBug", () => ({ url: "https://github.com/mubashirdev/kanban/issues/7", fallbackUrl: "", error: null, screenshots: [] })),
     listSchedules: rec("listSchedules", () => [schedule(), schedule({ id: "s2", name: "Paused one", enabled: false, nextRunAt: null })]),
     createSchedule: rec("createSchedule", (_s, input) => schedule(input)),
     updateSchedule: rec("updateSchedule", (_s, _id, patch) => schedule(patch)),
@@ -232,7 +232,7 @@ test("report_bug files from inside a board run, with the ticket attached", async
   const { ctx, calls } = ctxWith({ CKANBAN_TICKET: "site/t_9" }, "/elsewhere");
   const r = await callTool("report_bug", { title: " Chat froze ", description: "1. open", ticketId: "t_9" }, ctx);
   expect(r.isError).toBeUndefined();
-  expect(r.content[0].text).toBe("Created https://github.com/leoawesome/kanban/issues/7");
+  expect(r.content[0].text).toBe("Created https://github.com/mubashirdev/kanban/issues/7");
   expect(calls.at(-1)).toEqual({ fn: "reportBug", args: [{
     title: "Chat froze", description: "1. open", profile: "site", ticketId: "t_9", include: ["env", "ticket", "log"], source: "ai",
   }] });
@@ -393,6 +393,15 @@ test("readCodexServer handles quoted keys, single quotes and absence", () => {
   expect(removeCodexServer(EXISTING)).not.toContain("ckanban");
 });
 
+test("AgentRegistry: Codex is unavailable when its CLI is missing, even if ~/.codex exists", async () => {
+  const home = tempDir();
+  const codexConfig = join(home, ".codex/config.toml");
+  mkdirSync(join(home, ".codex"));
+  const reg = new AgentRegistry({ claudeBin: "/bin/false", codexBin: "no-such-codex", claudeConfig: join(home, ".claude.json"), codexConfig, serverArgv: ["/bin/ck", "mcp"] });
+  const [, codex] = await reg.status();
+  expect(codex.available).toBe(false);
+});
+
 test("AgentRegistry: Codex install/uninstall keeps file mode and other entries; Claude reads ~/.claude.json", async () => {
   const home = tempDir();
   const codexConfig = join(home, ".codex/config.toml");
@@ -401,7 +410,7 @@ test("AgentRegistry: Codex install/uninstall keeps file mode and other entries; 
   chmodSync(codexConfig, 0o600);
   const claudeConfig = join(home, ".claude.json");
   writeFileSync(claudeConfig, JSON.stringify({ mcpServers: { ckanban: { type: "stdio", command: "/bin/ck", args: ["mcp"] } } }));
-  const reg = new AgentRegistry({ claudeBin: "/bin/false", codexBin: "no-such-codex", claudeConfig, codexConfig, serverArgv: ["/bin/ck", "mcp"] });
+  const reg = new AgentRegistry({ claudeBin: "/bin/false", codexBin: "sh", claudeConfig, codexConfig, serverArgv: ["/bin/ck", "mcp"] });
 
   const [claude, codex] = await reg.status();
   expect(claude).toMatchObject({ installed: true, current: true });
