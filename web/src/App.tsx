@@ -391,6 +391,18 @@ export function App() {
   const unreadChats = sessions.filter((t) => !t.running && t.attention).length;
   // Wide screens show an open chat inside Chats (two panes) instead of as a sliding panel.
   const wideChats = mode === "chats" && !narrow;
+  // Desktop: in the top bar. Phones: at the start of the search row, so the top bar stays short.
+  const modeSwitch = (
+    <div className="segmented mode-switch" role="radiogroup" aria-label="View">
+      <button type="button" role="radio" aria-checked={mode === "board"} onClick={() => setMode("board")} title="Tickets in lanes">
+        {!compact && <ColumnsIcon size={16} />}Board
+      </button>
+      <button type="button" role="radio" aria-checked={mode === "chats"} onClick={() => setMode("chats")} title="Chats with Claude and Codex">
+        {!compact && <ChatIcon size={16} />}Chats
+        {unreadChats > 0 && <span className="mode-dot" aria-label={`${unreadChats} new`} />}
+      </button>
+    </div>
+  );
   const shownTickets = boardTickets.filter((t) =>
     metadataMatches(t, metadataFilter) && (!q || `${t.title}\n${t.body}`.toLowerCase().includes(q)) && (!activeFilters.length || activeFilters.some((f) => f.test(t))));
   const filtering = !!q || activeFilters.length > 0 || Object.values(metadataFilter).some(Boolean);
@@ -498,17 +510,7 @@ export function App() {
             Restart pending{restart.waiting > 0 ? ` · waiting for ${restart.waiting} ${restart.waiting === 1 ? "run" : "runs"}` : ""}
           </span>
         )}
-        {profile && (
-          <div className="segmented mode-switch" role="radiogroup" aria-label="View">
-            <button type="button" role="radio" aria-checked={mode === "board"} onClick={() => setMode("board")} title="Board: tickets in lanes">
-              <ColumnsIcon size={16} /><span className="mode-label">Board</span>
-            </button>
-            <button type="button" role="radio" aria-checked={mode === "chats"} onClick={() => setMode("chats")} title="Chats: sessions with Claude and Codex">
-              <ChatIcon size={16} /><span className="mode-label">Chats</span>
-              {unreadChats > 0 && <span className="mode-dot" aria-label={`${unreadChats} new`} />}
-            </button>
-          </div>
-        )}
+        {profile && !compact && modeSwitch}
         <div className="spacer" />
         <Inbox items={inbox} landOnInbox={narrow && !startedOnTicket.current} onPick={(i) => {
           if (i.profile !== slug) setSlug(i.profile);
@@ -622,13 +624,14 @@ export function App() {
         </div>
       ) : mode === "chats" ? (
         <ChatsView profile={profile} sessions={sessions} tickets={tickets} openId={openId} wide={wideChats}
-          onOpen={(id) => openTicket(id)} onClose={closeTicket} onOpenTicket={(id) => openTicket(id)} />
+          switcher={compact ? modeSwitch : null} onOpen={(id) => openTicket(id)} onClose={closeTicket} onOpenTicket={(id) => openTicket(id)} />
       ) : (
         <>
           <div className="board-bar">
+            {compact && modeSwitch}
             <div className="search">
               <SearchIcon className="icon search-icon" />
-              <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search tickets"
+              <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder={compact ? "Search" : "Search tickets"}
                 aria-label="Search tickets on this board" aria-keyshortcuts="/"
                 onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); if (query) setQuery(""); else e.currentTarget.blur(); } }} />
               {query ? (

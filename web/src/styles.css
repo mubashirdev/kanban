@@ -1950,3 +1950,17 @@ body { letter-spacing: -0.011em; }
 .chat-pane .panel.embedded .close-btn { display: none; }
 .chat-pane-new { flex: 1; max-width: 720px; margin: 0 auto; padding: 48px 32px; display: flex; flex-direction: column; gap: 16px; }
 .chat-pane-new h2 { margin: 0; font-size: 20px; }
+
+/* Phones: a short iOS-style top bar (board name as the title, actions on the right).
+   Board | Chats is a labelled segmented control at the start of the search row. */
+@media (max-width: 767px) {
+  .topbar .brand { display: none; }
+  .topbar .profile-select .select-trigger, .topbar .profile-select > button { font-size: 17px; font-weight: 650; }
+  .board-bar .mode-switch, .chat-list-head .mode-switch { flex: none; }
+  .board-bar .mode-switch button, .chat-list-head .mode-switch button {
+    min-height: 40px; min-width: 0; padding: 0 12px; font-size: 14px; font-weight: 600; justify-content: center;
+  }
+  .mode-dot { top: 6px; right: 5px; }
+  /* Room after the last lane, so it lines up like the others. */
+  .board::after { content: ""; flex: 0 0 8px; }
+}
