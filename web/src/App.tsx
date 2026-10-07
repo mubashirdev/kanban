@@ -16,6 +16,7 @@ import { UsagePill } from "./UsagePill";
 import { anyLayerOpen } from "./layers";
 import { Board, boardOrder } from "./Board";
 import { NewTicketDialog } from "./NewTicketDialog";
+import { DefaultModelsDialog } from "./DefaultModelsDialog";
 import { ProfileDialog } from "./ProfileDialog";
 import { SchedulesDialog } from "./SchedulesDialog";
 import { Select } from "./Select";
@@ -139,6 +140,7 @@ export function App() {
   const [filters, setFilters] = useState<Set<FilterId>>(new Set());
   const [dismissed, setDismissed] = useState(readDismissed);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [defaultModelsOpen, setDefaultModelsOpen] = useState(false);
   // The installed app's icon badge shows how many tickets and sessions wait on you.
   useEffect(() => {
     const nav = navigator as Navigator & { setAppBadge?: (count: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
@@ -263,7 +265,7 @@ export function App() {
 
   const needYou = inbox.length;
   useEffect(() => {
-    document.title = needYou ? `(${needYou}) Esa Kanban` : "Esa Kanban";
+    document.title = needYou ? `(${needYou}) Muba AI Canban` : "Muba AI Canban";
   }, [needYou]);
 
   useEffect(() => {
@@ -443,7 +445,7 @@ export function App() {
       <header className="topbar">
         <div className="brand">
           <img className="brand-icon" src="/icons/esa-192.png?v=5" width="28" height="28" alt="" />
-          <span className="brand-name">Esa Kanban</span>
+          <span className="brand-name">Muba AI Canban</span>
         </div>
         {profiles && profiles.length > 0 && (
           <Select
@@ -527,7 +529,7 @@ export function App() {
           </button>
         )}
         <HeaderMenu items={[
-          ...(!pwa.installed ? [{ label: "Install Esa Kanban", icon: <CopyIcon />, onSelect: pwa.install }] : []),
+          ...(!pwa.installed ? [{ label: "Install Muba AI Canban", icon: <CopyIcon />, onSelect: pwa.install }] : []),
           ...(pwa.waiting ? [{ label: "Reload app update", icon: <CheckIcon />, onSelect: pwa.update }] : []),
           ...(narrow ? [{ label: "Usage & limits", icon: <ClockIcon />, onSelect: () => setUsageRequest((n) => n + 1) }] : []),
           ...(compact ? [
@@ -540,10 +542,11 @@ export function App() {
           ] : []),
           ...(profile ? [{ label: "Board settings", icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
           ...(profile ? [{ label: "Activity", icon: <ClockIcon />, onSelect: () => setActivityOpen(true) }] : []),
+          { label: "Default models", icon: <GearIcon />, onSelect: () => setDefaultModelsOpen(true) },
           { label: "Notifications", icon: <BellIcon />, onSelect: () => setNotificationsOpen(true) },
           { label: "Keyboard shortcuts", hint: "?", icon: <KeyboardIcon />, onSelect: () => setShortcuts(true) },
           { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
-        ]} footer={narrow && profile ? `${running}/${profile.maxParallel} running` : version && version.version !== "dev" ? `Esa Kanban v${version.version}` : null} />
+        ]} footer={narrow && profile ? `${running}/${profile.maxParallel} running` : version && version.version !== "dev" ? `Muba AI Canban v${version.version}` : null} />
       </header>
 
 
@@ -562,7 +565,7 @@ export function App() {
 
       {version?.updateAvailable && !dismissed.has(updateKey) && (
         <div className="banner info" role="status">
-          <span>Esa Kanban v{version.latest} is available (you have v{version.version}). Run <code>ckanban update</code> in a terminal.</span>
+          <span>Muba AI Canban v{version.latest} is available (you have v{version.version}). Run <code>ckanban update</code> in a terminal.</span>
           <button className="icon-btn" aria-label="Dismiss" title="Hide until next time" onClick={() => dismiss(updateKey)}><CloseIcon size={12} /></button>
         </div>
       )}
@@ -650,6 +653,7 @@ export function App() {
         <ConnectionsDialog state={mcp} onClose={() => setConnections(false)}
           onRunInTerminal={profile && health?.pty !== false ? (cmd) => { setConnections(false); runInTerminal(cmd); } : undefined} />
       )}
+      {defaultModelsOpen && <DefaultModelsDialog onClose={() => setDefaultModelsOpen(false)} />}
       {notificationsOpen && <NotificationsDialog onClose={() => setNotificationsOpen(false)} />}
       {activityOpen && profile && (
         <Modal title="Activity" wide onClose={() => setActivityOpen(false)}>

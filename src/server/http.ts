@@ -30,7 +30,7 @@ import type { TerminalWatcher } from "./terminals";
 import { UpdateChecker } from "./update";
 import { fetchUsage, type UsageResult } from "./usage";
 import type { Store } from "./store";
-import { STATUSES, type Profile, type ScheduleEditor, type Status, type Ticket } from "./types";
+import { STATUSES, type Config, type Profile, type ScheduleEditor, type Status, type Ticket } from "./types";
 import { nowIso, slugify } from "./util";
 import { authorizeLan, createLanSignIn, type LanAccess } from "./lan";
 import { ClaudeCommands, effortOptions } from "./commands";
@@ -86,6 +86,7 @@ class HttpError extends Error {
 const LOCAL_HOSTS = ["localhost", "127.0.0.1"];
 const DEFAULT_MAX_PARALLEL = 5;
 const CLEAR_COMMAND = { name: "clear", description: "Start a new conversation", argumentHint: "", aliases: ["new"], builtin: true };
+const EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"];
 const INBOX_KINDS = new Set(["questions", "proposal", "reply", "blocked", "failed"]);
 /** Output extensions served with their image type (raster only) so the Outputs tab can preview them. */
 const OUTPUT_IMAGE_TYPES: Record<string, string> = {
@@ -329,6 +330,26 @@ export function createServer(deps: ServerDeps) {
         return json(mcp.state());
       }
       throw new HttpError(404, "not found");
+    }
+
+    if (parts[0] === "settings" && parts.length === 1) {
+      if (m === "PATCH") {
+        const b = await body(req);
+        const patch: Partial<Config> = {};
+        for (const key of ["claudeModel", "codexModel"] as const) {
+          if (b[key] === undefined) continue;
+          if (b[key] !== null && !/^[a-zA-Z0-9._:\[\]-]{1,100}$/.test(String(b[key]))) throw new HttpError(400, `Invalid ${key}`);
+          patch[key] = b[key] || null;
+        }
+        for (const key of ["claudeEffort", "codexEffort"] as const) {
+          if (b[key] === undefined) continue;
+          if (b[key] !== null && !EFFORTS.includes(b[key])) throw new HttpError(400, `Invalid ${key}`);
+          patch[key] = b[key] || null;
+        }
+        store.saveConfig(patch);
+      }
+      const { claudeModel = null, codexModel = null, claudeEffort = null, codexEffort = null } = store.config();
+      return json({ claudeModel, codexModel, claudeEffort, codexEffort });
     }
 
     // Connections panel: is `ckanban mcp` registered with Claude Code / Codex, and (un)register it.
@@ -665,14 +686,14 @@ export function createServer(deps: ServerDeps) {
       const cwd = ticket.workdir ?? ticket.worktree ?? profile.path;
       if (ticket.agent === "codex") {
         const skills = codexSkills(cwd).map((skill) => ({ name: skill.name, description: skill.description, argumentHint: "", aliases: [], builtin: false, insert: `$${skill.name} ` }));
-        return json({ commands: [...codexCommands(), ...skills], models: [], efforts: [], outputStyles: [], defaultModel: null });
+        return json({ commands: [...codexCommands(), ...skills], models: [], efforts: [], outputStyles: [], defaultModel: store.config().codexModel ?? null });
       }
       try {
         const plan = ticket.status === "backlog" || ticket.status === "planning", refresh = url.searchParams.get("refresh") === "1";
         const catalog = commands.catalog ? await commands.catalog(cwd, plan, refresh) : { commands: await commands.get(cwd, plan, refresh), models: [] };
         // Headless Claude can't /clear itself; the board starts the new conversation (see Board.chat).
         const list = catalog.commands.some((c) => c.name === "clear") ? catalog.commands : [CLEAR_COMMAND, ...catalog.commands];
-        return json({ ...catalog, commands: list, efforts: effortOptions(catalog.commands), outputStyles: catalog.outputStyles ?? [], defaultModel: profile.model ?? null });
+        return json({ ...catalog, commands: list, efforts: effortOptions(catalog.commands), outputStyles: catalog.outputStyles ?? [], defaultModel: profile.model ?? store.config().claudeModel ?? null });
       } catch (error) { throw new HttpError(503, (error as Error).message); }
     }
     if (["model", "effort", "output-style"].includes(action) && parts.length === 5 && m === "POST") {

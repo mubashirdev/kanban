@@ -21,7 +21,7 @@ import { run as runCmd } from "./git";
 import { parseResult } from "./result";
 import { DraftTracker } from "./draft";
 import { buildArgs, startRun, type RunHandle } from "./runner";
-import { mcpConfig } from "./agents";
+import { mcpConfig, resolveCodexBin } from "./agents";
 import type { Store } from "./store";
 import type { Interrupted, Plan, QueuedMessage, Status, Ticket, TicketMode } from "./types";
 import { nowIso, slugify } from "./util";
@@ -420,11 +420,11 @@ export class Board {
     const systemPrompt = t.standalone ? sessionPrompt(t.access ?? "read") : command ? chatPrompt(t, "", run.chat!.mode, outputDir) : undefined;
     const launch = codex ? startCodexRun : startRun;
     run.handle = launch({
-      bin: codex ? this.opts.codexBin ?? process.env.CKANBAN_CODEX_BIN ?? "codex" : this.opts.claudeBin,
+      bin: codex ? this.opts.codexBin ?? resolveCodexBin() : this.opts.claudeBin,
       cwd: session.dir,
       args: codex
-        ? codexArgs({ sessionId: t.codexSessionId, refine, model: t.codexModel, effort: t.codexEffort, writableRoots, instructions: t.standalone ? systemPrompt : undefined })
-        : buildArgs(session.sessionId, session.existed, t.model ?? profile.model, refine ? "plan" : "bypassPermissions", mcpConfig(), systemPrompt, t.effort, t.outputStyle),
+        ? codexArgs({ sessionId: t.codexSessionId, refine, model: t.codexModel ?? this.store.config().codexModel, effort: t.codexEffort ?? this.store.config().codexEffort, writableRoots, instructions: t.standalone ? systemPrompt : undefined })
+        : buildArgs(session.sessionId, session.existed, t.model ?? profile.model ?? this.store.config().claudeModel, refine ? "plan" : "bypassPermissions", mcpConfig(), systemPrompt, t.effort ?? this.store.config().claudeEffort, t.outputStyle),
       input: prompt,
       // CKANBAN_TICKET marks board runs: the ckanban MCP/CLI refuses board changes there (no runs starting runs).
       env: { CKANBAN_OUTPUT_DIR: outputDir, CKANBAN_TICKET: `${slug}/${id}`, ...(t.effort ? { CLAUDE_CODE_EFFORT_LEVEL: t.effort } : {}) },

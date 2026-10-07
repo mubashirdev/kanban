@@ -546,3 +546,14 @@ test("inside a board run only a running plan's planner may change tickets, and o
   expect(r.status).toBe(403);
   await post(`${tickets}/${planner.id}/plan`, { action: "pause" });
 });
+
+test("default models are saved board-wide, validated, and cleared with null", async () => {
+  expect(await (await fetch(`${base}/api/settings`)).json()).toEqual({ claudeModel: null, codexModel: null, claudeEffort: null, codexEffort: null });
+  const saved = await fetch(`${base}/api/settings`, json("PATCH", { claudeModel: "sonnet", codexModel: "gpt-5.6-sol", codexEffort: "medium" }));
+  expect(await saved.json()).toMatchObject({ claudeModel: "sonnet", codexModel: "gpt-5.6-sol", codexEffort: "medium" });
+  expect(store.config()).toMatchObject({ claudeModel: "sonnet", codexModel: "gpt-5.6-sol" });
+  expect((await fetch(`${base}/api/settings`, json("PATCH", { codexModel: "bad model!" }))).status).toBe(400);
+  const cleared = await fetch(`${base}/api/settings`, json("PATCH", { claudeModel: null }));
+  expect(await cleared.json()).toMatchObject({ claudeModel: null, codexModel: "gpt-5.6-sol" });
+  expect((await fetch(`${base}/api/settings`, json("PATCH", { codexEffort: "bogus" }))).status).toBe(400);
+});

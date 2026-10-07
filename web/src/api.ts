@@ -295,6 +295,8 @@ export interface McpAddInput {
 }
 
 /** An outside agent that can use the board through `ckanban mcp`. */
+export interface DefaultModels { claudeModel: string | null; codexModel: string | null; claudeEffort: string | null; codexEffort: string | null }
+
 export interface AgentStatus {
   id: "claude" | "codex";
   label: string;
@@ -495,6 +497,8 @@ export const api = {
   mcpUpdate: (name: string, input: McpAddInput) => req<McpState>("PUT", `/api/mcp/${encodeURIComponent(name)}`, input),
   codexModels: () => req<{value:string;displayName:string;efforts:string[]}[]>("GET", "/api/agents/codex/models"),
   agents: () => req<AgentStatus[]>("GET", "/api/agents"),
+  settings: () => req<DefaultModels>("GET", "/api/settings"),
+  updateSettings: (patch: Partial<DefaultModels>) => req<DefaultModels>("PATCH", "/api/settings", patch),
   agentInstall: (id: AgentStatus["id"]) => req<AgentStatus[]>("POST", `/api/agents/${id}/install`),
   agentUninstall: (id: AgentStatus["id"]) => req<AgentStatus[]>("POST", `/api/agents/${id}/uninstall`),
   openFile: (slug: string, path: string) => req<{ ok: true }>("POST", `/api/profiles/${encodeURIComponent(slug)}/open-file`, { path }),

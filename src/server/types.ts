@@ -176,6 +176,11 @@ export interface Comment {
 export interface Config {
   port: number;
   prPollMinutes: number;
+  /** Board-wide default models, used when neither the ticket nor (for Claude) the board picks one. */
+  claudeModel?: string | null;
+  codexModel?: string | null;
+  claudeEffort?: import("./commands").Effort | null;
+  codexEffort?: Ticket["codexEffort"];
 }
 
 export interface OutputFile {

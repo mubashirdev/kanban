@@ -67,6 +67,10 @@ export class Store {
     }
   }
 
+  saveConfig(patch: Partial<Config>) {
+    atomicWrite(join(this.root, "config.json"), JSON.stringify({ ...this.config(), ...patch }, null, 2) + "\n");
+  }
+
   /** Pasted images, shared by all profiles (see attachments.ts). */
   get attachmentsDir(): string {
     return join(this.root, "attachments");
