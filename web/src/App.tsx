@@ -446,7 +446,7 @@ export function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <img className="brand-icon" src="/icons/esa-192.png?v=5" width="28" height="28" alt="" />
+          <img className="brand-icon" src="/icons/esa-192.png?v=6" width="28" height="28" alt="" />
           <span className="brand-name">Muba AI Canban</span>
         </div>
         {profiles && profiles.length > 0 && (

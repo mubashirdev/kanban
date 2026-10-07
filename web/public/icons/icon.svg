@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3d9bff"/>
+      <stop offset="1" stop-color="#005fd0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect x="172" y="212" width="208" height="600" rx="54" fill="#fff" fill-opacity="0.16"/>
+  <rect x="192" y="232" width="168" height="134" rx="32" fill="#fff" fill-opacity="0.55"/>
+  <rect x="192" y="384" width="168" height="134" rx="32" fill="#fff" fill-opacity="0.55"/>
+  <rect x="192" y="536" width="168" height="134" rx="32" fill="#fff" fill-opacity="0.55"/>
+  <rect x="408" y="212" width="208" height="600" rx="54" fill="#fff" fill-opacity="0.16"/>
+  <rect x="428" y="232" width="168" height="134" rx="32" fill="#fff" fill-opacity="1.0"/>
+  <rect x="428" y="384" width="168" height="134" rx="32" fill="#fff" fill-opacity="0.85"/>
+  <rect x="644" y="212" width="208" height="600" rx="54" fill="#fff" fill-opacity="0.16"/>
+  <rect x="664" y="232" width="168" height="134" rx="32" fill="#fff" fill-opacity="0.9"/>
+  <path d="M512 245 Q524 287 566 299 Q524 311 512 353 Q500 311 458 299 Q500 287 512 245 Z" fill="#0a6be0"/>
+</svg>
