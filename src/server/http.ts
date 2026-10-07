@@ -22,6 +22,7 @@ import { McpError, McpManager } from "./mcp";
 import { AGENT_IDS, AgentError, AgentRegistry, type AgentId } from "./agents";
 import { codexModels } from "./codex-catalog";
 import { codexCommands, codexSkills } from "./codex-commands";
+import { searchFiles } from "./git-actions";
 import { CodexSessions, listCodexSessions } from "./codex-session";
 import { SessionCache, mergeCommandEntries } from "./session";
 import { ptySupported, ShellManager, type PtyKind, type Shell } from "./shell";
@@ -579,7 +580,7 @@ export function createServer(deps: ServerDeps) {
         const standalone = b.standalone === true && !planner;
         let t = await board.createTicket(slug, {
           ...metadata(b), title, body: String(b.body ?? ""), status: standalone ? "backlog" : b.sessionId && !planner ? "backlog" : status, mode, parentId, planKey, dependsOn,
-          ...(standalone ? { standalone, access: b.access === "edit" ? "edit" : "read" } : {}),
+          ...(standalone ? { standalone, access: b.access === "edit" ? "edit" : "read", isolated: b.isolated === true } : {}),
           ...(b.codexSessionId ? { codexSessionId: String(b.codexSessionId) } : {}),
         });
         if (planner) store.addComment(slug, t.id, "ai", `Created by the planner of plan ${planner.id}.`);
@@ -786,6 +787,21 @@ export function createServer(deps: ServerDeps) {
         return json(view(profile, store.getTicket(slug, id) ?? t));
       } catch (e) {
         if (e instanceof HttpError) throw e;
+        throw new HttpError(400, (e as Error).message);
+      }
+    }
+    if (action === "files" && parts.length === 5 && m === "GET") {
+      const t = store.getTicket(slug, id)!;
+      return json(await searchFiles(t.workdir ?? t.worktree ?? profile.path, url.searchParams.get("q") ?? ""));
+    }
+    if (action === "git" && parts.length === 5 && m === "POST") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "git actions are only available outside a board run");
+      const b = await body(req);
+      if (!["commit", "push", "pr"].includes(b.action)) throw new HttpError(400, "action must be commit, push or pr");
+      try {
+        return json(view(profile, await board.gitAction(slug, id, b.action, String(b.message ?? ""))));
+      } catch (e) {
+        if (e instanceof ConflictError) throw e;
         throw new HttpError(400, (e as Error).message);
       }
     }

@@ -76,7 +76,8 @@ export function useSlashCommands({ agent = "Claude", slug, id, draft, composer, 
       const rect = composer.current?.closest(".composer")?.getBoundingClientRect();
       if (!rect) return;
       const top = window.visualViewport?.offsetTop ?? 0;
-      const width = Math.min(rect.width, innerWidth - 16);
+      // A narrow list like the CLI apps on wide screens; the composer's width on a phone.
+      const width = Math.min(rect.width, innerWidth - 16, 360);
       setPosition({ left: Math.max(8, Math.min(rect.left, innerWidth - width - 8)), width, bottom: innerHeight - rect.top + 8, maxHeight: Math.max(80, rect.top - top - 16) });
     };
     place();
@@ -146,13 +147,19 @@ export function useSlashCommands({ agent = "Claude", slug, id, draft, composer, 
           {grouped.labels.has(index) && <div className="slash-section" role="presentation">{grouped.labels.get(index)}</div>}
           <button type="button" role="option" id={`${listId}-${index}`} aria-selected={active === index}
             className="slash-option" onPointerDown={(event) => { if (event.pointerType === "mouse") event.preventDefault(); }} onClick={() => pick(command)} onPointerMove={(event) => { if (event.pointerType === "mouse") setActive(index); }}>
-            <span className="slash-name">{command.insert?.trim() ?? `/${command.name}`}<span>{command.argumentHint}</span></span>
-            <span className="slash-description">{command.description || `Run this ${agent} command`}</span>
+            <span className="slash-name">{command.insert?.trim() ?? command.name}</span>
           </button>
         </Fragment>)}
         {!shown.length && <div className="slash-status" role="status">{query ? `No commands match “${query}”.` : "No commands available in this folder."}</div>}
       </div>}
-    <div className="slash-help">{agent === "Codex" ? "Choosing a skill adds it to your message as $name" : "Choose a command to see its options"}</div>
+    {/* One description at a time, for the highlighted command, instead of under every row. */}
+    <div className="slash-help" aria-live="polite">
+      {shown[active] ? <>
+        <b>{shown[active].insert?.trim() ?? `/${shown[active].name}`}</b>
+        <span>{shown[active].description || (shown[active].insert ? "Adds this skill to your message" : `Run this ${agent} command`)}</span>
+        {shown[active].argumentHint && <span className="slash-args" title={shown[active].argumentHint}>{shown[active].argumentHint}</span>}
+      </> : agent === "Codex" ? "Choosing a skill adds it to your message as $name" : "Choose a command to see its options"}
+    </div>
   </div>, document.body) : null;
   return {
     popup: popupElement, keyDown, close,

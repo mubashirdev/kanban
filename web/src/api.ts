@@ -97,6 +97,7 @@ export interface Ticket {
   /** A chat session off the board (see the Sessions page). */
   standalone?: boolean;
   access?: "read" | "edit";
+  isolated?: boolean;
   readAt?: string | null;
   id: string;
   title: string;
@@ -246,6 +247,9 @@ export interface ClaudeProject {
   lastUsed: string | null;
   hasProfile: boolean;
 }
+
+/** Where a ticket's folder stands in git (Changes pane). */
+export interface GitState { branch: string | null; base: string; dirty: number; ahead: number | null; upstream: boolean }
 
 export interface ClaudeSession {
   id: string;
@@ -447,7 +451,7 @@ export const api = {
     return r.text();
   },
   createTicket: (slug: string, input: {
-    title: string; body: string; status: Status; sessionId?: string; codexSessionId?: string; standalone?: boolean; access?: Ticket["access"]; mode?: TicketMode; agent?: Ticket["agent"]; priority?: Ticket["priority"]; kind?: Ticket["kind"]; labels?: string[]; parentId?: string; planKey?: string; dependsOn?: string[];
+    title: string; body: string; status: Status; sessionId?: string; codexSessionId?: string; standalone?: boolean; access?: Ticket["access"]; isolated?: boolean; mode?: TicketMode; agent?: Ticket["agent"]; priority?: Ticket["priority"]; kind?: Ticket["kind"]; labels?: string[]; parentId?: string; planKey?: string; dependsOn?: string[];
   }) => req<Ticket>("POST", t(slug), input),
   plan: (slug: string, id: string, action: "start" | "pause" | "resume" | "done" | "concurrency", maxConcurrent?: number) =>
     req<Ticket>("POST", `${t(slug, id)}/plan`, { action, maxConcurrent }),
@@ -462,7 +466,9 @@ export const api = {
   conversation: (slug: string, id: string, before?: number) =>
     req<{ entries: SessionEntry[]; start: number; total: number; title: string | null }>(
       "GET", `${t(slug, id)}/conversation${before !== undefined ? `?before=${before}` : ""}`),
-  review: (slug: string, id: string, file?: string) => req<{files:{path:string;status:string}[];diff:string;truncated:boolean;warning:string|null;checks:{name:string;state:string;url:string|null}[];checkError:string|null;hasPr:boolean;recordedChecks:{command:string;state:string;output:string}[];verification:{summary:string;durationMs:number|null;costUsd:number|null}|null}>("GET", `${t(slug,id)}/review${file ? "?file="+encodeURIComponent(file) : ""}`),
+  searchFiles: (slug: string, id: string, q: string) => req<string[]>("GET", `${t(slug, id)}/files?q=${encodeURIComponent(q)}`),
+  gitAction: (slug: string, id: string, action: "commit" | "push" | "pr", message?: string) => req<Ticket>("POST", `${t(slug, id)}/git`, { action, message }),
+  review: (slug: string, id: string, file?: string) => req<{git:GitState|null;files:{path:string;status:string}[];diff:string;truncated:boolean;warning:string|null;checks:{name:string;state:string;url:string|null}[];checkError:string|null;hasPr:boolean;recordedChecks:{command:string;state:string;output:string}[];verification:{summary:string;durationMs:number|null;costUsd:number|null}|null}>("GET", `${t(slug,id)}/review${file ? "?file="+encodeURIComponent(file) : ""}`),
   notificationKey: () => req<{publicKey:string}>("GET", "/api/notifications"),
   subscribePush: (input: unknown) => req<{ok:boolean}>("POST", "/api/notifications", input),
   unsubscribePush: (endpoint: string) => req<{ok:boolean}>("DELETE", "/api/notifications", {endpoint}),

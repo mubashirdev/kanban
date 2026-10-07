@@ -7,7 +7,11 @@ export interface UsageWindow {
   resetsAt: string | null;
 }
 
-export type UsageResult = { windows: UsageWindow[]; fetchedAt: string } | { error: string; fetchedAt: string };
+export interface ExtraUsage { usedDollars: number; limitDollars: number | null; limitReached: boolean; enabled: boolean }
+
+export type UsageResult =
+  | { windows: UsageWindow[]; plan?: string | null; extra?: ExtraUsage | null; fetchedAt: string }
+  | { error: string; fetchedAt: string };
 
 export type UsageTone = "ok" | "warn" | "err";
 
@@ -51,4 +55,26 @@ export function resetText(iso: string | null, now = Date.now()): string | null {
   const time = at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   if (ms < 24 * 3600_000) return `Resets ${time} (in ${inWords(ms)})`;
   return `Resets ${at.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
+}
+
+export interface CliUsage { intro: string | null; windows: { label: string; percent: number; resets: string | null }[]; rest: string }
+
+/**
+ * Claude Code's `/usage` text ("Current session: 1% used · resets Oct 7 at 12:40am (…)") as data,
+ * so the chat can draw it like the board's usage view. Null when the text isn't that report.
+ */
+export function parseCliUsage(text: string): CliUsage | null {
+  const lines = text.trim().split("\n");
+  const windows: CliUsage["windows"] = [];
+  let last = -1;
+  lines.forEach((line, i) => {
+    const m = /^\s*(Current [^:]+):\s*(\d+(?:\.\d+)?)% used(?:\s*·\s*resets (.+?))?\s*$/.exec(line);
+    if (!m) return;
+    windows.push({ label: m[1], percent: Math.min(100, Number(m[2])), resets: m[3] ? `Resets ${m[3].replace(/\s*\([^)]*\)\s*$/, "")}` : null });
+    last = i;
+  });
+  if (!windows.length) return null;
+  const first = lines.findIndex((l) => /^\s*Current [^:]+:/.test(l));
+  const intro = lines.slice(0, first).join(" ").trim() || null;
+  return { intro, windows, rest: lines.slice(last + 1).join("\n").trim() };
 }

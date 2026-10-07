@@ -169,12 +169,12 @@ export function QuestionsForm({ questions, answered, disabled, onSubmit, storage
       <div className="qcard-head">
         <span className="qcard-title">Your agent has {total} question{total > 1 ? "s" : ""}</span>
         <span className="muted small qcounter">{summary ? "Review" : `${step + 1} / ${total}`}</span>
-        <span className="qsteps" aria-label={`Step ${Math.min(step + 1, total)} of ${total}`}>
+        {total > 1 && <span className="qsteps" aria-label={`Step ${Math.min(step + 1, total)} of ${total}`}>
           {questions.map((_, i) => (
             <button key={i} className={`qstep ${i === step ? "on" : ""} ${i < step || summary ? "done" : ""}`}
               onClick={() => setStep(i)} aria-label={`Question ${i + 1}`} />
           ))}
-        </span>
+        </span>}
       </div>
 
       {!summary ? (

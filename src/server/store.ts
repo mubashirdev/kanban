@@ -157,7 +157,7 @@ export class Store {
 
   createTicket(
     slug: string,
-    input: TicketMetadata & { title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; parentId?: string; planKey?: string; dependsOn?: string[]; standalone?: boolean; access?: "read" | "edit"; codexSessionId?: string },
+    input: TicketMetadata & { title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; parentId?: string; planKey?: string; dependsOn?: string[]; standalone?: boolean; access?: "read" | "edit"; isolated?: boolean; codexSessionId?: string },
   ): Ticket {
     const at = nowIso();
     const t: Ticket = {
@@ -168,7 +168,7 @@ export class Store {
       ...(input.parentId ? { parentId: input.parentId } : {}),
       ...(input.planKey ? { planKey: input.planKey } : {}),
       ...(input.dependsOn?.length ? { dependsOn: input.dependsOn } : {}),
-      ...(input.standalone ? { standalone: true, access: input.access ?? "read", readAt: at } : {}),
+      ...(input.standalone ? { standalone: true, access: input.access ?? "read", readAt: at, ...(input.isolated ? { isolated: true } : {}) } : {}),
       ...(input.codexSessionId ? { codexSessionId: input.codexSessionId } : {}),
     };
     atomicWrite(this.ticketPath(slug, t.id), serializeTicket(t));

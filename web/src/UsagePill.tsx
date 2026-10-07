@@ -3,7 +3,10 @@ import { api } from "./api";
 import { useLayer } from "./layers";
 import { Modal } from "./Modal";
 import { fullTime, timeAgo, useNow } from "./time";
-import { pillText, resetText, usageTone, worstTone, type UsageResult } from "./usage";
+import { parseCliUsage, pillText, resetText, usageTone, worstTone, type UsageResult } from "./usage";
+import { Markdown } from "./Transcript";
+
+const dollars = (n: number) => `$${n.toFixed(2)}`;
 
 /** Header pill with Claude plan usage; loads once on page open, then only on Refresh. */
 export function UsagePill({ compact = false, openRequest = 0 }: { compact?: boolean; openRequest?: number }) {
@@ -46,18 +49,28 @@ export function UsagePill({ compact = false, openRequest = 0 }: { compact?: bool
     <>
       {usage && "error" in usage && <p className="usage-error">{usage.error}</p>}
       {!usage && <p className="muted small">Loading…</p>}
+      {usage && !failed && usage.plan && <p className="usage-plan">Using your {usage.plan}</p>}
       {usage && !failed && !windows.length && <p className="muted small">No usage limits reported for this account.</p>}
       {windows.map((w) => {
         const t = usageTone(w.percent);
         const reset = resetText(w.resetsAt, now);
         return (
           <div key={w.key} className="usage-row">
-            <div className="usage-top"><span>{w.label}</span><b>{Math.round(w.percent)}%</b></div>
+            <div className="usage-top"><span>{w.label}</span><b>{Math.round(w.percent)}% used</b></div>
             <div className="usage-bar"><i className={t} style={{ width: `${w.percent}%` }} /></div>
             {reset && <div className="usage-sub" title={w.resetsAt ? fullTime(w.resetsAt) : undefined}>{reset}</div>}
           </div>
         );
       })}
+      {usage && !failed && usage.extra && (
+        <div className="usage-row usage-extra">
+          <div className="usage-top">
+            <span>Extra usage</span>
+            <b>{dollars(usage.extra.usedDollars)}{usage.extra.limitDollars !== null ? ` of ${dollars(usage.extra.limitDollars)}` : ""}</b>
+          </div>
+          <div className="usage-sub">{usage.extra.limitReached ? "Monthly limit reached" : usage.extra.enabled ? "On: used after the plan limits" : "Off"}</div>
+        </div>
+      )}
       <div className="usage-foot">
         <span title={usage ? fullTime(usage.fetchedAt) : undefined}>
           {usage ? `Updated ${timeAgo(usage.fetchedAt)}` : ""}
@@ -84,6 +97,31 @@ export function UsagePill({ compact = false, openRequest = 0 }: { compact?: bool
           <h4>Claude plan usage</h4>
           {content}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** Claude Code's /usage reply drawn as bars; null for any other message. */
+export function CliUsageCard({ text }: { text: string }) {
+  const usage = parseCliUsage(text);
+  if (!usage) return null;
+  return (
+    <div className="usage-card">
+      <h4>Claude plan usage</h4>
+      {usage.intro && <p className="usage-plan">{usage.intro}</p>}
+      {usage.windows.map((w) => (
+        <div key={w.label} className="usage-row">
+          <div className="usage-top"><span>{w.label}</span><b>{Math.round(w.percent)}% used</b></div>
+          <div className="usage-bar"><i className={usageTone(w.percent)} style={{ width: `${w.percent}%` }} /></div>
+          {w.resets && <div className="usage-sub">{w.resets}</div>}
+        </div>
+      ))}
+      {usage.rest && (
+        <details className="usage-more">
+          <summary>{usage.rest.split("\n")[0].replace(/\?$/, "")}</summary>
+          <Markdown text={"```\n" + usage.rest.split("\n").slice(1).join("\n").trim() + "\n```"} />
+        </details>
       )}
     </div>
   );

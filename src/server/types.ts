@@ -27,6 +27,8 @@ export interface Ticket {
   standalone?: boolean;
   /** Standalone sessions only: "read" lets the agent look around but not change files. */
   access?: "read" | "edit";
+  /** Standalone sessions only: runs in its own worktree and branch instead of the repo folder. */
+  isolated?: boolean;
   /** Standalone sessions only: when the user last looked at it, so a reply counts as unread after this. */
   readAt?: string | null;
   id: string;

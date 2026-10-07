@@ -1,5 +1,5 @@
 /** Letter-avatar colors: mid-tone, so white text reads well and they sit fine on light and dark surfaces. */
-export const AVATAR_COLORS = ["#7a5af5", "#2f7d4f", "#c96442", "#b3428a", "#2b5fb8", "#0e7c86", "#8a5a2b"] as const;
+export const AVATAR_COLORS = ["#7a5af5", "#2f7d4f", "#a84a29", "#b3428a", "#2b5fb8", "#0e7c86", "#8a5a2b"] as const;
 
 /** Stable color for a slug (FNV-1a hash), so a board keeps its avatar color across reloads. */
 export function avatarColor(slug: string): string {

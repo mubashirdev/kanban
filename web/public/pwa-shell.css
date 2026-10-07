@@ -18,7 +18,7 @@ html[data-standalone], html[data-standalone] body { background-color: var(--surf
   @media (pointer: coarse) and (max-width: 900px) {
     /* Safari can reserve the native status bar outside the layout viewport.
        Use only its reported inset plus breathing room; do not reserve it twice. */
-    :root[data-standalone] { --standalone-top-gap: calc(env(safe-area-inset-top, 0px) + 16px); }
+    :root[data-standalone] { --standalone-top-gap: calc(env(safe-area-inset-top, 0px) + 4px); }
   }
   @media (pointer: coarse) and (max-width: 900px) and (orientation: landscape) {
     :root[data-standalone] { --standalone-top-gap: calc(env(safe-area-inset-top, 0px) + 24px); }

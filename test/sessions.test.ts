@@ -12,6 +12,8 @@ import { parseSession } from "../src/server/session";
 import { Store } from "../src/server/store";
 import type { Profile, Ticket } from "../src/server/types";
 import { makeRepo, tempDir } from "./helpers";
+import { run } from "../src/server/git";
+import { gitState, searchFiles } from "../src/server/git-actions";
 
 const FAKE_CLAUDE = join(import.meta.dir, "fixtures", "fake-claude.ts");
 const FAKE_CODEX = join(import.meta.dir, "fixtures", "fake-codex.ts");
@@ -276,4 +278,45 @@ test("resuming a Claude session from Sessions keeps it out of Review", async () 
   } finally {
     server.stop(true);
   }
+});
+
+test("an isolated session works on its own branch and the Changes pane can commit and push it", async () => {
+  const p = await setup();
+  const origin = tempDir("ck-origin-");
+  await run(["git", "init", "-q", "--bare", origin], origin);
+  await run(["git", "remote", "add", "origin", origin], p.path);
+  await run(["git", "push", "-q", "-u", "origin", "HEAD:main"], p.path);
+  const t = await session({ access: "edit", isolated: true });
+  await board.chat("p", t.id, "Change something");
+  await board.whenIdle();
+  const after = store.getTicket("p", t.id)!;
+  expect(after.worktree).not.toBeNull();
+  expect(lines(argsFile).at(-1).cwd).toBe(after.worktree);
+
+  writeFileSync(join(after.worktree!, "new.txt"), "hello\n");
+  expect(await gitState(after.worktree!, "main")).toMatchObject({ branch: after.branch, dirty: 1, upstream: false });
+  expect(board.gitAction("p", t.id, "commit", "  ")).rejects.toThrow("commit message");
+  await board.gitAction("p", t.id, "commit", "feat: add new.txt");
+  expect(await gitState(after.worktree!, "main")).toMatchObject({ dirty: 0, ahead: 1, upstream: false });
+  await board.gitAction("p", t.id, "push");
+  expect(await gitState(after.worktree!, "main")).toMatchObject({ ahead: 0, upstream: true });
+  expect((await run(["git", "log", "--oneline", "-1", after.branch!], origin)).stdout).toContain("feat: add new.txt");
+  // The repo folder itself never changed.
+  expect(existsSync(join(p.path, "new.txt"))).toBe(false);
+});
+
+test("@ mentions find repo files by name first, leaving ignored files out", async () => {
+  const p = await setup();
+  mkdirSync(join(p.path, "src", "deep"), { recursive: true });
+  writeFileSync(join(p.path, "src", "deep", "parser.ts"), "");
+  writeFileSync(join(p.path, "src", "parse-utils.ts"), "");
+  mkdirSync(join(p.path, "parsers"));
+  writeFileSync(join(p.path, "parsers", "index.ts"), "");
+  writeFileSync(join(p.path, ".gitignore"), "secret.env\n");
+  writeFileSync(join(p.path, "secret.env"), "");
+  // A match in the file name beats one in a folder name.
+  const found = await searchFiles(p.path, "pars");
+  expect(found.slice(0, 2).sort()).toEqual(["src/deep/parser.ts", "src/parse-utils.ts"]);
+  expect(found[2]).toBe("parsers/index.ts");
+  expect(await searchFiles(p.path, "secret")).toEqual([]);
 });

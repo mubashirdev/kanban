@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, subscribe, type ClaudeCommand, type Effort, type NewTicketDraft, type SessionEntry, type Ticket } from "./api";
 import { autoGrow } from "./autoGrow";
-import { ArrowDownIcon, CloseIcon, FileCodeIcon, SlidersIcon, SlashIcon, ImageIcon } from "./icons";
+import { ArrowDownIcon, ArrowUpIcon, CloseIcon, FileCodeIcon, ImageIcon, PlusIcon, SlashIcon, SlidersIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
 import { NewTicketsCard } from "./NewTicketsCard";
 import { ProposalCard } from "./ProposalCard";
@@ -12,7 +12,14 @@ import { toast } from "./toast";
 import { Markdown } from "./Transcript";
 import { usePersistentState } from "./usePersistentState";
 import { useSlashCommands } from "./SlashCommands";
+import { useFileMentions } from "./FileMentions";
+import { useMediaQuery } from "./useMediaQuery";
+import { useLayer } from "./layers";
 import { AgentSettings } from "./AgentSettings";
+import { chipLabel, QuickPick } from "./QuickPick";
+import { describeStep, summarizeSteps } from "./toolSteps";
+import { CliUsageCard, UsagePill } from "./UsagePill";
+import { parseCliUsage } from "./usage";
 import { ClaudeSettings, type SettingKind } from "./ClaudeSettings";
 import { CommandOptions } from "./CommandOptions";
 import { prepareCommand } from "./commandSyntax";
@@ -57,8 +64,13 @@ const RESEND = {
 
 const REFINE = (s: Ticket["status"]) => s === "backlog" || s === "planning";
 
+/** The server adds this line for the agent to messages with images (IMAGES_NOTE in src/server/attachments.ts). */
+const IMAGES_NOTE = "Images in this message are local files; open them with the Read tool to see them.";
+/** A message as the user wrote it: without the board's note to the agent. */
+export const withoutAgentNotes = (text: string) => text.replaceAll(IMAGES_NOTE, "").trim();
+
 // Image links reach the session as local file paths, so compare by file name.
-const norm = (s: string) => s.trim().replace(/\S*\/attachments\/([0-9a-f]{32}\.\w+)/g, "$1");
+const norm = (s: string) => withoutAgentNotes(s).replace(/\S*\/attachments\/([0-9a-f]{32}\.\w+)/g, "$1");
 /** Whether a message the user sent is in the session file yet. */
 const delivered = (entries: SessionEntry[], text: string) => entries.some((e) => e.role === "user" && norm(e.text) === norm(text));
 
@@ -110,15 +122,18 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const agentName = codex ? "Codex" : "Claude";
   const [settingsTab, setSettingsTab] = useState<SettingKind | null>(null);
   const [selectedCommand, setSelectedCommand] = useState<ClaudeCommand | null>(null);
+  const [usageRequest, setUsageRequest] = useState(0);
   const commands = useSlashCommands({ agent: agentName, slug, id: ticket.id, draft, composer, onCommand: (command) => {
     if (command.insert) {
       setDraft((current) => command.insert! + current.replace(/^\s*\/[\w:./@-]*\s*/, ""));
       requestAnimationFrame(() => composer.current?.focus({ preventScroll: true }));
     } else if (command.builtin && command.name === "clear") void clearConversation();
+    else if (command.builtin && command.name === "usage") setUsageRequest((n) => n + 1);
     else if (command.builtin && ["model", "effort", "output-style", "config"].includes(command.name)) setSettingsTab(command.name === "effort" ? "effort" : command.name === "output-style" ? "outputStyle" : "model");
     else setSelectedCommand(command);
   } });
   const images = useImagePaste(setDraft);
+  const mentions = useFileMentions({ slug, id: ticket.id, draft, setDraft, composer });
   const imageInput = useRef<HTMLInputElement>(null);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   // Text Claude is writing right now (from the run's partial-message stream); not yet in the session file.
@@ -130,6 +145,14 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const running = !!ticket.running;
   const { stopping, stop } = useStop(slug, ticket, running, onError);
   const refine = ticket.standalone ? ticket.access !== "edit" : REFINE(ticket.status);
+  const phone = useMediaQuery("(max-width: 767px)");
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [picking, setPicking] = useState<"model" | "effort" | null>(null);
+  // Phones have no hint line under the box, so the placeholder says what the agent may do.
+  const placeholder = running
+    ? (codex ? "Queue a message for Codex’s next turn…" : phone ? "Steer Claude…" : "Steer Claude: it reads this at its next step…")
+    : phone ? `Message ${agentName}${refine ? " (read only)" : ""}…`
+    : ticket.standalone ? `Message ${agentName}…` : refine ? `Describe your idea or answer ${agentName}…` : `Ask ${agentName} to change or continue something…`;
 
   const loadTail = useCallback(async () => {
     if (!ticket.sessionId && !codex) return setPage({ entries: [], start: 0 });
@@ -225,6 +248,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     const t = text.trim();
     if (!t || stopping || images.uploading) return;
     if (/^\/(clear|new)$/.test(t)) return clearConversation();
+    // Plan usage is the board's own data: show it at once instead of starting an agent run.
+    if (t === "/usage" && !codex) { commands.close(); setDraft(""); setUsageRequest((n) => n + 1); return; }
     // Codex settings live on the ticket, not in the CLI: open the settings sheet whatever was typed after.
     if (codex && /^\/(model|effort)(\s|$)/.test(t)) { commands.close(); setSettingsTab("model"); return; }
     if (["/model", "/config", "/settings", "/effort", "/effort status", "/output-style"].includes(t)) { commands.close(); setSettingsTab(t.startsWith("/effort") ? "effort" : t === "/output-style" ? "outputStyle" : "model"); return; }
@@ -290,6 +315,11 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     (!p.title || p.title === ticket.title) && (!p.description || p.description.trim() === ticket.body.trim());
 
   const empty = page !== null && !loadError && entries.length === 0 && !pending.length && !queued.length && !running;
+  // The agent ended on a question and waits: offer one-tap answers instead of typing on a phone.
+  const lastText = [...entries].reverse().find((e) => e.kind === "text" || e.role === "user");
+  const asked = !running && !pending.length && !queued.length && lastText?.role === "assistant" &&
+    /\?\s*$/.test(lastText.text.replace(/^.*CKANBAN_RESULT:.*$/m, "").trim().split("\n").filter(Boolean).pop() ?? "");
+  const quickReplies = asked ? ["Yes, go ahead", "No", "Tell me more", ...(/\bcommit/i.test(lastText!.text) ? ["Commit"] : [])] : [];
 
   /** Who a ticket-to-ticket message is from or to, linking to that ticket when it still exists. */
   const peerLabel = (dir: "in" | "out", ticketId: string | null) => {
@@ -382,8 +412,11 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           if (b.kind === "tools") {
             return (
               <details key={b.items[0].uuid} className="conv-tools">
-                <summary>{b.items.length === 1 ? b.items[0].text : `${b.items.length} tool calls · ${b.items.at(-1)!.text}`}</summary>
-                <ul>{b.items.map((t) => <li key={t.uuid}>{t.text}</li>)}</ul>
+                <summary>{summarizeSteps(b.items.map((t) => t.text))}</summary>
+                <ul>{b.items.map((t) => {
+                  const step = describeStep(t.text);
+                  return <li key={t.uuid}><span className="step-label">{step.label}</span>{step.detail && <code className="step-detail">{step.detail}</code>}</li>;
+                })}</ul>
               </details>
             );
           }
@@ -408,7 +441,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                 <b>{e.role === "user" ? "You" : agentName}</b>
                 {e.at && <time className="muted small" dateTime={e.at} title={fullTime(e.at)}>{timeAgo(e.at)}</time>}
               </div>
-              {e.text && <Markdown text={e.text.replace(/^.*CKANBAN_RESULT:.*$/m, "").trim()} />}
+              {e.text && e.role === "assistant" && parseCliUsage(e.text) ? <CliUsageCard text={e.text} />
+                : e.text && <Markdown text={withoutAgentNotes(e.text.replace(/^.*CKANBAN_RESULT:.*$/m, ""))} />}
               {e.questions && (
                 <QuestionsForm questions={e.questions} answered={answeredAfter(b.index)} disabled={running} onSubmit={(text) => send(text, true)}
                   onPreview={onOpenOutput && ((m) => onOpenOutput(`mockups/${m}`))}
@@ -545,15 +579,57 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           )}
         </div>
       )}
+      <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={(e) => {
+        const files = Array.from(e.currentTarget.files ?? []);
+        e.currentTarget.value = "";
+        if (files.length && composer.current) images.insert(composer.current, files);
+      }} />
+      {quickReplies.length > 0 && !draft.trim() && (
+        <div className="quick-replies" role="group" aria-label="Quick replies">
+          {quickReplies.map((reply) => <button key={reply} type="button" className="chip" onClick={() => send(reply)}>{reply}</button>)}
+        </div>
+      )}
+      {phone ? (
+        // Phones: one row like a messaging app. Extra actions sit behind +, and the one round button
+        // is Stop while the agent works with nothing typed, otherwise Send.
+        <div className="composer composer-row">
+          {commands.popup}
+          {mentions.popup}
+          <div className="composer-more">
+            <button type="button" className="icon-btn composer-plus" aria-label="More actions" aria-haspopup="menu" aria-expanded={moreOpen} disabled={stopping} onClick={() => setMoreOpen((v) => !v)}><PlusIcon size={20} /></button>
+            {moreOpen && <ComposerMenu onClose={() => setMoreOpen(false)} items={[
+              { label: "Attach images", icon: <ImageIcon size={18} />, onSelect: () => imageInput.current?.click() },
+              { label: `${agentName} settings`, icon: <SlidersIcon size={18} />, onSelect: () => { commands.close(); setSettingsTab("model"); } },
+              { label: "Commands", icon: <SlashIcon size={18} />, onSelect: commands.toggle },
+            ]} />}
+          </div>
+          <textarea ref={composer} rows={phone ? 1 : 2} value={draft} disabled={stopping} className={images.dragOver ? "drop-target" : undefined} {...images.handlers} {...commands.aria} role="combobox" aria-label={`Message ${agentName}`}
+            placeholder={placeholder}
+            onFocus={commands.prefetch}
+            onChange={(e) => { setDraft(e.target.value); commands.select(e.target.value, e.target.selectionStart); mentions.select(e.target.value, e.target.selectionStart); }}
+            onSelect={(e) => { if (!settingsTab && !selectedCommand) commands.select(e.currentTarget.value, e.currentTarget.selectionStart); }}
+            onKeyDown={(e) => {
+              if (mentions.keyDown(e) || commands.keyDown(e)) return;
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !window.matchMedia("(pointer: coarse)").matches) {
+                e.preventDefault();
+                send(draft);
+              }
+            }} />
+          {running && !draft.trim()
+            ? <button type="button" className="btn danger send-round" aria-label={stopping ? "Stopping" : `Stop ${agentName}`} disabled={stopping} onClick={stop}><span className="stop-square" aria-hidden /></button>
+            : <button type="button" className="btn primary send-round" aria-label={images.uploading ? "Uploading" : "Send"} disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? <span className="spinner" /> : <ArrowUpIcon size={18} />}</button>}
+        </div>
+      ) : (
       <div className="composer">
         {commands.popup}
-        <textarea ref={composer} rows={2} value={draft} disabled={stopping} className={images.dragOver ? "drop-target" : undefined} {...images.handlers} {...commands.aria} role="combobox" aria-label={`Message ${agentName}`}
-          placeholder={running ? (codex ? "Queue a message for Codex’s next turn…" : "Steer Claude: it reads this at its next step…") : ticket.standalone ? `Message ${agentName}…` : refine ? `Describe your idea or answer ${agentName}…` : `Ask ${agentName} to change or continue something…`}
+        {mentions.popup}
+        <textarea ref={composer} rows={phone ? 1 : 2} value={draft} disabled={stopping} className={images.dragOver ? "drop-target" : undefined} {...images.handlers} {...commands.aria} role="combobox" aria-label={`Message ${agentName}`}
+          placeholder={placeholder}
           onFocus={commands.prefetch}
-          onChange={(e) => { setDraft(e.target.value); commands.select(e.target.value, e.target.selectionStart); }}
+          onChange={(e) => { setDraft(e.target.value); commands.select(e.target.value, e.target.selectionStart); mentions.select(e.target.value, e.target.selectionStart); }}
           onSelect={(e) => { if (!settingsTab && !selectedCommand) commands.select(e.currentTarget.value, e.currentTarget.selectionStart); }}
           onKeyDown={(e) => {
-            if (commands.keyDown(e)) return;
+            if (mentions.keyDown(e) || commands.keyDown(e)) return;
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !window.matchMedia("(pointer: coarse)").matches) {
               e.preventDefault();
               send(draft);
@@ -561,24 +637,31 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           }} />
         {images.error && <div className="form-error">{images.error}</div>}
         <div className="composer-foot">
-          <span className="muted small composer-hint">
-            {ticket.standalone ? (refine ? `Read only: ${agentName} won’t change files.` : `${agentName} can change files in your repo.`) : refine ? `Refine mode: ${agentName} won’t change files.` : `${agentName} acts on your message.`}
-            <span className="composer-keys"> Enter to send · Shift+Enter for a new line</span>
+          {/* What the next reply runs with, at a glance; each opens its setting (like the CLI apps' status line). */}
+          <span className="composer-status">
+            <span className="muted small" title={refine ? `${agentName} won’t change files` : `${agentName} can change files`}>{refine ? (ticket.standalone ? "Read only" : "Refine mode") : "Can edit"}</span>
+            {(["model", "effort"] as const).map((kind) => (
+              <span key={kind} className="status-pick">
+                <button type="button" className="status-chip" aria-haspopup="menu" aria-expanded={picking === kind} disabled={stopping}
+                  onClick={() => { commands.close(); setPicking(picking === kind ? null : kind); }}>
+                  {kind === "model" ? chipLabel(codex ? ticket.codexModel : ticket.model, "Default model") : chipLabel(codex ? ticket.codexEffort : ticket.effort, "Auto effort")}
+                </button>
+                {picking === kind && <QuickPick slug={slug} ticket={ticket} kind={kind} onClose={() => setPicking(null)}
+                  onMore={() => setSettingsTab(codex || kind === "model" ? "model" : "effort")} />}
+              </span>
+            ))}
+            <span className="muted small composer-keys">Enter to send · Shift+Enter for a new line</span>
           </span>
           <span className="composer-actions">
-            <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={(e) => {
-              const files = Array.from(e.currentTarget.files ?? []);
-              e.currentTarget.value = "";
-              if (files.length && composer.current) images.insert(composer.current, files);
-            }} />
             <button type="button" className="btn small composer-icon" aria-label="Attach images" title="Attach images" disabled={stopping || images.uploading} onClick={() => imageInput.current?.click()}><ImageIcon size={18} /></button>
-            <button type="button" className="btn small composer-icon" aria-label={`${agentName} settings`} title={codex ? `Model: ${ticket.codexModel ?? "Configured default"} · Effort: ${ticket.codexEffort ?? "Default"}` : `Model: ${ticket.model ?? "Board default"} · Effort: ${ticket.effort ?? "Auto"}`} disabled={stopping} onClick={() => { commands.close(); setSettingsTab("model"); }}><SlidersIcon size={18} /></button>
-            <button type="button" className="btn small composer-icon slash-trigger" title="Browse commands" aria-label={`Browse ${agentName} commands`} aria-expanded={commands.opened} disabled={stopping} onClick={commands.toggle}><SlashIcon size={18} /></button>
             {running && <button className="btn danger small" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop"}</button>}
             <button className="btn primary small" disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? "Uploading…" : "Send"}</button>
           </span>
         </div>
       </div>
+      )}
+      {phone && images.error && <div className="form-error composer-error">{images.error}</div>}
+      {usageRequest > 0 && <UsagePill compact openRequest={usageRequest} />}
       {settingsTab && codex && <AgentSettings slug={slug} ticket={ticket} onClose={()=>setSettingsTab(null)}/>}
       {settingsTab && !codex && <ClaudeSettings slug={slug} ticket={ticket} initialTab={settingsTab} onClose={() => setSettingsTab(null)} onSaved={(kind) => {
         setDraft((current) => [`/${kind === "outputStyle" ? "output-style" : kind}`, "/config", "/settings", "/effort status"].includes(current.trim()) ? "" : current);
@@ -594,6 +677,27 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
         const preserve = !/^\s*\/[\w:./@-]*(?:\s|$)/.test(draft);
         void send(text, preserve);
       }} />}
+    </div>
+  );
+}
+
+/** The phone composer's + menu: actions that sit as buttons beside the box on wider screens. */
+function ComposerMenu({ items, onClose }: { items: { label: string; icon: JSX.Element; onSelect: () => void }[]; onClose: () => void }) {
+  const root = useRef<HTMLDivElement>(null);
+  useLayer(onClose);
+  useEffect(() => {
+    root.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+    const outside = (e: PointerEvent) => { if (!root.current?.parentElement?.contains(e.target as Node)) onClose(); };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, []);
+  return (
+    <div className="inbox-menu composer-menu" role="menu" aria-label="More actions" ref={root}>
+      {items.map((item) => (
+        <button key={item.label} role="menuitem" className="menu-item" onClick={() => { onClose(); item.onSelect(); }}>
+          <span className="menu-icon">{item.icon}</span><span className="menu-label">{item.label}</span>
+        </button>
+      ))}
     </div>
   );
 }

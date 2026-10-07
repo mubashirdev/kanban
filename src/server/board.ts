@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { extractFinalText, summarizeEvent } from "./activity";
 import { isSlashCommand } from "./commands";
 import { expandCodexCommand } from "./codex-commands";
+import { commitAll, createPr, pushBranch } from "./git-actions";
 import { deleteAttachments, localizeImages, referencedAttachments } from "./attachments";
 import type { Bus } from "./events";
 import { isSessionLive as psSessionLive, sessionTitle } from "./claude";
@@ -573,8 +574,8 @@ export class Board {
     if (t.workdir && !existsSync(t.workdir)) throw new Error(`linked session folder no longer exists: ${t.workdir}`);
     // A ticket that already ran in the folder itself stays there: its Claude session belongs to that folder.
     const ranInPlace = !t.worktree && (!!t.sessionStarted || t.runCount > 0 || !!t.codexSessionId);
-    // Standalone sessions work in the repo folder itself, like an agent opened in a terminal there.
-    if (isGit && !t.standalone && !t.workdir && !ranInPlace && (!t.worktree || !existsSync(t.worktree))) {
+    // Standalone sessions work in the repo folder itself, like an agent opened in a terminal there, unless isolated.
+    if (isGit && (!t.standalone || t.isolated) && !t.workdir && !ranInPlace && (!t.worktree || !existsSync(t.worktree))) {
       const dir = worktreeDir(profile, id);
       const branch = t.branch ?? `ck/${id}-${slugify(t.title)}`;
       const base = existsSync(dir) ? profile.baseBranch : await resolveBaseBranch(profile.path, profile.baseBranch);
@@ -942,6 +943,26 @@ export class Board {
       ? { sessionId: null, workdir: null }
       // Linked work already exists and the next step is the user's: land in Review ("Your turn").
       : { sessionId, workdir: profile.path, worktree: null, runCount: 0, lastRunAt: new Date().toISOString(), status: "review" });
+  }
+
+  /** Commit, push or open a PR from the Changes pane, in the ticket's own folder. */
+  async gitAction(slug: string, id: string, action: "commit" | "push" | "pr", message = ""): Promise<Ticket> {
+    const t = this.store.getTicket(slug, id);
+    const profile = this.store.getProfile(slug);
+    if (!t || !profile) throw new Error("ticket not found");
+    if (this.isRunning(slug, id)) throw new ConflictError("Wait until the agent has finished");
+    const cwd = t.workdir ?? t.worktree ?? profile.path;
+    if (action === "commit") {
+      if (!message.trim()) throw new Error("Write a commit message");
+      await commitAll(cwd, message.trim().slice(0, 5000));
+      this.store.addComment(slug, id, "user", `Committed: ${message.trim().split("\n")[0]}`);
+    } else if (action === "push") {
+      await pushBranch(cwd);
+    } else {
+      const url = await createPr(cwd, profile.baseBranch);
+      return this.patch(slug, id, { prUrl: url });
+    }
+    return this.patch(slug, id, {});
   }
 
   addComment(slug: string, id: string, text: string) {

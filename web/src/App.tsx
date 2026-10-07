@@ -656,7 +656,8 @@ export function App() {
           <WorkspaceActivity key={profile.slug} slug={profile.slug} tickets={tickets} onOpen={(id) => { setActivityOpen(false); openTicket(id); }} />
         </Modal>
       )}
-      {newSession && profile && <NewSessionDialog profile={profile} onClose={() => setNewSession(false)} onStarted={(id) => { setNewSession(false); openTicket(id); }} />}
+      {newSession && profile && <NewSessionDialog profile={profile} profiles={profiles ?? [profile]} onClose={() => setNewSession(false)}
+        onStarted={(id, board) => { setNewSession(false); if (board !== slug) setSlug(board); openTicket(id, board); }} />}
       {shortcuts && <ShortcutsDialog onClose={() => setShortcuts(false)} />}
       {bugReport && <BugReportDialog onClose={() => setBugReport(false)} />}
       {switcher && profile && (

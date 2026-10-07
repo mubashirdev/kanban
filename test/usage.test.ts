@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { fetchUsage, normalizeUsage, parseCredentials, USAGE_URL } from "../src/server/usage";
-import { pillText, resetText, usageTone, worstTone } from "../web/src/usage";
+import { fetchUsage, normalizeExtra, normalizeUsage, parseCredentials, USAGE_URL } from "../src/server/usage";
+import { parseCliUsage, pillText, resetText, usageTone, worstTone } from "../web/src/usage";
 
 const FULL = {
   five_hour: { utilization: 42, resets_at: "2026-10-05T16:10:00+00:00" },
@@ -12,9 +12,9 @@ const FULL = {
 
 test("normalizeUsage maps a full response in plan order", () => {
   expect(normalizeUsage(FULL)).toEqual([
-    { key: "five_hour", label: "Current session (5h)", percent: 42, resetsAt: "2026-10-05T16:10:00+00:00" },
-    { key: "seven_day", label: "Week · all models", percent: 81.4, resetsAt: "2026-10-09T09:00:00+00:00" },
-    { key: "seven_day_opus", label: "Week · Opus", percent: 12, resetsAt: "2026-10-09T09:00:00+00:00" },
+    { key: "five_hour", label: "Current session", percent: 42, resetsAt: "2026-10-05T16:10:00+00:00" },
+    { key: "seven_day", label: "Current week (all models)", percent: 81.4, resetsAt: "2026-10-09T09:00:00+00:00" },
+    { key: "seven_day_opus", label: "Current week (Opus)", percent: 12, resetsAt: "2026-10-09T09:00:00+00:00" },
   ]);
 });
 
@@ -28,7 +28,7 @@ test("normalizeUsage skips null windows and keeps unknown window keys", () => {
   })!;
   expect(w.map((x) => x.key)).toEqual(["seven_day", "seven_day_sonnet", "seven_day_haiku_extra"]);
   expect(w[0]).toMatchObject({ percent: 100, resetsAt: null });
-  expect(w[2].label).toBe("Week · haiku extra");
+  expect(w[2].label).toBe("Current week (haiku extra)");
 });
 
 test("normalizeUsage rejects a bad shape", () => {
@@ -42,6 +42,7 @@ test("normalizeUsage rejects a bad shape", () => {
 
 test("parseCredentials", () => {
   expect(parseCredentials('{"claudeAiOauth":{"accessToken":"t","expiresAt":5}}')).toEqual({ token: "t", expiresAt: 5 });
+  expect(parseCredentials('{"claudeAiOauth":{"accessToken":"t","subscriptionType":"max"}}')).toEqual({ token: "t", expiresAt: null, plan: "max" });
   expect(parseCredentials("{}")).toHaveProperty("error");
   expect(parseCredentials("garbage")).toHaveProperty("error");
 });
@@ -95,4 +96,41 @@ test("pillText and resetText", () => {
   expect(resetText("2026-10-05T14:15:00Z", now)).toMatch(/^Resets .+ \(in 2h 15m\)$/);
   expect(resetText("2026-10-09T09:00:00Z", now)).not.toContain("(in");
   expect(resetText("2026-10-05T11:00:00Z", now)).toBe("Resets now");
+});
+
+test("per-model weekly limits and extra usage come through like Claude Code's /usage", () => {
+  const body = {
+    five_hour: { utilization: 20, resets_at: "2026-10-06T11:40:00+00:00" },
+    seven_day: { utilization: 60, resets_at: "2026-10-08T17:00:00+00:00" },
+    limits: [
+      { kind: "weekly_all", percent: 60, resets_at: "2026-10-08T17:00:00+00:00", scope: null },
+      { kind: "weekly_scoped", percent: 37, resets_at: "2026-10-08T17:00:00+00:00", scope: { model: { display_name: "Fable" } } },
+    ],
+    extra_usage: { is_enabled: false, credits_ever_enabled: true, used_credits: 30031, monthly_limit: 30000, decimal_places: 2, spend_limit_reached: true },
+  };
+  expect(normalizeUsage(body)!.map((w) => [w.label, w.percent])).toEqual([
+    ["Current session", 20], ["Current week (all models)", 60], ["Current week (Fable)", 37],
+  ]);
+  expect(normalizeExtra(body)).toEqual({ usedDollars: 300.31, limitDollars: 300, limitReached: true, enabled: false });
+  expect(normalizeExtra({ extra_usage: { is_enabled: false, used_credits: null } })).toBeNull();
+});
+
+test("Claude Code's /usage text becomes bars for the chat", () => {
+  const text = `You are currently using your subscription to power your Claude Code usage
+
+Current session: 1% used · resets Oct 7 at 12:40am (Asia/Kuala_Lumpur)
+Current week (all models): 60% used · resets Oct 9 at 1am (Asia/Kuala_Lumpur)
+Current week (Fable): 37% used · resets Oct 9 at 12:59am (Asia/Kuala_Lumpur)
+
+What's contributing to your limits usage?
+Last 24h · 1578 requests · 60 sessions`;
+  const u = parseCliUsage(text)!;
+  expect(u.intro).toBe("You are currently using your subscription to power your Claude Code usage");
+  expect(u.windows).toEqual([
+    { label: "Current session", percent: 1, resets: "Resets Oct 7 at 12:40am" },
+    { label: "Current week (all models)", percent: 60, resets: "Resets Oct 9 at 1am" },
+    { label: "Current week (Fable)", percent: 37, resets: "Resets Oct 9 at 12:59am" },
+  ]);
+  expect(u.rest.startsWith("What's contributing")).toBe(true);
+  expect(parseCliUsage("Done, tests pass.")).toBeNull();
 });

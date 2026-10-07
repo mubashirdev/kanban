@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, safeHref, type Ticket } from "./api";
 import { Markdown } from "./Transcript";
+import { DiffView, GitBar } from "./GitBar";
 import { RefreshIcon, ExternalIcon, CheckIcon } from "./icons";
 export function ReviewPanel({
   slug,
@@ -43,7 +44,7 @@ export function ReviewPanel({
     return () => {
       active = false;
     };
-  }, [slug, ticket.id, refresh, ticket.runCount]);
+  }, [slug, ticket.id, refresh, ticket.runCount, ticket.running]);
   useEffect(() => {
     let active = true;
     if (!file) {
@@ -119,6 +120,7 @@ export function ReviewPanel({
         </p>
       ) : data ? (
         <>
+          {data.git && <GitBar slug={slug} ticket={ticket} git={data.git} onError={onError} onDone={() => setRefresh((v) => v + 1)} />}
           <section className="review-section">
             <h3>
               Changes <span className="muted">{data.files.length}</span>
@@ -140,31 +142,9 @@ export function ReviewPanel({
                     </option>
                   ))}
                 </select>
-                {file && (
-                  <div className="diff-view" aria-label="File diff">
-                    {loadingDiff ? (
-                      <p role="status">Loading diff…</p>
-                    ) : (
-                      <pre>
-                        {diff.split("\n").map((line, i) => (
-                          <span
-                            className={
-                              line.startsWith("+") && !line.startsWith("+++")
-                                ? "diff-add"
-                                : line.startsWith("-") &&
-                                  !line.startsWith("---")
-                                ? "diff-remove"
-                                : ""
-                            }
-                            key={i}
-                          >
-                            {line + "\n"}
-                          </span>
-                        ))}
-                      </pre>
-                    )}
-                  </div>
-                )}
+                {file && (loadingDiff
+                  ? <p role="status" className="muted">Loading diff…</p>
+                  : <DiffView slug={slug} ticket={ticket} file={file} diff={diff} />)}
               </>
             )}
           </section>

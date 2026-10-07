@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 
 // Claude plan usage (what `/usage` shows in Claude Code), from Anthropic's undocumented OAuth endpoint.
@@ -16,13 +16,19 @@ export interface UsageWindow {
   resetsAt: string | null;
 }
 
-export type UsageResult = { windows: UsageWindow[]; fetchedAt: string } | { error: string; fetchedAt: string };
+/** Pay-as-you-go spend beyond the plan, when the account has ever turned it on. */
+export interface ExtraUsage { usedDollars: number; limitDollars: number | null; limitReached: boolean; enabled: boolean }
 
+export type UsageResult =
+  | { windows: UsageWindow[]; plan?: string | null; extra?: ExtraUsage | null; fetchedAt: string }
+  | { error: string; fetchedAt: string };
+
+// Same names as Claude Code's /usage.
 const LABELS: Record<string, string> = {
-  five_hour: "Current session (5h)",
-  seven_day: "Week · all models",
-  seven_day_opus: "Week · Opus",
-  seven_day_sonnet: "Week · Sonnet",
+  five_hour: "Current session",
+  seven_day: "Current week (all models)",
+  seven_day_opus: "Current week (Opus)",
+  seven_day_sonnet: "Current week (Sonnet)",
 };
 
 /** Turns the endpoint's JSON into windows; null when the shape is not what we expect. */
@@ -40,18 +46,41 @@ export function normalizeUsage(body: unknown): UsageWindow[] | null {
     const reset = typeof resets_at === "string" && !Number.isNaN(Date.parse(resets_at)) ? resets_at : null;
     out.push({
       key,
-      label: LABELS[key] ?? `Week · ${key.replace(/^seven_day_?/, "").replace(/_/g, " ") || "other"}`,
+      label: LABELS[key] ?? `Current week (${key.replace(/^seven_day_?/, "").replace(/_/g, " ") || "other"})`,
       percent: Math.min(100, Math.max(0, utilization)),
       resetsAt: reset,
     });
   }
   if (!sawWindowKey) return null;
+  // Per-model weekly limits (e.g. Fable) only come in the newer `limits` list.
+  const limits = (body as { limits?: unknown }).limits;
+  for (const l of Array.isArray(limits) ? limits : []) {
+    const name = l?.scope?.model?.display_name;
+    if (l?.kind !== "weekly_scoped" || typeof name !== "string" || typeof l.percent !== "number") continue;
+    const label = `Current week (${name})`;
+    if (out.some((w) => w.label === label)) continue;
+    const reset = typeof l.resets_at === "string" && !Number.isNaN(Date.parse(l.resets_at)) ? l.resets_at : null;
+    out.push({ key: `weekly_${name.toLowerCase()}`, label, percent: Math.min(100, Math.max(0, l.percent)), resetsAt: reset });
+  }
   const order = Object.keys(LABELS);
   const rank = (k: string) => (order.includes(k) ? order.indexOf(k) : order.length);
   return out.sort((a, b) => rank(a.key) - rank(b.key));
 }
 
-export type Credentials = { token: string; expiresAt: number | null } | { error: string };
+/** Extra usage in dollars; null when the account never had it. Credits are cents (decimal_places). */
+export function normalizeExtra(body: unknown): ExtraUsage | null {
+  const e = (body as { extra_usage?: any } | null)?.extra_usage;
+  if (!e || typeof e !== "object" || !(e.is_enabled || e.credits_ever_enabled) || typeof e.used_credits !== "number") return null;
+  const scale = 10 ** (typeof e.decimal_places === "number" ? e.decimal_places : 2);
+  return {
+    usedDollars: e.used_credits / scale,
+    limitDollars: typeof e.monthly_limit === "number" ? e.monthly_limit / scale : null,
+    limitReached: e.spend_limit_reached === true,
+    enabled: e.is_enabled === true,
+  };
+}
+
+export type Credentials = { token: string; expiresAt: number | null; plan?: string | null } | { error: string };
 
 /** Parses Claude Code's stored credentials JSON (keychain secret or ~/.claude/.credentials.json). */
 export function parseCredentials(raw: string): Credentials {
@@ -63,12 +92,15 @@ export function parseCredentials(raw: string): Credentials {
   }
   const o = j?.claudeAiOauth;
   if (!o || typeof o.accessToken !== "string" || !o.accessToken) return { error: "Not logged in to Claude Code with a Claude plan" };
-  return { token: o.accessToken, expiresAt: typeof o.expiresAt === "number" ? o.expiresAt : null };
+  return {
+    token: o.accessToken, expiresAt: typeof o.expiresAt === "number" ? o.expiresAt : null,
+    ...(typeof o.subscriptionType === "string" ? { plan: o.subscriptionType } : {}),
+  };
 }
 
-async function readKeychain(): Promise<string | null> {
+async function findPassword(args: string[]): Promise<string | null> {
   try {
-    const p = Bun.spawn(["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"], {
+    const p = Bun.spawn(["security", "find-generic-password", ...args, "-w"], {
       stdin: "ignore", stdout: "pipe", stderr: "ignore",
     });
     const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
@@ -76,6 +108,14 @@ async function readKeychain(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Claude Code stores its login under the user's account name. Older installs can leave a second item
+ * with the same service name (account "unknown") and no plan login, so ask for the account first.
+ */
+async function readKeychain(): Promise<string | null> {
+  return (await findPassword(["-s", KEYCHAIN_SERVICE, "-a", userInfo().username])) ?? findPassword(["-s", KEYCHAIN_SERVICE]);
 }
 
 function readCredentialsFile(): string | null {
@@ -135,5 +175,6 @@ export async function fetchUsage(deps: UsageDeps = {}): Promise<UsageResult> {
   }
   const windows = normalizeUsage(body);
   if (!windows) return { error: "Unexpected answer from the usage endpoint", fetchedAt: fetchedAt() };
-  return { windows, fetchedAt: fetchedAt() };
+  const plan = creds.plan ? `${creds.plan.charAt(0).toUpperCase()}${creds.plan.slice(1)} plan` : null;
+  return { windows, plan, extra: normalizeExtra(body), fetchedAt: fetchedAt() };
 }

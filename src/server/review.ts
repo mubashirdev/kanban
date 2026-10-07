@@ -2,6 +2,7 @@ import { existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import type { Profile, Ticket } from "./types";
 import type { Store } from "./store";
+import { gitState } from "./git-actions";
 
 const LIMIT = 2 * 1024 * 1024;
 /** Read-only inspection: no external diff drivers, text conversions, hooks, or test execution. */
@@ -227,6 +228,8 @@ export async function ticketReview(
       ? value
       : null;
   return {
+    // Only the summary request needs it; a single file's diff is fetched often.
+    git: available && !file ? { ...(await gitState(cwd, profile.baseBranch)), base: profile.baseBranch } : null,
     files,
     diff,
     truncated,

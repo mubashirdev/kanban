@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, copy, type ClaudeSession, type Profile, type Ticket } from "./api";
 import { autoGrow } from "./autoGrow";
 import { rememberFirstMessage } from "./drafts";
-import { Chat } from "./Chat";
+import { Chat, withoutAgentNotes } from "./Chat";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, HistoryIcon, MoreIcon, PlusIcon, SparkIcon, TerminalIcon, TrashIcon } from "./icons";
 import { useLayer } from "./layers";
@@ -35,7 +35,7 @@ export function AgentMark({ agent, size = "normal" }: { agent?: Ticket["agent"];
 }
 const lastAt = (t: Ticket) => t.session?.lastMessage?.at ?? t.createdAt;
 /** Markdown marks read as noise in a one-line preview. */
-const plainText = (text: string) => text.replace(/[`*_#>]+/g, "").replace(/\s+/g, " ").trim();
+const plainText = (text: string) => withoutAgentNotes(text).replace(/!\[[^\]]*\]\([^)]*\)/g, "[image]").replace(/[`*_#>]+/g, "").replace(/\s+/g, " ").trim();
 /** A short title from the first message, like a chat app names a new thread. */
 const titleFrom = (text: string) => {
   const line = text.trim().split("\n")[0].replace(/^\/\S+\s*/, "").trim() || text.trim();
@@ -91,13 +91,27 @@ function SessionCard({ ticket, onOpen }: { ticket: Ticket; onOpen: () => void })
 }
 
 /** Start a chat, or pick up one begun in a terminal. */
-export function NewSessionDialog({ profile, onClose, onStarted }: { profile: Profile; onClose: () => void; onStarted: (id: string) => void }) {
+export function NewSessionDialog({ profile: initial, profiles, onClose, onStarted }: {
+  profile: Profile; profiles: Profile[]; onClose: () => void; onStarted: (id: string, slug: string) => void;
+}) {
   const [resuming, setResuming] = useState(false);
-  if (resuming) return <ResumeDialog profile={profile} onClose={() => setResuming(false)} onResumed={onStarted} />;
+  // Any repo with a board, so starting a chat elsewhere doesn't mean switching boards first.
+  const [slug, setSlug] = useState(initial.slug);
+  const profile = profiles.find((p) => p.slug === slug) ?? initial;
+  const started = (id: string) => onStarted(id, profile.slug);
+  if (resuming) return <ResumeDialog profile={profile} onClose={() => setResuming(false)} onResumed={started} />;
   return (
-    <Modal title={`New session in ${profile.name}`} onClose={onClose}>
+    <Modal title="New session" onClose={onClose}>
       <div className="form new-session">
-        <SessionStarter profile={profile} onStarted={onStarted} />
+        {profiles.length > 1 && (
+          <label className="session-repo">
+            <span>Repo</span>
+            <select value={slug} onChange={(e) => setSlug(e.target.value)}>
+              {profiles.map((p) => <option key={p.slug} value={p.slug}>{p.name}</option>)}
+            </select>
+          </label>
+        )}
+        <SessionStarter key={profile.slug} profile={profile} onStarted={started} />
         <button type="button" className="btn resume-link" onClick={() => setResuming(true)}><HistoryIcon size={15} /> Resume a session from a terminal</button>
       </div>
     </Modal>
@@ -107,9 +121,12 @@ export function NewSessionDialog({ profile, onClose, onStarted }: { profile: Pro
 function SessionStarter({ profile, onStarted }: { profile: Profile; onStarted: (id: string) => void }) {
   const [agent, setAgent] = usePersistentState<Agent>("esa.session.agent", () => "claude", () => false, (v) => v === "claude" || v === "codex");
   const [access, setAccess] = usePersistentState<Access>("esa.session.access", () => "read", () => false, (v) => v === "read" || v === "edit");
+  const [isolated, setIsolated] = usePersistentState<boolean>("esa.session.isolated", () => false, () => false, (v) => typeof v === "boolean");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const box = useRef<HTMLTextAreaElement>(null);
+  // Only an editing session can change files, so only it needs a separate checkout.
+  const worktree = access === "edit" && isolated;
   const name = agent === "codex" ? "Codex" : "Claude";
   useEffect(() => autoGrow(box.current, 6), [text]);
 
@@ -118,7 +135,7 @@ function SessionStarter({ profile, onStarted }: { profile: Profile; onStarted: (
     if (!message || busy) return;
     setBusy(true);
     try {
-      const t = await api.createTicket(profile.slug, { title: titleFrom(message), body: "", status: "backlog", standalone: true, access, agent });
+      const t = await api.createTicket(profile.slug, { title: titleFrom(message), body: "", status: "backlog", standalone: true, access, agent, isolated: worktree });
       rememberFirstMessage(t.id, message);
       await api.chat(profile.slug, t.id, message);
       setText("");
@@ -149,11 +166,17 @@ function SessionStarter({ profile, onStarted }: { profile: Profile; onStarted: (
             <button type="button" key={a.id} role="radio" aria-checked={access === a.id} title={a.hint} onClick={() => setAccess(a.id)}>{a.label}</button>
           ))}
         </div>
+        {access === "edit" && (
+          <div className="segmented" role="radiogroup" aria-label="Where it works">
+            <button type="button" role="radio" aria-checked={!isolated} title="Changes land in your repo folder" onClick={() => setIsolated(false)}>Folder</button>
+            <button type="button" role="radio" aria-checked={isolated} title="Its own branch in a separate copy" onClick={() => setIsolated(true)}>Worktree</button>
+          </div>
+        )}
         <button type="submit" className="btn primary send-round" disabled={!text.trim() || busy} aria-label={`Start session with ${name}`}>
           {busy ? <span className="spinner" /> : <ArrowUpIcon size={18} />}
         </button>
       </div>
-      <p className="starter-hint">{ACCESS.find((a) => a.id === access)!.hint}</p>
+      <p className="starter-hint">{worktree ? "It works on its own branch in a separate copy, so your folder stays untouched." : ACCESS.find((a) => a.id === access)!.hint}</p>
     </form>
   );
 }

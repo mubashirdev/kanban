@@ -45,7 +45,20 @@ export function usePwa() {
     registration.then((reg) => {
       if (cancelled) return;
       let worker: ServiceWorker | null = null;
-      const ready = () => { if (reg.waiting && navigator.serviceWorker.controller) { setWaiting(reg.waiting); setDismissed(false); } };
+      // Take a new version without asking when nobody is looking (app in the background) or right after
+      // opening, before any work started. Drafts survive the reload, so nothing typed is lost.
+      const opened = Date.now();
+      const apply = () => {
+        if (!reg.waiting || !navigator.onLine || reloading.current) return;
+        reloading.current = true;
+        reg.waiting.postMessage({ type: "ACTIVATE_UPDATE" });
+      };
+      const ready = () => {
+        if (!reg.waiting || !navigator.serviceWorker.controller) return;
+        if (document.visibilityState === "hidden" || Date.now() - opened < 10_000) return apply();
+        setWaiting(reg.waiting); setDismissed(false);
+      };
+      const hidden = () => { if (document.visibilityState === "hidden") apply(); };
       const watch = () => {
         worker?.removeEventListener("statechange", ready);
         worker = reg.installing;
@@ -57,6 +70,7 @@ export function usePwa() {
       reg.addEventListener("updatefound", watch);
       navigator.serviceWorker.addEventListener("controllerchange", activated);
       document.addEventListener("visibilitychange", check);
+      document.addEventListener("visibilitychange", hidden);
       window.addEventListener("online", check);
       const interval = setInterval(check, 30 * 60_000);
       watch();
@@ -65,6 +79,7 @@ export function usePwa() {
         reg.removeEventListener("updatefound", watch);
         navigator.serviceWorker.removeEventListener("controllerchange", activated);
         document.removeEventListener("visibilitychange", check);
+        document.removeEventListener("visibilitychange", hidden);
         window.removeEventListener("online", check);
       };
     }).catch(() => { /* The website still works if installation is unavailable. */ });
