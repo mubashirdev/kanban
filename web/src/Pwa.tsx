@@ -104,10 +104,10 @@ export function usePwa() {
 }
 
 export function InstallDialog({ onClose }: { onClose: () => void }) {
-  return <Modal title="Install Muba AI Canban" onClose={onClose}>
+  return <Modal title="Install Muba AI" onClose={onClose}>
     <div className="pwa-install">
-      <div className="pwa-preview"><img src="/icons/esa-192.png?v=6" width="64" height="64" alt="" /><div><b>Your workspace, one tap away</b><p>Open Muba AI Canban from your home screen in its own app window.</p></div></div>
-      {!window.isSecureContext && <p className="pwa-secure">Open Muba AI Canban through an HTTPS address to install it on your phone.</p>}
+      <div className="pwa-preview"><img src="/icons/esa-192.png?v=6" width="64" height="64" alt="" /><div><b>Your workspace, one tap away</b><p>Open Muba AI from your home screen in its own app window.</p></div></div>
+      {!window.isSecureContext && <p className="pwa-secure">Open Muba AI through an HTTPS address to install it on your phone.</p>}
       <div className="pwa-instructions">
         <p><b>iPhone or iPad</b><span>In Safari, open Share, choose Add to Home Screen, then Add.</span></p>
         <p><b>Android</b><span>In Chrome, open the browser menu, choose Install app or Add to Home screen, and confirm.</span></p>

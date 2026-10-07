@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Muba AI Canban",
-  "short_name": "Muba AI Canban",
+  "name": "Muba AI",
+  "short_name": "Muba AI",
   "description": "Your boards, Claude chats, and terminal tools in one workspace.",
   "lang": "en",
   "start_url": "/",

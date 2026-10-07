@@ -27,7 +27,7 @@ self.addEventListener('message', event => { if (event.data?.type === 'ACTIVATE_U
 self.addEventListener('push', event => {
   let payload = {}; try { const value = event.data ? event.data.json() : {}; if (value && typeof value === 'object' && !Array.isArray(value)) payload = value; } catch {}
   const url = typeof payload.url === 'string' && payload.url.startsWith('/#/') ? payload.url : '/';
-  event.waitUntil(self.registration.showNotification('Muba AI Canban', {
+  event.waitUntil(self.registration.showNotification('Muba AI', {
     body: typeof payload.body === 'string' ? payload.body : 'A ticket has an update.',
     icon: '/icons/esa-192.png', badge: '/icons/esa-32.png',
     tag: typeof payload.tag === 'string' ? payload.tag : 'esa-update', data: {url}

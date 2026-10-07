@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Muba AI Canban installer (macOS).
+# Muba AI installer (macOS).
 #   curl -fsSL https://raw.githubusercontent.com/mubashirdev/kanban/main/install.sh | bash
 # Env: CKANBAN_VERSION=0.1.0 (default: latest)  CKANBAN_BIN_DIR=~/.local/bin  CKANBAN_NO_DAEMON=1 (skip launchd)
 set -euo pipefail
@@ -12,7 +12,7 @@ bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 warn() { printf '\033[33m! %s\033[0m\n' "$*"; }
 die() { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
-[ "$(uname -s)" = "Darwin" ] || die "Muba AI Canban currently supports macOS only."
+[ "$(uname -s)" = "Darwin" ] || die "Muba AI currently supports macOS only."
 case "$(uname -m)" in
   arm64) ARCH="arm64" ;;
   x86_64) ARCH="x64" ;;
@@ -27,7 +27,7 @@ else
 fi
 
 URL="${CKANBAN_DOWNLOAD_URL:-$URL}"
-bold "Installing Muba AI Canban (${VERSION}, darwin-${ARCH})"
+bold "Installing Muba AI (${VERSION}, darwin-${ARCH})"
 mkdir -p "$BIN_DIR"
 TMP="$(mktemp -t ckanban)"
 trap 'rm -f "$TMP"' EXIT
