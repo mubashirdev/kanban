@@ -403,7 +403,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
           style={{ "--side-w": `${side.width}px` } as React.CSSProperties}>
           <div className="panel-details">
             <div className="details-pinned">
-              <TicketMetadata slug={slug} ticket={ticket} onError={onError} />
+              {/* Where the ticket is and what you can do next, then its settings. */}
+              <section className="detail-card" aria-label="Status">
               <div className="field-row">
                 <span className="field-key">Status</span>
                 <Select className="status-select" ariaLabel="Status" value={ticket.status} onChange={(s) => setStatus(s as Status)}
@@ -411,8 +412,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
               </div>
               {col && <p className="field-help">{col.claude && <SparkIcon className="icon spark" />}{col.hint}</p>}
 
-              <div className="action-stack">
-                {working && <button className="btn danger" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop agent"}</button>}
+              <div className="action-row">
+                {working && <button className="btn danger-soft" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop"}</button>}
                 {!working && (ticket.status === "backlog" || ticket.status === "planning") && (
                   <button className={`btn ${att?.kind === "questions" || att?.kind === "proposal" ? "" : "primary"}`}
                     onClick={startWork} title={startTarget === "planning" ? "Your agent interviews you first" : "Your agent works on its own"}>Start work</button>
@@ -422,9 +423,17 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                 )}
                 {ticket.status === "review" && <button className="btn primary" onClick={() => setStatus("done")}>Mark done</button>}
                 {ticket.prUrl && (
-                  <a className="btn icon-label" href={safeHref(ticket.prUrl)} target="_blank" rel="noreferrer">Open PR #{ticket.prUrl.split("/").pop()} <ExternalIcon size={12} /></a>
+                  <a className="btn icon-label" href={safeHref(ticket.prUrl)} target="_blank" rel="noreferrer">PR #{ticket.prUrl.split("/").pop()} <ExternalIcon size={12} /></a>
                 )}
+                {outputCount > 0 && (
+                  <button className="btn icon-label" onClick={() => setTab("outputs")}><FileTextIcon size={13} /> {outputCount} file{outputCount > 1 ? "s" : ""}</button>
+                )}
+                {ticket.session?.artifacts.slice().reverse().map((a) => (
+                  <a key={a.url} className="btn icon-label" href={safeHref(a.url)} target="_blank" rel="noreferrer" title={a.url}><ExternalIcon size={12} /> {a.label}</a>
+                ))}
               </div>
+              </section>
+              <TicketMetadata slug={slug} ticket={ticket} onError={onError} />
 
               {ticket.parentId && (
                 <div className="field-row">
@@ -449,16 +458,6 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
 
               {children.length > 0 && <PlanSummary ticket={ticket} children={children} onOpen={() => setTab("plan")} />}
 
-              {(!!ticket.session?.artifacts.length || outputCount > 0) && (
-                <div className="result-chips" aria-label="Results">
-                  {outputCount > 0 && (
-                    <button className="result-chip" onClick={() => setTab("outputs")}><FileTextIcon size={13} /> {outputCount} output file{outputCount > 1 ? "s" : ""}</button>
-                  )}
-                  {ticket.session?.artifacts.slice().reverse().map((a) => (
-                    <a key={a.url} className="result-chip" href={safeHref(a.url)} target="_blank" rel="noreferrer" title={a.url}><ExternalIcon size={12} /> {a.label}</a>
-                  ))}
-                </div>
-              )}
             </div>
 
             <section className={`details-desc ${descScrolled && !editing ? "scrolled" : ""}`}>

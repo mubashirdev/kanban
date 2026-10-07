@@ -2162,3 +2162,33 @@ body { letter-spacing: -0.011em; }
 }
   /* The quick action shares the meta row with the time and PR chip. */
 @media (max-width: 767px) { .card .card-quick { order: 0; align-self: auto; margin: 0; } .card .card-meta { align-items: center; margin-top: 2px; } }
+
+/* Ticket details: a status card, then settings as an iOS-style grouped list */
+.detail-card, .detail-list { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+.detail-card { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.detail-card .field-help { margin: -4px 0 0; }
+.action-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.action-row .btn { min-height: 36px; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+.action-row .btn.primary { flex: 1 1 auto; justify-content: center; }
+.btn.danger-soft { background: var(--err-soft); border-color: transparent; color: var(--err); font-weight: 600; }
+.btn.danger-soft:hover:not(:disabled) { background: color-mix(in srgb, var(--err) 18%, var(--surface)); }
+.detail-list { display: flex; flex-direction: column; overflow: hidden; }
+.detail-row {
+  display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 12px 0 14px; width: 100%;
+  border: 0; background: transparent; font: inherit; color: inherit; text-align: left; cursor: pointer;
+}
+.detail-row + .detail-row { border-top: 1px solid var(--border); }
+.detail-key { flex: none; font-size: 15px; }
+.detail-value { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 15px; }
+.detail-select, .detail-input {
+  margin-left: auto; min-width: 0; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 16px;
+  text-align: right; text-align-last: right; appearance: none; -webkit-appearance: none; padding: 8px 0; outline: none; cursor: pointer;
+}
+.detail-input { flex: 1; cursor: text; }
+.detail-input:focus { color: var(--text); }
+.detail-chevron { flex: none; color: var(--muted); opacity: 0.6; }
+@media (max-width: 900px) {
+  /* The whole details panel scrolls as one page on phones; nothing is clipped at a section edge. */
+  .details-pinned { max-height: none; overflow: visible; }
+}
+.detail-card .field-key { font-size: 15px; color: var(--text); font-weight: 500; }
