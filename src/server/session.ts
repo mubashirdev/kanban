@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import type { Bus } from "./events";
 import { mockupName, stripMockups } from "./mockups";
 import type { Store } from "./store";
+import { parseSetupBlock, type SetupResult } from "./worktree-setup";
 
 /** One visible item of a Claude Code session, as shown in the ticket's Conversation tab. */
 export interface QuestionOption {
@@ -29,6 +30,8 @@ export interface TicketProposal {
 export interface NewTicketDraft extends TicketProposal {
   key?: string;
   dependsOn?: string[];
+  /** Exclusive resources (e.g. emulator), see Ticket.needs. */
+  needs?: string[];
 }
 
 export interface ToolDetail {
@@ -68,6 +71,8 @@ export interface SessionEntry {
   proposal?: TicketProposal;
   /** New tickets Claude proposed splitting the work into (rendered with Create buttons). */
   newTickets?: NewTicketDraft[];
+  /** Claude offered to branch this ticket (rendered with a Branch button). */
+  branch?: { reason: string };
   /** Mockups Claude sent as blocks (saved to outputs/mockups; the chat links to them). */
   mockups?: string[];
   /** Claude asked the board to move the ticket (a planning-only request arrived in Review). */
@@ -80,6 +85,8 @@ export interface SessionEntry {
   note?: boolean;
   /** A ticket-to-ticket message (ask_ticket / reply_ticket): in = from that ticket's Claude, out = to it. */
   peer?: { dir: "in" | "out"; ticketId: string | null };
+  /** The board prepared a new worktree before this prompt (copied files, setup command): shown as a row before it. */
+  setup?: SetupResult;
 }
 
 /** Claude does not save every built-in's synthetic reply to its session file. */
@@ -179,6 +186,8 @@ export function parseNewTickets(v: any): NewTicketDraft[] | null {
     if (key) d.key = key;
     const deps = Array.isArray(x?.dependsOn) ? x.dependsOn.filter((k: unknown) => typeof k === "string" && k.trim()).map((k: string) => k.trim()) : [];
     if (deps.length) d.dependsOn = deps;
+    const needs = Array.isArray(x?.needs) ? x.needs.filter((k: unknown) => typeof k === "string" && k.trim()).map((k: string) => k.trim().toLowerCase()) : [];
+    if (needs.length) d.needs = needs;
     return d;
   }).filter((x) => x.title);
   return ts.length ? ts : null;
@@ -285,13 +294,14 @@ const TOOL_ARG_KEYS = ["file_path", "command", "url", "pattern", "query", "descr
 const PUBLISHED = /Published (\S+) at (https:\/\/claude\.ai\/(?:code\/)?artifact\/[A-Za-z0-9-]+)/g;
 
 const HELPER_PUBLISH = /\bartifact publish\b/;
+const PUBLISH_TOOL = /(?:^|__)publish_artifact$/;
 
 function isPublisher(block: any): boolean {
-  if (block.name === "Artifact") return true;
+  if (block.name === "Artifact" || PUBLISH_TOOL.test(String(block.name ?? ""))) return true;
   return block.name === "Bash" && typeof block.input?.command === "string" && HELPER_PUBLISH.test(block.input.command);
 }
 
-function userText(content: unknown): { kind: "text" | "board"; text: string; from?: string; question?: string } | null {
+function userText(content: unknown): { kind: "text" | "board"; text: string; from?: string; question?: string; setup?: SetupResult } | null {
   if (Array.isArray(content)) {
     if (content.some((c: any) => c?.type === "tool_result")) return null;
     content = content.map((c: any) => (c?.type === "text" ? c.text : "")).join("\n");
@@ -304,10 +314,12 @@ function userText(content: unknown): { kind: "text" | "board"; text: string; fro
     const tag = content.slice(ctx, content.indexOf(">", ctx) + 1);
     // Sent by another ticket's Claude (a question, or a late reply): from="<ticket id>".
     const from = tag.match(/ from="([^"]*)"/)?.[1];
-    if (typed && from) return { kind: "text", text: typed, from, question: tag.match(/ question="([^"]*)"/)?.[1] };
-    if (typed) return { kind: "text", text: typed };
+    const setup = parseSetupBlock(content.slice(ctx));
+    const extra = setup ? { setup } : {};
+    if (typed && from) return { kind: "text", text: typed, from, question: tag.match(/ question="([^"]*)"/)?.[1], ...extra };
+    if (typed) return { kind: "text", text: typed, ...extra };
     const note = content.slice(ctx).match(/note="([^"]*)"/)?.[1];
-    return { kind: "board", text: note || "Board sent instructions to Claude" };
+    return { kind: "board", text: note || "Board sent instructions to Claude", ...extra };
   }
   const t = content.trim();
   const command = /^<command-message>[\s\S]*?<\/command-message>\s*<command-name>(\/[\w:./@-]+)<\/command-name>(?:\s*<command-args>([\s\S]*?)<\/command-args>)?/.exec(t);
@@ -329,10 +341,11 @@ const REPLY_TOOL = /(?:^|__)reply_ticket$/;
 const QUESTIONS_TOOL = /(?:^|__)ask_questions$/;
 const PROPOSAL_TOOL = /(?:^|__)propose_ticket$/;
 const TICKETS_TOOL = /(?:^|__)propose_tickets$/;
+const BRANCH_TOOL = /(?:^|__)propose_branch$/;
 const REPLY_HEAD = /^Reply from ticket (\S+) .*:\n\n/;
 
 /** The form or card a planning-chat tool call shows, or null for other tools (or input that can't be read). */
-function cardEntry(block: any): Pick<SessionEntry, "questions" | "proposal" | "newTickets"> | null {
+function cardEntry(block: any): Pick<SessionEntry, "questions" | "proposal" | "newTickets" | "branch"> | null {
   const name = String(block.name ?? "");
   if (QUESTIONS_TOOL.test(name)) {
     const questions = parseQuestions(block.input?.questions);
@@ -346,6 +359,7 @@ function cardEntry(block: any): Pick<SessionEntry, "questions" | "proposal" | "n
     const newTickets = parseNewTickets(block.input?.tickets);
     return newTickets && { newTickets };
   }
+  if (BRANCH_TOOL.test(name)) return { branch: { reason: typeof block.input?.reason === "string" ? block.input.reason.trim() : "" } };
   return null;
 }
 
@@ -372,7 +386,10 @@ export function parseSession(raw: string): ParsedSession {
   const steps = new Map<string, { entry: SessionEntry; started: number }>();
   const peerEntry = (u: NonNullable<ReturnType<typeof userText>>, uuid: string, at: string): SessionEntry => {
     if (u.from && u.question) askers.set(u.question, u.from);
-    return { uuid, at, role: "user", kind: u.kind, text: u.text, ...(u.from ? { peer: { dir: "in" as const, ticketId: u.from } } : {}) };
+    return {
+      uuid, at, role: "user", kind: u.kind, text: u.text,
+      ...(u.from ? { peer: { dir: "in" as const, ticketId: u.from } } : {}), ...(u.setup ? { setup: u.setup } : {}),
+    };
   };
 
   for (const line of raw.split("\n")) {
@@ -415,7 +432,7 @@ export function parseSession(raw: string): ParsedSession {
             }
           }
           // Only real publishes: output of the Artifact tool, or of the `ckanban artifact publish`
-          // helper headless runs use. Other tools (e.g. Bash grepping a different session's file)
+          // helper / publish_artifact MCP tool headless runs use. Other tools (e.g. Bash grepping a different session's file)
           // can print the same text.
           if (b?.type !== "tool_result" || !publishers.has(b.tool_use_id)) continue;
           for (const m of resultText(b.content).matchAll(PUBLISHED)) {
@@ -457,10 +474,11 @@ export function parseSession(raw: string): ParsedSession {
   }
 
   if (failed.size) entries.splice(0, entries.length, ...entries.filter((e) => !failed.has(e.uuid)));
-  const last = entries.findLast((e) => e.kind === "text" && (e.text || e.questions || e.proposal || e.newTickets));
+  const last = entries.findLast((e) => e.kind === "text" && (e.text || e.questions || e.proposal || e.newTickets || e.branch));
   const lastText = !last ? "" : last.text
     || (last.questions ? `Asked ${last.questions.length} question${last.questions.length > 1 ? "s" : ""}`
-      : last.newTickets ? `Proposed ${last.newTickets.length} new ticket${last.newTickets.length > 1 ? "s" : ""}` : "Proposed an updated ticket");
+      : last.newTickets ? `Proposed ${last.newTickets.length} new ticket${last.newTickets.length > 1 ? "s" : ""}`
+      : last.branch ? "Offered to branch this ticket" : "Proposed an updated ticket");
   return {
     title: customTitle ?? aiTitle,
     entries,

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { Board } from "./board";
 import { Bus } from "./events";
 import { createServer } from "./http";
+import { withUtf8Locale } from "./locale";
 import { McpManager } from "./mcp";
 import { startPoller } from "./prpoller";
 import { Scheduler } from "./scheduler";
@@ -18,8 +19,11 @@ import { VERSION } from "./version";
 import { WEB_ASSETS } from "./web-assets.gen";
 import { isPrivateIPv4 } from "./lan";
 import { ClaudeCommands } from "./commands";
+import { detectMissing } from "./worktree-setup";
 
 export async function startDaemon(): Promise<void> {
+  // Board runs and other children inherit this; an older launchd plist starts the daemon with no locale.
+  Object.assign(process.env, withUtf8Locale(process.env));
   const store = new Store(defaultRoot());
   const config = store.config();
   const port = Number(process.env.CKANBAN_PORT) || config.port;
@@ -35,11 +39,11 @@ export async function startDaemon(): Promise<void> {
     trustedNetwork: trusted && lanInterface ? { address: lanInterface.address, netmask: lanInterface.netmask } : undefined,
   } : undefined;
   const bus = new Bus();
-  const board = new Board(store, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
+  const sessions = new SessionCache();
+  const board = new Board(store, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude", sessionSummary: (id) => sessions.summary(id) });
   const webDir = join(import.meta.dir, "..", "..", "web", "dist");
   const embedded = Object.keys(WEB_ASSETS).length > 0;
   if (!embedded && !existsSync(join(webDir, "index.html"))) console.warn("web UI not built yet: run `bun run build:web`");
-  const sessions = new SessionCache();
   const codexSessions = new CodexSessions(store);
   const terminals = new TerminalWatcher(store, bus, sessions);
   const shells = new ShellManager();
@@ -62,6 +66,7 @@ export async function startDaemon(): Promise<void> {
     console.log(`Phone pairing: http://${lan.host}:${server.port}/ — code ${lan.pairingCode.match(/.{4}/g)!.join("-")}`);
   }
   board.recover();
+  void detectMissing(store, (profile) => bus.emit({ type: "profile.updated", slug: profile.slug, profile }));
   const stopPoller = startPoller(board, store, config.prPollMinutes);
   // After recover(): a missed run's ticket must not be mistaken for an interrupted one.
   const stopScheduler = scheduler.start();

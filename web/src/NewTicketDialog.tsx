@@ -1,9 +1,10 @@
 import { PRIORITIES, TEMPLATES } from "./ticketTemplates";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ClaudeSession, Status, TicketMode, Ticket } from "./api";
 import { useImagePaste } from "./imagePaste";
 import { Modal } from "./Modal";
 import { SessionPicker, sessionLabel } from "./SessionPicker";
+import { useSnippetPicker } from "./SnippetPicker";
 
 export function NewTicketDialog({
   slug,
@@ -40,6 +41,8 @@ export function NewTicketDialog({
     [error, setError] = useState("");
   const images = useImagePaste(setBody),
     template = TEMPLATES.find((t) => t.kind === kind)!;
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const snippets = useSnippetPicker({ slug, ref: bodyRef, setValue: setBody });
   const startStatus: Status = mode === "interview" ? "planning" : "ready";
   const submit = async (status: Status) => {
     if (busy || !title.trim() || images.uploading) return;
@@ -130,6 +133,7 @@ export function NewTicketDialog({
         <label>
           Description
           <textarea
+            ref={bodyRef}
             rows={5}
             value={body}
             disabled={busy}
@@ -137,7 +141,10 @@ export function NewTicketDialog({
             placeholder="Context, expected result, and acceptance criteria…"
             className={images.dragOver ? "drop-target" : undefined}
             {...images.handlers}
+            {...snippets.handlers}
+            onKeyDown={snippets.onKeyDown}
           />
+          {snippets.popup}
           <span className="muted small">
             {template.hint} · Markdown and pasted images supported
           </span>

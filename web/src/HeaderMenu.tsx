@@ -11,10 +11,15 @@ export interface MenuItem {
   hint?: string;
   /** Starts a new group of items. */
   groupStart?: boolean;
+  /** Right-aligned extra, e.g. a count or a need-chip. */
+  badge?: ReactNode;
+  title?: string;
+  /** Draw a divider after this item. */
+  separator?: boolean;
 }
 
 /** "⋯" overflow menu at the end of the top bar for things you need now and then. ↑↓ move, Esc closes. */
-export function HeaderMenu({ items, footer }: { items: MenuItem[]; footer?: string | null }) {
+export function HeaderMenu({ items, footer, alert }: { items: MenuItem[]; footer?: string | null; alert?: boolean }) {
   const [open, setOpen] = useState(false);
   const phone = useMediaQuery("(max-width: 767px)");
   const root = useRef<HTMLDivElement>(null);
@@ -46,9 +51,10 @@ export function HeaderMenu({ items, footer }: { items: MenuItem[]; footer?: stri
 
   return (
     <div className="header-menu" ref={root}>
-      <button ref={button} className="icon-btn more-btn" aria-label="More" title="More" aria-haspopup="menu" aria-expanded={open}
+      <button ref={button} className="icon-btn more-btn" aria-label={alert ? "More (something needs attention)" : "More"} title="More" aria-haspopup="menu" aria-expanded={open}
         onClick={() => setOpen((v) => !v)}>
         <MoreIcon size={16} />
+        {alert && <span className="more-dot" aria-hidden />}
       </button>
       {open && phone && (
         <Modal title="Menu" onClose={() => setOpen(false)}>
@@ -59,6 +65,7 @@ export function HeaderMenu({ items, footer }: { items: MenuItem[]; footer?: stri
                 <button type="button" className="sheet-action menu-row" onClick={() => { setOpen(false); it.onSelect(); }}>
                   <span className="menu-icon" aria-hidden>{it.icon}</span>
                   <span>{it.label}</span>
+                  {it.badge}
                 </button>
               </Fragment>
             ))}
@@ -71,11 +78,13 @@ export function HeaderMenu({ items, footer }: { items: MenuItem[]; footer?: stri
           {items.map((it, i) => (
             <Fragment key={it.label}>
               {it.groupStart && i > 0 && <div className="menu-sep" role="separator" />}
-              <button role="menuitem" className="menu-item" onClick={() => { setOpen(false); it.onSelect(); }}>
+              <button role="menuitem" className="menu-item" title={it.title} onClick={() => { setOpen(false); it.onSelect(); }}>
                 <span className="menu-icon" aria-hidden>{it.icon}</span>
                 <span className="menu-label">{it.label}</span>
+                {it.badge}
                 {it.hint && <kbd>{it.hint}</kbd>}
               </button>
+              {it.separator && <div className="menu-sep" role="separator" />}
             </Fragment>
           ))}
           {footer && <div className="menu-footer muted small">{footer}</div>}

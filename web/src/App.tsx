@@ -5,12 +5,12 @@ import { ChatsView, NewSessionDialog, SessionView } from "./Sessions";
 import { Modal } from "./Modal";
 import { usePersistentState } from "./usePersistentState";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, copy, COLUMNS, onReconnect, subscribe, type Health, type InboxItem, type McpState, type Profile, type Schedule, type Status, type Ticket } from "./api";
+import { api, copy, COLUMNS, onReconnect, subscribe, waitsForSlot, type Health, type InboxItem, type McpState, type Profile, type Schedule, type Status, type Ticket } from "./api";
 import { avatarColor, avatarLetter } from "./avatar";
 import { BugReportDialog } from "./BugReportDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
 import { HeaderMenu } from "./HeaderMenu";
-import { BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, ColumnsIcon, CopyIcon, DollarIcon, GearIcon, HistoryIcon, KeyboardIcon, PlusIcon, PlugIcon, RefreshIcon, SearchIcon, SlidersIcon, TerminalIcon } from "./icons";
+import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, ColumnsIcon, CopyIcon, DollarIcon, GearIcon, HistoryIcon, KeyboardIcon, PlusIcon, PlugIcon, RefreshIcon, SearchIcon, SlidersIcon, TerminalIcon } from "./icons";
 import { buzz } from "./haptics";
 import { Inbox } from "./Inbox";
 import { UsagePill } from "./UsagePill";
@@ -21,9 +21,12 @@ import { DailyCostDialog } from "./DailyCostDialog";
 import { DefaultModelsDialog } from "./DefaultModelsDialog";
 import { ProfileDialog } from "./ProfileDialog";
 import { SchedulesDialog } from "./SchedulesDialog";
+import { SnippetsDialog } from "./SnippetsDialog";
 import { Select } from "./Select";
 import { SearchDialog } from "./SearchDialog";
-import { QuickSwitcher, ShortcutsDialog } from "./Shortcuts";
+import { BoardSwitcher, ShortcutsDialog } from "./Shortcuts";
+import { CommandBar, type CommandAction } from "./CommandBar";
+import { boardDigit, cardDir, stepBoard, stepCard, type CardPos } from "./keynav";
 import { TicketDrawer } from "./TicketDrawer";
 import { toast, Toaster } from "./toast";
 import { useMediaQuery } from "./useMediaQuery";
@@ -86,6 +89,29 @@ function hashFor(slug: string | null, ticket?: string | null): string {
 function isTyping(e: KeyboardEvent): boolean {
   const el = e.target as HTMLElement | null;
   return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+}
+
+/** Cards on screen, per expanded column, in board order. */
+function cardGrid(): HTMLElement[][] {
+  return [...document.querySelectorAll<HTMLElement>(".board > .column:not(.collapsed)")]
+    .map((c) => [...c.querySelectorAll<HTMLElement>(".column-body > .sortable-card")]);
+}
+
+function focusedCard(grid: HTMLElement[][]): CardPos | null {
+  const el = (document.activeElement as HTMLElement | null)?.closest?.(".sortable-card");
+  for (let col = 0; col < grid.length; col++) {
+    const row = grid[col].findIndex((c) => c === el);
+    if (row >= 0) return { col, row };
+  }
+  return null;
+}
+
+function focusCard(pos: CardPos | null, grid = cardGrid()) {
+  const col = pos && grid[pos.col];
+  const el = col && col[Math.min(pos.row, col.length - 1)];
+  if (!el) return;
+  el.focus({ preventScroll: true });
+  el.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 /** Board filter chips; several on = tickets matching any of them. */
@@ -186,8 +212,11 @@ export function App() {
   }, [inbox.length]);
   const [shortcuts, setShortcuts] = useState(false);
   const [bugReport, setBugReport] = useState(false);
-  const [switcher, setSwitcher] = useState(false);
   const [fullSearch, setFullSearch] = useState(false);
+  // ⌘K command bar; the inbox and usage popovers open from it too (n makes repeats count).
+  const [commandBar, setCommandBar] = useState(false);
+  const [inboxRequest, setInboxRequest] = useState(0);
+  const [boardSwitcher, setBoardSwitcher] = useState(false);
   // Command to type into the dock's terminal (e.g. "claude mcp login x"); n makes repeats count.
   const [dockCommand, setDockCommand] = useState<{ text: string; n: number } | null>(null);
   // Tab the dock should switch to (C opens the quick Claude chat).
@@ -203,6 +232,7 @@ export function App() {
   const [connections, setConnections] = useState(false);
   const [schedules, setSchedules] = useState<Schedule[] | null>(null);
   const [schedulesOpen, setSchedulesOpen] = useState(false);
+  const [snippetsOpen, setSnippetsOpen] = useState(false);
   const schedulesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [version, setVersion] = useState<{ version: string; latest: string | null; updateAvailable: boolean } | null>(null);
 
@@ -318,7 +348,18 @@ export function App() {
     if (!dockOpen) setDockTab(null);
   }, [dockOpen]);
 
-  // Shortcuts: N new ticket, / search, ? cheatsheet, C quick Claude chat, ⌘K jump to a ticket, Ctrl+` terminal & files.
+  // Board switching (B picker, [ ] prev/next, 1…9) leaves the open ticket: it belongs to the old board.
+  const switchBoard = useCallback((to: string) => {
+    if (to === slugRef.current) return;
+    pushedOpen.current = false;
+    setOpenId(null);
+    setSlug(to);
+  }, []);
+  // Latest values for the window key handler below, which is bound once per dialog state.
+  const live = useRef({ profiles, tickets, markDone: (_id: string) => {} });
+
+  // Shortcuts: N new ticket, / search, ? cheatsheet, C quick Claude chat, ⌘K command bar (tickets on every board, actions, boards), Ctrl+` terminal & files,
+  // B board picker, [ ] previous / next board, 1…9 board N, J/K/H/L or arrows select a card, D marks a Review card done.
   // Esc is handled by the panel and dialogs (one layer at a time, see layers.ts).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -330,11 +371,37 @@ export function App() {
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k") {
         if ((e.target as HTMLElement | null)?.closest?.(".xterm")) return;
         e.preventDefault();
-        if (slug && !anyLayerOpen()) setSwitcher(true);
+        // Works without a board too; a second ⌘K closes the bar.
+        const layer = anyLayerOpen();
+        setCommandBar((o) => (o ? false : !layer));
         return;
       }
+      const boards = live.current.profiles ?? [];
+      const at = boards.findIndex((p) => p.slug === slug);
       if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e)) return;
       if (openId || profileDialog || newTicket || connections || schedulesOpen || anyLayerOpen() || document.querySelector(".overlay")) return;
+      // Plain 1…9 (Alt+digit is taken by Chrome's tab switching); the ticket panel's questions form uses digits too.
+      const digit = e.shiftKey || e.isComposing ? null : boardDigit(e.code);
+      if (digit !== null) {
+        if (!boards[digit]) return;
+        e.preventDefault();
+        switchBoard(boards[digit].slug);
+        return;
+      }
+      const dir = e.shiftKey && e.key.startsWith("Arrow") ? null : cardDir(e.key);
+      if (dir) {
+        // A picked-up card (Space) moves with the arrows instead: leave those to the drag.
+        if (!slug || e.defaultPrevented || document.querySelector(".sortable-card[aria-pressed='true']")) return;
+        // Arrows on a focused button or menu trigger belong to it; J/K/H/L work from anywhere.
+        const focus = document.activeElement;
+        if (e.key.startsWith("Arrow") && focus && focus !== document.body && !focus.closest(".sortable-card")) return;
+        const grid = cardGrid();
+        const next = stepCard(grid.map((c) => c.length), focusedCard(grid), dir);
+        if (!next) return;
+        e.preventDefault();
+        focusCard(next, grid);
+        return;
+      }
       if (e.key === "n" || e.key === "N") {
         e.preventDefault();
         if (slug) setNewTicket(true);
@@ -347,11 +414,24 @@ export function App() {
       } else if (e.key === "c" || e.key === "C") {
         e.preventDefault();
         if (slug) openDockOn("claude");
+      } else if (e.key === "b" || e.key === "B") {
+        e.preventDefault();
+        if (boards.length) setBoardSwitcher(true);
+      } else if (e.key === "[" || e.key === "]") {
+        const to = boards[stepBoard(boards.length, at, e.key === "]" ? 1 : -1)];
+        if (!to) return;
+        e.preventDefault();
+        switchBoard(to.slug);
+      } else if (e.key === "d" || e.key === "D") {
+        const id = (document.activeElement as HTMLElement | null)?.closest?.(".sortable-card")?.getAttribute("data-ticket");
+        if (!id) return;
+        e.preventDefault();
+        live.current.markDone(id);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [openId, profileDialog, newTicket, connections, schedulesOpen, slug]);
+  }, [openId, profileDialog, newTicket, connections, schedulesOpen, slug, switchBoard]);
 
   const runInTerminal = useCallback((text: string) => {
     setDockOpen(true);
@@ -474,12 +554,13 @@ export function App() {
     return m;
   }, [inbox]);
 
-  const move = async (id: string, status: Status, order: number, undo = true) => {
+  // Without an order the server puts the ticket where a column entry goes (e.g. top of Done).
+  const move = async (id: string, status: Status, order?: number, undo = true) => {
     const board = slug!;
     const before = tickets.find((t) => t.id === id);
-    setTickets((ts) => ts.map((t) => (t.id === id ? { ...t, status, order } : t)));
+    setTickets((ts) => ts.map((t) => (t.id === id ? { ...t, status, ...(order === undefined ? {} : { order }) } : t)));
     try {
-      await api.updateTicket(board, id, { status, order });
+      await api.updateTicket(board, id, order === undefined ? { status } : { status, order });
       if (undo && before && before.status !== status) {
         const label = COLUMNS.find((c) => c.id === status)?.label ?? status;
         toast(<>Moved <b>{before.title}</b> to {label}</>, {
@@ -492,10 +573,21 @@ export function App() {
     }
   };
 
+  // D on a focused Review card; focus stays at the same spot on the board for the next key.
+  const markDone = (id: string) => {
+    if (tickets.find((t) => t.id === id)?.status !== "review") return;
+    const pos = focusedCard(cardGrid());
+    void move(id, "done");
+    setTimeout(() => focusCard(pos));
+  };
+  live.current = { profiles, tickets, markDone };
+
   const mcpAttention = mcp?.servers.filter((s) => s.attention).length ?? 0;
   const scheduleErrors = schedules?.filter((s) => s.lastError).length ?? 0;
   const missing = health ? (["claude", "git", "gh"] as const).filter((k) => !health[k]) : [];
-  const running = tickets.filter((t) => t.status === "in_progress").length;
+  // Runs holding a slot, as the server counts them (Planning and replies to other tickets don't take one).
+  const running = tickets.filter((t) => t.holdsSlot).length;
+  const queued = tickets.filter((t) => t.status === "ready" || waitsForSlot(t)).length;
 
   const updateKey = `update:${version?.latest}`;
   const pathKey = `path:${missing.join(",")}`;
@@ -506,6 +598,24 @@ export function App() {
     else next.add(id);
     return next;
   });
+
+  // ⌘K actions run the same handlers as their buttons and menu items.
+  const commandActions: CommandAction[] = [
+    ...(profile ? [
+      { id: "new", label: "New ticket", keys: ["N"], run: () => setNewTicket(true) },
+      { id: "dock", label: "Open terminal & files", keys: ["Ctrl", "`"], icon: <TerminalIcon size={14} />, run: () => openDockOn("terminal") },
+      { id: "chat", label: "Quick Claude chat", keys: ["C"], icon: <ChatIcon size={14} />, run: () => openDockOn("claude") },
+    ] : []),
+    ...(inbox.length ? [{ id: "inbox", label: `Open inbox (${inbox.length} need you)`, run: () => setInboxRequest(Date.now()) }] : []),
+    ...(profile ? [{ id: "schedules", label: "Schedules", icon: <ClockIcon size={14} />, run: () => setSchedulesOpen(true) }] : []),
+    { id: "connections", label: "Connections", icon: <PlugIcon size={14} />, run: () => setConnections(true) },
+    ...(profile ? [{ id: "snippets", label: "Snippets", icon: <AtIcon size={14} />, run: () => setSnippetsOpen(true) }] : []),
+    { id: "usage", label: "Usage", run: () => setUsageRequest(Date.now()) },
+    ...(profile ? [{ id: "settings", label: "Board settings", icon: <GearIcon size={14} />, run: () => setProfileDialog("edit") }] : []),
+    { id: "new-board", label: "New board", run: () => setProfileDialog("new") },
+    { id: "shortcuts", label: "Keyboard shortcuts", keys: ["?"], icon: <KeyboardIcon size={14} />, run: () => setShortcuts(true) },
+    { id: "bug", label: "Report a bug", icon: <BugIcon size={14} />, run: () => setBugReport(true) },
+  ];
 
   return (
     <div className="app">
@@ -549,7 +659,7 @@ export function App() {
         )}
         {profile && (
           <span className="pill" title={`At most ${profile.maxParallel} tickets run at the same time on this board`}>
-            {running}/{profile.maxParallel} running
+            {running}/{profile.maxParallel} running{queued > 0 && <> · {queued} queued</>}
           </span>
         )}
         <UsagePill compact={narrow} openRequest={usageRequest} />
@@ -574,7 +684,7 @@ export function App() {
           </button>
         )}
         <div className="spacer" />
-        <Inbox items={inbox} landOnInbox={narrow && !startedOnTicket.current} onPick={(i) => {
+        <Inbox items={inbox} landOnInbox={narrow && !startedOnTicket.current} openRequest={inboxRequest} onPick={(i) => {
           if (i.profile !== slug) setSlug(i.profile);
           openTicket(i.id, i.profile);
         }} />
@@ -611,7 +721,7 @@ export function App() {
             <PlusIcon size={21} className="icon new-ticket-symbol" /><span className="new-ticket-label">{mode === "chats" ? "New chat" : "New ticket"}</span>
           </button>
         )}
-        <HeaderMenu items={[
+        <HeaderMenu alert={compact && (scheduleErrors > 0 || mcpAttention > 0)} items={[
           ...(!pwa.installed ? [{ label: "Install Muba AI", icon: <CopyIcon />, onSelect: pwa.install }] : []),
           ...(pwa.waiting ? [{ label: "Reload app update", icon: <CheckIcon />, onSelect: pwa.update }] : []),
           ...(narrow ? [{ label: "Usage & limits", icon: <ClockIcon />, onSelect: () => setUsageRequest((n) => n + 1) }] : []),
@@ -625,6 +735,7 @@ export function App() {
           ] : []),
           ...(profile ? [{ label: "Board settings", groupStart: true, icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
           ...(profile ? [{ label: "Search tickets & chats", icon: <SearchIcon />, onSelect: () => setFullSearch(true) }] : []),
+          ...(profile ? [{ label: "Snippets", icon: <AtIcon />, onSelect: () => setSnippetsOpen(true), title: "Reusable prompt text: type @name in a ticket to insert it" }] : []),
           ...(profile ? [{ label: "Activity", icon: <HistoryIcon />, onSelect: () => setActivityOpen(true) }] : []),
           { label: "Daily cost", icon: <DollarIcon />, onSelect: () => setDailyCostOpen(true) },
           { label: "Default models", groupStart: true, icon: <SlidersIcon />, onSelect: () => setDefaultModelsOpen(true) },
@@ -754,8 +865,17 @@ export function App() {
       {shortcuts && <ShortcutsDialog onClose={() => setShortcuts(false)} />}
       {bugReport && <BugReportDialog onClose={() => setBugReport(false)} />}
       {fullSearch && profile && <SearchDialog slug={profile.slug} onClose={() => setFullSearch(false)} onPick={(id) => { setFullSearch(false); openTicket(id); }} />}
-      {switcher && profile && (
-        <QuickSwitcher tickets={tickets} onClose={() => setSwitcher(false)} onPick={(id) => { setSwitcher(false); openTicket(id); }} />
+      {boardSwitcher && profiles && (
+        <BoardSwitcher profiles={profiles} current={slug} needYou={perBoard} onClose={() => setBoardSwitcher(false)}
+          onPick={(s) => { setBoardSwitcher(false); switchBoard(s); }} />
+      )}
+      {commandBar && (
+        <CommandBar profiles={profiles ?? []} current={profile?.slug ?? null} tickets={tickets} needYou={perBoard} actions={commandActions}
+          onClose={() => setCommandBar(false)} onSwitchBoard={switchBoard}
+          onOpenTicket={(board, id) => {
+            if (board !== slug) switchBoard(board);
+            openTicket(id, board);
+          }} />
       )}
       {schedulesOpen && profile && (
         <SchedulesDialog profile={profile} schedules={schedules} tickets={tickets} onClose={() => setSchedulesOpen(false)}
@@ -779,6 +899,7 @@ export function App() {
         </button>
       )}
       {open && profile && open.standalone && !wideChats && <SessionView key={open.id} profile={profile} ticket={open} tickets={tickets} onClose={closeTicket} onOpenTicket={openTicket} />}
+      {snippetsOpen && profile && <SnippetsDialog profile={profile} onClose={() => setSnippetsOpen(false)} />}
       {open && profile && !open.standalone && <TicketDrawer key={open.id} profile={profile} ticket={open} tickets={tickets} onOpenTicket={openTicket} onClose={closeTicket}
         nav={{ prev: prevId, next: nextId, go: stepTicket }} slideIn={!stepped.current} />}
       {profileDialog && (

@@ -13,6 +13,31 @@ export interface Profile {
   maxParallel: number;
   model?: string | null;
   createdAt: string;
+  /** Git-ignored files (paths or globs relative to the board folder) copied into each new worktree. */
+  copyFiles?: string[];
+  /** Runs in each new worktree (user's shell) after copyFiles, before Claude starts. */
+  setupCommand?: string;
+  /** Runs in a worktree before the board removes it. */
+  cleanupCommand?: string;
+  /** What auto-detection last found; missing: detection never ran (the board runs it on start). */
+  setupDetected?: SetupDetection | null;
+}
+
+/** Worktree setup values detected from the board folder (see worktree-setup.ts). */
+export interface SetupDetection {
+  at: string;
+  copyFiles: string[];
+  setupCommand: string;
+  /** Lockfiles the setup command came from, e.g. "bun.lock", "web/bun.lock". */
+  setupFrom: string[];
+}
+
+/** A tool Claude left running in the background (a long Bash call, a subagent). */
+export interface BackgroundTask {
+  id: string;
+  description: string;
+  /** When the board first saw it. */
+  startedAt: string;
 }
 
 export interface Ticket {
@@ -64,6 +89,8 @@ export interface Ticket {
   lastRunAt: string | null;
   /** When the current run or chat reply started; null when Claude is not working. Missing on old tickets. */
   runStartedAt?: string | null;
+  /** Claude ended its turn and waits for these background tasks; it resumes when they finish. */
+  waitingOn?: BackgroundTask[] | null;
   runCount: number;
   error: string | null;
   /** Non-fatal heads-up about how the ticket runs (e.g. no worktree yet); the user can dismiss it. */
@@ -76,15 +103,44 @@ export interface Ticket {
   planKey?: string | null;
   /** Siblings (ticket id or planKey) that must be done before a running plan starts this ticket. */
   dependsOn?: string[];
+  /**
+   * Exclusive resources this ticket's runs use (e.g. "emulator"), lowercase. Tickets that need the same one never
+   * run at the same time, on any board of this machine; it adds no order (that is dependsOn).
+   */
+  needs?: string[];
+  /** Ticket this one was branched from (a copy of its conversation and committed code). Not a plan parent. */
+  branchedFrom?: string | null;
+  /** When the branch was made: conversation entries before this are the copied history. */
+  branchPoint?: BranchPoint | null;
   /** Set on a planner ticket once its plan was started: the board runs its children unattended. */
   plan?: Plan | null;
   /** Chat messages sent while Claude was working that it has not read yet, oldest first. */
   queued?: QueuedMessage[];
   /** A chat reply the daemon cut off by restarting (or held back while a restart waited); recover() resumes it. */
   interrupted?: Interrupted | null;
+  /**
+   * A chat reply waiting for a free run slot: the card shows In Progress, queued, and dispatch() starts it before
+   * Ready tickets. from: where the card was, so Stop puts it back.
+   */
+  slotWait?: { at: string; from: Pick<Ticket, "status" | "outcome"> } | null;
+  /** Output files the user published as claude.ai pages from the Outputs tab, one link per file. */
+  shareLinks?: ShareLink[];
   createdAt: string;
   updatedAt: string;
   body: string;
+}
+
+export interface ShareLink {
+  /** Path relative to the outputs folder. */
+  file: string;
+  url: string;
+  at: string;
+}
+
+export interface BranchPoint {
+  at: string;
+  /** Source title at branch time (shown if the source is deleted later). */
+  sourceTitle: string;
 }
 
 /** Recurring ticket template: on each cron tick the board creates a ticket from it and runs it. */
@@ -136,6 +192,8 @@ export interface Interrupted {
   prompt?: { text: string; raw?: boolean };
   /** Held back while a restart waited, not cut off: resumed without the interruption note. */
   held?: boolean;
+  /** The reply answers a message the user typed (see ActiveRun.chat.user); the resumed run keeps its rights. */
+  user?: boolean;
 }
 
 export interface QueuedMessage {
@@ -149,6 +207,8 @@ export interface QueuedMessage {
    * a reply run it starts leaves the card, outcome and run count alone.
    */
   peer?: boolean;
+  /** Sent by a planner's run (chat_ticket), not typed by the user: the reply run gets no planner rights of its own. */
+  fromPlanner?: boolean;
 }
 
 /** A question one ticket's Claude asked another's (ask_ticket), kept per board in questions.json. */

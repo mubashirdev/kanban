@@ -6,7 +6,7 @@ import { Modal } from "./Modal";
 import { useMediaQuery } from "./useMediaQuery";
 
 /** Top-bar "N need you" across every board; the list jumps straight to a ticket. ↑↓ move, Esc closes. */
-export function Inbox({ items, onPick, landOnInbox = false }: { items: InboxItem[]; onPick: (i: InboxItem) => void; landOnInbox?: boolean }) {
+export function Inbox({ items, onPick, landOnInbox = false, openRequest }: { items: InboxItem[]; onPick: (i: InboxItem) => void; landOnInbox?: boolean; openRequest?: number }) {
   const [open, setOpen] = useState(false);
   const phone = useMediaQuery("(max-width: 767px)");
   // Phones open straight onto what is waiting for you, once per browser session.
@@ -34,6 +34,13 @@ export function Inbox({ items, onPick, landOnInbox = false }: { items: InboxItem
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
+
+  // ⌘K "Open inbox": open the list with the first entry focused.
+  useEffect(() => {
+    if (!openRequest) return;
+    setOpen(true);
+    requestAnimationFrame(() => focusAt(0));
+  }, [openRequest]);
 
   const entries = () => [...(menu.current?.querySelectorAll<HTMLButtonElement>("[role=menuitem]") ?? [])];
   const focusAt = (i: number) => {

@@ -328,7 +328,22 @@ test("parseSession: planning tool calls become forms and cards keyed by the tool
   expect(more.openQuestions).toBe(0);
 });
 
+test("parseSession: propose_branch shows a Branch card", () => {
+  const s = parseSession(asst([{ type: "tool_use", id: "toolu_b", name: "mcp__ckanban__propose_branch", input: { reason: " Try SQLite " } }], "2026-10-06T01:00:00Z"));
+  expect(s.entries).toEqual([{ uuid: "toolu_b", at: "2026-10-06T01:00:00Z", role: "assistant", kind: "text", text: "", branch: { reason: "Try SQLite" } }]);
+  expect(s.lastMessage?.text).toBe("Offered to branch this ticket");
+  expect(parseSession(asst([{ type: "tool_use", id: "b2", name: "propose_branch", input: {} }], "1")).entries[0].branch).toEqual({ reason: "" });
+});
+
 test("parseSession: an unreadable planning tool call falls back to a tool line", () => {
   const s = parseSession(asst([{ type: "tool_use", id: "x", name: "mcp__ckanban__propose_tickets", input: { tickets: "nope" } }], "1"));
   expect(s.entries[0].kind).toBe("tool");
+});
+
+test("parseSession lists pages published by the publish_artifact MCP tool", () => {
+  const raw = [
+    asst([{ type: "tool_use", id: "m1", name: "mcp__ckanban__publish_artifact", input: { html: "<p>x</p>" } }], "2026-10-06T01:00:01Z"),
+    user([{ type: "tool_result", tool_use_id: "m1", content: [{ type: "text", text: "Published /o/artifacts/plan.html at https://claude.ai/artifact/Plan123" }] }], "2026-10-06T01:00:02Z"),
+  ].join("\n");
+  expect(parseSession(raw).artifacts).toEqual([{ url: "https://claude.ai/artifact/Plan123", label: "plan", at: "2026-10-06T01:00:02Z" }]);
 });

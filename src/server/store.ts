@@ -1,6 +1,6 @@
 import { ticketMetadata, type TicketMetadata } from "./ticket-metadata";
 import {
-  appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync,
+  appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
@@ -17,7 +17,7 @@ export function defaultRoot(): string {
   return process.env.CKANBAN_HOME ?? join(homedir(), ".claude-kanban");
 }
 
-function atomicWrite(file: string, content: string) {
+export function atomicWrite(file: string, content: string) {
   mkdirSync(dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${newId()}`;
   writeFileSync(tmp, content);
@@ -161,7 +161,7 @@ export class Store {
 
   createTicket(
     slug: string,
-    input: TicketMetadata & { title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; parentId?: string; planKey?: string; dependsOn?: string[]; standalone?: boolean; access?: "read" | "edit"; isolated?: boolean; codexSessionId?: string },
+    input: TicketMetadata & { title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; parentId?: string; planKey?: string; dependsOn?: string[]; needs?: string[]; standalone?: boolean; access?: "read" | "edit"; isolated?: boolean; codexSessionId?: string },
   ): Ticket {
     const at = nowIso();
     const t: Ticket = {
@@ -174,6 +174,7 @@ export class Store {
       ...(input.dependsOn?.length ? { dependsOn: input.dependsOn } : {}),
       ...(input.standalone ? { standalone: true, access: input.access ?? "read", readAt: at, ...(input.isolated ? { isolated: true } : {}) } : {}),
       ...(input.codexSessionId ? { codexSessionId: input.codexSessionId } : {}),
+      ...(input.needs?.length ? { needs: input.needs } : {}),
     };
     atomicWrite(this.ticketPath(slug, t.id), serializeTicket(t));
     this.recordWorkspaceChange(slug, t, ["Created ticket"]);
@@ -216,6 +217,17 @@ export class Store {
     const dir = join(this.ticketDir(slug, id), "outputs");
     mkdirSync(dir, { recursive: true });
     return dir;
+  }
+
+  /** Absolute path of the outputs folder, without creating it (shown in the Share menu). */
+  outputsPath(slug: string, id: string): string {
+    return join(this.ticketDir(slug, id), "outputs");
+  }
+
+  /** Give a branched ticket its own copy of the source's deliverables. */
+  copyOutputs(slug: string, from: string, to: string): void {
+    const src = join(this.ticketDir(slug, from), "outputs");
+    if (existsSync(src)) cpSync(src, join(this.ticketDir(slug, to), "outputs"), { recursive: true });
   }
 
   listOutputs(slug: string, id: string): OutputFile[] {

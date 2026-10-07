@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mcpConfig } from "./agents";
 import { helperArgv } from "./artifact";
+import { withUtf8Locale } from "./locale";
 
 /** Bun ≥ 1.3.5 can spawn processes on a pseudo-terminal (`Bun.spawn({ terminal })`). */
 export function ptySupported(): boolean {
@@ -35,7 +36,7 @@ export interface ChatProfile {
  */
 export function quickChatArgs(profile: ChatProfile, serverArgv: string[] = [...helperArgv(), "mcp"]): string[] {
   const note = [
-    `You are running in the quick Claude chat of Claude Kanban (ckanban), a local kanban board that runs tickets through Claude.`,
+    `You are running in the quick Claude chat of ckanban, a local kanban board that runs tickets through Claude.`,
     `This chat belongs to the board (profile) "${profile.name}" (slug: ${profile.slug}), whose folder is ${profile.path}.`,
     `For board work (making, finding, updating or moving tickets) use the ckanban MCP tools: create_ticket, list_tickets, get_ticket, update_ticket, move_ticket, comment_ticket.`,
     `Use profile "${profile.slug}" unless the user names another board. New tickets land in Backlog.`,
@@ -63,7 +64,7 @@ export class Shell {
     const { CLAUDECODE, CLAUDE_CODE_ENTRYPOINT, CKANBAN_TICKET, ...env } = process.env;
     this.proc = Bun.spawn(opts.script ? [shell, "-l", "-c", opts.script] : [shell, "-l"], {
       cwd,
-      env: { ...env, TERM: "xterm-256color", COLORTERM: "truecolor" },
+      env: { ...withUtf8Locale(env), TERM: "xterm-256color", COLORTERM: "truecolor" },
       terminal: {
         cols, rows, name: "xterm-256color",
         data: (_t, data) => this.push(data),

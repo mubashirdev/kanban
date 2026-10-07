@@ -1,4 +1,5 @@
 import { isSlashCommand } from "./commands";
+import type { BackgroundTask } from "./types";
 
 export interface RunOutput {
   code: number;
@@ -16,6 +17,10 @@ export interface RunHandle {
   send(text: string): boolean;
   readonly stopped: boolean;
 }
+
+/** After Claude's last task finishes, how long to wait for the turn it starts before ending input anyway. */
+export const BACKGROUND_GRACE_MS = 10_000;
+const TASK_DONE = new Set(["completed", "failed", "killed", "stopped"]);
 
 const STDERR_TAIL = 2048;
 
@@ -51,7 +56,35 @@ export function buildArgs(
   if (outputStyle) args.push("--settings", JSON.stringify({ outputStyle }));
   if (mcp) args.push("--mcp-config", mcp);
   if (appendSystemPrompt) args.push("--append-system-prompt", appendSystemPrompt);
+  // Claude in Chrome. Its tools ask for permission even under bypassPermissions; with
+  // --permission-prompt-tool stdio those asks reach the board as control requests (see controlResponse).
+  args.push("--chrome", "--permission-prompt-tool", "stdio");
   return args;
+}
+
+const CHROME_TOOL = "mcp__claude-in-chrome__";
+
+/**
+ * The board's answer to a control request from claude (stream-json). Permission asks for Claude in Chrome
+ * tools are allowed; every other ask is denied, as it was before prompts reached the board (headless
+ * runs had nobody to answer them). Anything else gets an error so claude never waits on the board.
+ */
+export function controlResponse(ev: any): unknown {
+  const req = ev?.request;
+  const id = ev?.request_id;
+  if (req?.subtype !== "can_use_tool") {
+    return { type: "control_response", response: { subtype: "error", request_id: id, error: `unsupported control request: ${req?.subtype}` } };
+  }
+  const allow = typeof req.tool_name === "string" && req.tool_name.startsWith(CHROME_TOOL);
+  return {
+    type: "control_response",
+    response: {
+      subtype: "success", request_id: id,
+      response: allow
+        ? { behavior: "allow", updatedInput: req.input ?? {} }
+        : { behavior: "deny", message: "Permission prompts can't be answered in a board run." },
+    },
+  };
 }
 
 function userMessage(text: string): string {
@@ -66,6 +99,12 @@ export function startRun(opts: {
   /** First user message, written to stdin (needs --input-format stream-json in args). */
   input?: string;
   onEvent: (ev: any) => void;
+  /**
+   * Claude ended its turn but background tasks it waits on are still running (the run stays
+   * open so it can pick their results up); null once it is working or done again.
+   */
+  onWaiting?: (tasks: BackgroundTask[] | null) => void;
+  graceMs?: number;
 }): RunHandle {
   let stopped = false;
   let proc: ReturnType<typeof Bun.spawn> | null = null;
@@ -74,22 +113,44 @@ export function startRun(opts: {
   // Messages written but not yet picked up by Claude (no replay seen).
   let unread = 0;
   let pendingCommand = opts.input && isSlashCommand(opts.input) ? opts.input : null;
+  // Background tasks still running. Claude Code kills them when input ends, and starts a turn of
+  // its own when one finishes, so input stays open while any are left.
+  const tasks = new Map<string, BackgroundTask>();
+  // Between Claude's result and its next turn.
+  let idle = false;
+  let waiting = false;
+  let grace: ReturnType<typeof setTimeout> | null = null;
+  const clearGrace = () => {
+    if (grace) clearTimeout(grace);
+    grace = null;
+  };
+  const report = () => {
+    const now = idle && tasks.size > 0 && !!stdin;
+    if (!now && !waiting) return;
+    waiting = now;
+    opts.onWaiting?.(now ? [...tasks.values()] : null);
+  };
   const closeInput = () => {
+    clearGrace();
     const s = stdin;
     stdin = null;
     try {
       s?.end();
     } catch {}
   };
-  const write = (text: string): boolean => {
+  const writeLine = (line: string): boolean => {
     if (!stdin) return false;
     try {
-      stdin.write(userMessage(text));
+      stdin.write(line);
       stdin.flush();
     } catch {
       stdin = null;
       return false;
     }
+    return true;
+  };
+  const write = (text: string): boolean => {
+    if (!writeLine(userMessage(text))) return false;
     unread++;
     return true;
   };
@@ -109,6 +170,21 @@ export function startRun(opts: {
       stdin = p.stdin as import("bun").FileSink;
       write(opts.input);
     }
+
+    const trackTasks = (ev: any) => {
+      if (ev?.type !== "system") return;
+      if (ev.subtype === "background_tasks_changed" && Array.isArray(ev.tasks)) {
+        // The full current list: keep first-seen times for tasks already known.
+        const known = new Map(tasks);
+        tasks.clear();
+        for (const t of ev.tasks) {
+          const id = String(t?.task_id ?? "");
+          if (!id) continue;
+          tasks.set(id, known.get(id) ?? { id, description: String(t.description || "Background task"), startedAt: new Date().toISOString() });
+        }
+      } else if (ev.subtype === "task_notification" && TASK_DONE.has(ev.status)) tasks.delete(String(ev.task_id));
+      else if (ev.subtype === "task_updated" && TASK_DONE.has(ev.patch?.status)) tasks.delete(String(ev.task_id));
+    };
 
     const readStdout = (async () => {
       const decoder = new TextDecoder();
@@ -133,12 +209,33 @@ export function startRun(opts: {
           events.push(replay); opts.onEvent(replay);
           pendingCommand = null; unread = Math.max(0, unread - 1);
         }
+        // Permission asks and other requests to the host: answer them, they aren't part of the conversation.
+        if (ev?.type === "control_request") {
+          writeLine(JSON.stringify(controlResponse(ev)) + "\n");
+          return;
+        }
         // Partial-message deltas are only for the live view; don't keep thousands of them in memory.
         if (ev?.type !== "stream_event") events.push(ev);
         if (ev?.type === "user" && ev.isReplay) unread = Math.max(0, unread - 1);
+        trackTasks(ev);
+        if (ev?.type === "result") idle = true;
+        else if (ev?.type === "assistant" || ev?.type === "stream_event" || (ev?.type === "system" && ev.subtype === "init")) {
+          idle = false;
+          clearGrace();
+        }
         // Claude is done and nothing is waiting: end input so the process exits. Messages still
-        // unread keep it open; Claude answers them in another turn with its own result.
-        if (ev?.type === "result" && unread === 0) closeInput();
+        // unread keep it open; Claude answers them in another turn with its own result. So do
+        // background tasks: Claude resumes on its own when they finish.
+        if (idle && unread === 0 && stdin) {
+          if (!tasks.size && ev?.type === "result") closeInput();
+          // The last task finished after the result: Claude normally starts a turn for it at
+          // once; if it doesn't, don't keep the process around forever.
+          else if (!tasks.size && !grace) grace = setTimeout(() => {
+            grace = null;
+            if (idle && unread === 0 && !tasks.size) closeInput();
+          }, opts.graceMs ?? BACKGROUND_GRACE_MS);
+        }
+        report();
         opts.onEvent(ev);
       };
       for await (const chunk of p.stdout as ReadableStream<Uint8Array>) {
@@ -155,6 +252,8 @@ export function startRun(opts: {
     const stderrText = new Response(p.stderr as ReadableStream).text();
     const [code, stderr] = await Promise.all([p.exited, stderrText, readStdout]);
     closeInput();
+    idle = false;
+    report();
     return { code, stderr: stderr.slice(-STDERR_TAIL), events };
   })();
 

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { shellSocketUrl, type PtyKind } from "./api";
 import { KeyboardIcon } from "./icons";
 import { useMediaQuery } from "./useMediaQuery";
+import { keyToInput } from "./termKeys";
 
 function themeFromCss(): ITheme {
   const css = getComputedStyle(document.documentElement);
@@ -94,11 +95,20 @@ export function TerminalView({ slug, kind = "shell", active, restartSignal, comm
       f.fit();
     } catch {}
 
-    const onData = t.onData((data) => {
+    const sendInput = (data: string) => {
       // An ended quick chat waits for the "Start again" button instead of any key.
       if (stateRef.current === "exited") {
         if (kind === "shell") send({ type: "restart" });
       } else send({ type: "input", data });
+    };
+    const onData = t.onData(sendInput);
+    // Shift+Enter sends ESC CR so Claude Code inserts a newline instead of submitting.
+    t.attachCustomKeyEventHandler((ev) => {
+      const data = keyToInput(ev);
+      if (data === undefined) return true;
+      if (data) sendInput(data);
+      ev.preventDefault();
+      return false;
     });
     const onResize = t.onResize(({ cols, rows }) => send({ type: "resize", cols, rows }));
     let frame = 0;

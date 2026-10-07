@@ -3,19 +3,26 @@ import { TicketMetadata } from "./TicketMetadata";
 import { useEffect, useRef, useState } from "react";
 import { api, COLUMNS, safeHref, startWorkTarget, subscribe, type ClaudeSession, type Profile, type Status, type Ticket } from "./api";
 import { outcomeBadge } from "./Card";
+import { branchTicket } from "./branch";
 import { BugReportDialog } from "./BugReportDialog";
+import { Changes, useTicketDiff } from "./Changes";
 import { Chat, useStop } from "./Chat";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronUpIcon, CloseIcon, ExternalIcon, FileTextIcon, SparkIcon } from "./icons";
+import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronUpIcon, CloseIcon, ExternalIcon, FileTextIcon, LinkIcon, SparkIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
 import { useFocusTrap, useLayer } from "./layers";
 import { complete, PlanPanel, PlanSummary } from "./PlanPanel";
 import { Outputs } from "./Outputs";
 import { Select } from "./Select";
+import { useShareNotices } from "./share";
 import { SessionPicker, sessionLabel } from "./SessionPicker";
+import { useSnippetPicker } from "./SnippetPicker";
 import { TicketMenu } from "./TicketMenu";
+import { missingPctReason, UsagePanel, usageChipText, useTicketUsage } from "./UsagePanel";
+import { approxPct } from "./usage";
 import { Markdown } from "./Transcript";
 import { useMediaQuery } from "./useMediaQuery";
+import { NeedsField } from "./Needs";
 
 // v2: widths saved under the old 80% default are dropped once so the new default shows.
 const WIDTH_KEY = "ckanban.panelWidth.v2";
@@ -25,6 +32,9 @@ const MIN_WIDTH = 640;
 const BACKDROP_MIN = 64;
 
 const defaultWidth = () => Math.round(Math.min(1120, window.innerWidth * 0.72));
+
+/** Until the user resizes the panel, the Changes tab opens it this wide (clamped to the window): file list plus diff. */
+const CHANGES_WIDTH = 1280;
 
 /** Chat room for the default width: a comfortable reading column plus side padding. Dragging can go wider. */
 const CHAT_ROOM = 800;
@@ -169,7 +179,7 @@ function usePanelWidth(fit: number) {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-  return { width, dragging, handle: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp, onDoubleClick: reset, onKeyDown } };
+  return { width, custom: pref !== null, dragging, handle: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp, onDoubleClick: reset, onKeyDown } };
 }
 
 /** Ticket view: details on the left, the chat with Claude filling the right side. */
@@ -192,22 +202,31 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const slug = profile.slug;
   const parent = ticket.parentId ? tickets.find((t) => t.id === ticket.parentId) : undefined;
   const children = tickets.filter((t) => t.parentId === ticket.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const branchedFrom = ticket.branchedFrom ? tickets.find((t) => t.id === ticket.branchedFrom) : undefined;
+  const branches = tickets.filter((t) => t.branchedFrom === ticket.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const siblings = ticket.parentId ? tickets.filter((t) => t.parentId === ticket.parentId && t.id !== ticket.id) : [];
   const deps = (ticket.dependsOn ?? []).map((ref) => siblings.find((s) => s.id === ref || s.planKey === ref) ?? ref);
   const [title, setTitle] = useState(ticket.title);
   const [body, setBody] = useState(ticket.body);
   const [editing, setEditing] = useState(false);
   const images = useImagePaste(setBody);
+  const bodyInput = useRef<HTMLTextAreaElement>(null);
+  const snippets = useSnippetPicker({ slug, ref: bodyInput, setValue: setBody });
   // Body the current edit started from; the server rejects the save if the file changed meanwhile.
   const [baseBody, setBaseBody] = useState(ticket.body);
-  const [tabPick, setTabPick] = useState<"chat" | "plan" | "outputs" | "review">(initialTab);
-  const setTab = (next: "chat" | "plan" | "outputs" | "review") => {
+  const [tabPick, setTabPick] = useState<"chat" | "plan" | "changes" | "outputs" | "review" | "usage">(initialTab);
+  const setTab = (next: "chat" | "plan" | "changes" | "outputs" | "review" | "usage") => {
     setTabPick(next);
     if (window.matchMedia("(max-width: 900px)").matches) setDetailsOpenState(false);
   };
-  // The Plan tab exists only while the ticket has children.
-  const tab = tabPick === "plan" && !children.length ? "chat" : tabPick;
+  // The Plan tab exists only while the ticket has children; Changes only while it has a worktree.
+  const tab = (tabPick === "plan" && !children.length) || (tabPick === "changes" && !ticket.worktree) ? "chat" : tabPick;
+  const diffState = useTicketDiff(slug, ticket);
   const [outputCount, setOutputCount] = useState(0);
+  const ticketUsage = useTicketUsage(slug, ticket.id);
+  const usage = ticketUsage.usage;
+  const hasUsage = !!usage?.runs.length;
+  useShareNotices(ticket);
   // A file to show when the Outputs tab opens (a mockup clicked in the chat).
   const [outputFocus, setOutputFocus] = useState<string | null>(null);
   const [titleSave, setTitleSave] = useState<"saving" | "saved" | null>(null);
@@ -217,6 +236,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [reportingBug, setReportingBug] = useState(false);
   const [confirmStart, setConfirmStart] = useState(false);
+  const [confirmBranch, setConfirmBranch] = useState(false);
   const [picking, setPicking] = useState(false);
   const [linked, setLinked] = useState<ClaudeSession | null>(null);
   const [detailsOpen, setDetailsOpenState] = useState(() => {
@@ -256,7 +276,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const titleRef = useRef<HTMLInputElement>(null);
   // Leaving for the neighbouring ticket: keep a title edit, and don't drop an unsaved description edit.
   const step = (id: string | null | undefined) => {
-    if (!id || !nav || editing || confirmDelete || confirmStart || picking || reportingBug) return;
+    if (!id || !nav || editing || confirmDelete || confirmStart || confirmBranch || picking || reportingBug) return;
     if (title !== ticket.title) saveTitle();
     nav.go(id);
   };
@@ -279,7 +299,9 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const bodyRef = useRef<HTMLDivElement>(null);
   const side = useSidebarWidth(bodyRef);
   // Opens fitted to the sidebar plus the chat's reading column; dragging can make it wider.
-  const { width, dragging, handle } = usePanelWidth((detailsOpen ? side.pref : 0) + CHAT_ROOM);
+  const panel = usePanelWidth((detailsOpen ? side.pref : 0) + CHAT_ROOM);
+  const { dragging, handle } = panel;
+  const width = tab === "changes" && !panel.custom ? clampWidth(CHANGES_WIDTH) : panel.width;
   const [descScrolled, setDescScrolled] = useState(false);
 
   const loadOutputs = () => api.outputs(slug, ticket.id).then((o) => setOutputCount(o.length)).catch(() => {});
@@ -344,6 +366,19 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
       .catch((e) => onError(e.message));
   };
   const setStatus = (status: Status) => act(() => api.updateTicket(slug, ticket.id, { status }));
+  const markDoneRef = useRef(() => {});
+  markDoneRef.current = () => { if (ticket.status === "review") setStatus("done"); };
+  useEffect(() => {
+    // ⌘⇧Enter / Ctrl+Shift+Enter: Mark done (Review only), also while typing.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" || !e.shiftKey || !(e.metaKey || e.ctrlKey) || e.altKey || e.isComposing) return;
+      if (document.querySelector(".overlay")) return;
+      e.preventDefault();
+      markDoneRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const col = COLUMNS.find((c) => c.id === ticket.status);
   const startTarget = startWorkTarget(ticket);
   const startWork = () => (startTarget === "planning" ? setStatus("planning") : setConfirmStart(true));
@@ -391,6 +426,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
           )}
           <TicketMenu ticket={ticket} working={working} live={!!(ticket.terminalOpen || linked?.live)}
             linkedLabel={ticket.workdir && ticket.sessionId ? (linked ? sessionLabel(linked) : ticket.sessionId.slice(0, 8)) : null}
+            onBranch={() => setConfirmBranch(true)}
             onPickSession={() => setPicking(true)}
             onUnlink={() => act(() => api.linkSession(slug, ticket.id, null))}
             onCheckPr={() => act(() => api.checkPr(slug, ticket.id))}
@@ -437,12 +473,30 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
 
               {ticket.parentId && (
                 <div className="field-row">
-                  <span className="field-key" title="The planner ticket whose chat proposed this one">From</span>
+                  <span className="field-key" title="The planner ticket whose plan runs this one (it proposed or adopted it)">From</span>
                   {parent ? (
                     <button className="link-btn ticket-link" onClick={() => onOpenTicket(parent.id)}>{parent.title}</button>
                   ) : (
                     <span className="muted small">Planner ticket was deleted</span>
                   )}
+                </div>
+              )}
+              {ticket.branchedFrom && (
+                <div className="field-row">
+                  <span className="field-key" title="This ticket started as a copy of that one's conversation and code">Branched from</span>
+                  {branchedFrom ? (
+                    <button className="link-btn ticket-link" onClick={() => onOpenTicket(branchedFrom.id)}>{branchedFrom.title}</button>
+                  ) : (
+                    <span className="muted small">Source ticket was deleted</span>
+                  )}
+                </div>
+              )}
+              {branches.length > 0 && (
+                <div className="field-row">
+                  <span className="field-key" title="Tickets branched from this one">Branches</span>
+                  <span className="dep-list">
+                    {branches.map((b) => <button key={b.id} className="link-btn ticket-link" onClick={() => onOpenTicket(b.id)}>{b.title}</button>)}
+                  </span>
                 </div>
               )}
               {deps.length > 0 && (
@@ -456,8 +510,31 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                 </div>
               )}
 
+              <NeedsField slug={slug} ticket={ticket} onError={onError} />
+
               {children.length > 0 && <PlanSummary ticket={ticket} children={children} onOpen={() => setTab("plan")} />}
 
+              {(!!ticket.session?.artifacts.length || !!ticket.shareLinks?.length || outputCount > 0 || hasUsage) && (
+                <div className="result-chips" aria-label="Results">
+                  {usage && hasUsage && (
+                    <button className="result-chip usage-chip" onClick={() => setTab("usage")}
+                      title={usage.totals.pctCurrentWindow === null ? missingPctReason(usage) : "This ticket's ≈ share of the current 5h plan window, and its API-equivalent cost"}>
+                      {usageChipText(usage)}
+                    </button>
+                  )}
+                  {outputCount > 0 && (
+                    <button className="result-chip" onClick={() => setTab("outputs")}><FileTextIcon size={13} /> {outputCount} output file{outputCount > 1 ? "s" : ""}</button>
+                  )}
+                  {ticket.session?.artifacts.slice().reverse().map((a) => (
+                    <a key={a.url} className="result-chip" href={safeHref(a.url)} target="_blank" rel="noreferrer" title={a.url}><ExternalIcon size={12} /> {a.label}</a>
+                  ))}
+                  {ticket.shareLinks?.filter((l) => !ticket.session?.artifacts.some((a) => a.url === l.url)).slice().reverse().map((l) => (
+                    <a key={l.url} className="result-chip" href={safeHref(l.url)} target="_blank" rel="noreferrer" title={`Share link for ${l.file}: ${l.url}`}>
+                      <LinkIcon size={12} /> {l.file.slice(l.file.lastIndexOf("/") + 1)}
+                    </a>
+                  ))}
+                </div>
+              )}
             </div>
 
             <section className={`details-desc ${descScrolled && !editing ? "scrolled" : ""}`}>
@@ -467,9 +544,13 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
               </div>
               {editing ? (
                 <div className="desc-edit">
-                  <textarea className={`body-input${images.dragOver ? " drop-target" : ""}`} value={body} onChange={(e) => setBody(e.target.value)} autoFocus
-                    placeholder="Markdown. Paste or drop images." {...images.handlers}
-                    onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveBody(); }} />
+                  <textarea ref={bodyInput} className={`body-input${images.dragOver ? " drop-target" : ""}`} value={body} onChange={(e) => setBody(e.target.value)} autoFocus
+                    placeholder="Markdown. Paste or drop images. Type @ to insert a snippet." {...images.handlers} {...snippets.handlers}
+                    onKeyDown={(e) => {
+                      if (snippets.onKeyDown(e)) return;
+                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey) saveBody();
+                    }} />
+                  {snippets.popup}
                   {images.error && <div className="form-error">{images.error}</div>}
                   <div className="form-actions">
                     <button className="btn ghost small" onClick={() => { setBody(baseBody); setEditing(false); images.clearError(); }}>Cancel</button>
@@ -512,16 +593,28 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                 </button>
               )}
               <button role="tab" aria-selected={tab === "review"} className={tab === "review" ? "active" : ""} onClick={()=>setTab("review")}>Review</button>
+              {ticket.worktree && (
+                <button role="tab" aria-selected={tab === "changes"} className={tab === "changes" ? "active" : ""} onClick={() => { diffState.reload(); setTab("changes"); }}>
+                  Changes{!!diffState.diff?.files.length && <span className="tab-count">{diffState.diff.files.length}</span>}
+                </button>
+              )}
               <button role="tab" aria-selected={tab === "outputs"} className={tab === "outputs" ? "active" : ""} onClick={() => { setOutputFocus(null); setTab("outputs"); }}>
                 Outputs{outputCount > 0 && <span className="tab-count">{outputCount}</span>}
+              </button>
+              <button role="tab" aria-selected={tab === "usage"} className={tab === "usage" ? "active" : ""} onClick={() => { ticketUsage.reload(); setTab("usage"); }}>
+                Usage{usage && hasUsage && usage.totals.pctCurrentWindow !== null && <span className="tab-count">{approxPct(usage.totals.pctCurrentWindow).replace(" ", "")}</span>}
               </button>
             </nav>
             {tab === "review" ? <div className="panel-scroll"><ReviewPanel slug={slug} ticket={ticket} onError={onError} onOutputs={()=>setTab("outputs")} /></div> : tab === "plan" ? (
               <div className="panel-scroll panel-plan">
                 <PlanPanel slug={slug} ticket={ticket} children={children} onOpenTicket={onOpenTicket} onError={onError} />
               </div>
+            ) : tab === "changes" ? (
+              <Changes slug={slug} ticket={ticket} state={diffState} onSent={() => setTab("chat")} onError={onError} />
+            ) : tab === "usage" ? (
+              <div className="panel-scroll panel-usage"><UsagePanel usage={usage} error={ticketUsage.error} /></div>
             ) : tab === "outputs" ? (
-              <div className="panel-scroll panel-outputs"><Outputs slug={slug} ticketId={ticket.id} onCount={setOutputCount} focus={outputFocus} /></div>
+              <div className="panel-scroll panel-outputs"><Outputs slug={slug} ticket={ticket} onCount={setOutputCount} focus={outputFocus} /></div>
             ) : (
               <Chat slug={slug} ticket={ticket} tickets={tickets} onOpenTicket={onOpenTicket} onError={onError}
                 onOpenOutput={(name) => { setOutputFocus(name); setTab("outputs"); }} />
@@ -539,6 +632,13 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             onCancel={() => setConfirmStart(false)}
             onConfirm={async () => { await api.updateTicket(slug, ticket.id, { status: "ready" }); setConfirmStart(false); }}>
             <p>The selected agent will work on this on its own. When working: <b>{ticket.mode === "interview" ? "Interview me first" : "Just do it"}</b>.</p>
+          </ConfirmDialog>
+        )}
+        {confirmBranch && (
+          <ConfirmDialog title="Branch this ticket?" confirmLabel="Branch ticket" busyLabel="Branching…" tone="primary"
+            onCancel={() => setConfirmBranch(false)}
+            onConfirm={async () => { await branchTicket(slug, ticket, onOpenTicket); setConfirmBranch(false); }}>
+            <p>Creates <b>Branch: {ticket.title}</b> in Planning with a copy of this conversation{ticket.branch ? <>, on its own branch off <code>{ticket.branch}</code> (committed work only)</> : ""}. Then take it in another direction; this ticket stays as it is.</p>
           </ConfirmDialog>
         )}
         {reportingBug && (

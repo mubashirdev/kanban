@@ -129,6 +129,13 @@ test("run prompts point Claude at the artifact helper", () => {
   expect(chatPrompt(t, "hi", "refine", "/o")).not.toContain("artifact publish");
 });
 
+test("planning chats reach artifacts through the MCP tools, not the Bash helper", () => {
+  const p = chatPrompt({ ...ticket, mode: "auto" } as Ticket, "", "refine", "/o");
+  expect(p).toContain("`read_artifact`");
+  expect(p).toContain("`publish_artifact` with the full edited page and the same url");
+  expect(p).toContain("Publishing artifacts is allowed while planning");
+});
+
 test("a scheduled ticket's first run is told its schedule", () => {
   const t = { ...ticket, scheduleId: "s1" } as Ticket;
   const p = firstRunPrompt(t, { isGit: true, outputDir: "/out", schedule: { id: "s1", name: "Nightly audit", board: "kanban" } });
@@ -156,6 +163,15 @@ test("planning and Review/Done chats can propose new tickets, first runs can't",
   expect(firstRunPrompt(t, { isGit: true, outputDir: "/o" })).not.toContain("ckanban-tickets");
 });
 
+test("every ticket chat can offer a branch; first runs can't", () => {
+  const t = { ...ticket, runCount: 1 } as Ticket;
+  expect(chatPrompt(t, "branch this", "refine", "/o")).toContain("`propose_branch` tool");
+  const act = chatPrompt(t, "branch this", "act", "/o");
+  expect(act).toContain("`propose_branch` tool");
+  expect(act).toContain("proposing tickets or a branch was all");
+  expect(firstRunPrompt(t, { isGit: true, outputDir: "/o" })).not.toContain("propose_branch");
+});
+
 test("planner wake-ups: events or final check, scoped rights, one visible line first", () => {
   const t = { ...ticket, id: "t_plan", title: "Big plan" } as Ticket;
   const ev = orchestratorPrompt(t, { kind: "event", events: ['t_1 "A" failed (review)'], table: "- t_1 \"A\": review; failed", board: "kanban", outputDir: "/o" });
@@ -179,4 +195,15 @@ test("a plan's child is told to rebase onto the remote base branch first", () =>
 test("API connection retries show on the card instead of looking frozen", () => {
   expect(summarizeEvent({ type: "system", subtype: "api_retry", attempt: 1, max_retries: 10 })).toBeNull();
   expect(summarizeEvent({ type: "system", subtype: "api_retry", attempt: 4, max_retries: 10 })).toBe("Can't reach Claude's API, retrying (4/10)…");
+});
+
+test("ticket chats can manage tickets when the user asks; planners hear about needs", () => {
+  const act = chatPrompt(ticket, "manage A and B", "act", "/o");
+  for (const s of ["adopt_tickets", "plan_control", "needs (e.g. [\"emulator\"])", "If the user only asked to create or adopt tickets, don't start the plan"]) expect(act).toContain(s);
+  const refine = chatPrompt(ticket, "manage A and B", "refine", "/o");
+  expect(refine).toContain("this Planning chat is read-only and can't change the board");
+  expect(refine).toContain('"needs":["emulator"]');
+  const wake = orchestratorPrompt(ticket, { kind: "event", events: [], table: "", board: "kanban", outputDir: "/o" });
+  expect(wake).toContain("one ticket per exclusive resource (needs) at a time");
+  expect(wake).toContain("instead of a dependsOn chain");
 });

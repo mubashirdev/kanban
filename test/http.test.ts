@@ -13,12 +13,13 @@ import { tempDir } from "./helpers";
 
 let server: ReturnType<typeof createServer>;
 let store: Store;
+let board: Board;
 let base: string;
 
 beforeAll(() => {
   store = new Store(tempDir("ck-home-"));
   const bus = new Bus();
-  const board = new Board(store, bus, { claudeBin: "/bin/false" });
+  board = new Board(store, bus, { claudeBin: "/bin/false" });
   server = createServer({ store, bus, board, port: 0, webDir: tempDir("ck-web-") });
   base = `http://127.0.0.1:${server.port}`;
 });
@@ -319,6 +320,22 @@ test("inbox lists tickets across boards where Claude needs the user, not Review"
   expect(mine).toEqual([{ profile: "inbox-a", profileName: "Inbox A", id: failed.id, title: "broken", attention: { kind: "failed", label: "Run failed" } }]);
 });
 
+test("tickets lists a light row for every ticket on every board", async () => {
+  const a = tempDir("ck-plain-");
+  const b = tempDir("ck-plain-");
+  await fetch(`${base}/api/profiles`, json("POST", { name: "Find A", path: a }));
+  await fetch(`${base}/api/profiles`, json("POST", { name: "Find B", path: b }));
+  const one = (await (await fetch(`${base}/api/profiles/find-a/tickets`, json("POST", { title: "alpha", status: "backlog" }))).json()) as any;
+  const two = (await (await fetch(`${base}/api/profiles/find-b/tickets`, json("POST", { title: "beta", status: "backlog" }))).json()) as any;
+  store.updateTicket("find-b", two.id, { status: "review", outcome: "done" });
+  const all = (await (await fetch(`${base}/api/tickets`)).json()) as any[];
+  const mine = all.filter((t) => t.profile.startsWith("find-")).sort((x, y) => x.title.localeCompare(y.title));
+  expect(mine).toEqual([
+    { profile: "find-a", profileName: "Find A", id: one.id, title: "alpha", status: "backlog", running: false, updatedAt: expect.any(String) },
+    { profile: "find-b", profileName: "Find B", id: two.id, title: "beta", status: "review", running: false, updatedAt: expect.any(String) },
+  ]);
+});
+
 test("health", async () => {
   const r = await fetch(`${base}/api/health`);
   const h = (await r.json()) as any;
@@ -569,4 +586,89 @@ test("Claude model list for the defaults dialog comes from the live catalog, wit
   const list = (await (await fetch(`http://127.0.0.1:${server.port}/api/claude/models`)).json()) as { value: string }[];
   expect(list.map((m) => m.value)).toEqual(["opus"]);
   server.stop(true);
+});
+
+test("POST .../branch: refused inside a board run, 400 without a conversation", async () => {
+  const path = tempDir("ck-plain-");
+  const p = (await (await fetch(`${base}/api/profiles`, json("POST", { name: "Branchy", path }))).json()) as any;
+  const tickets = `${base}/api/profiles/${p.slug}/tickets`;
+  const t = (await (await fetch(tickets, json("POST", { title: "Hello", body: "b" }))).json()) as any;
+  let r = await fetch(`${tickets}/${t.id}/branch`, { method: "POST", headers: { "content-type": "application/json", "x-ckanban-run": `${p.slug}/${t.id}` }, body: "{}" });
+  expect(r.status).toBe(403);
+  expect(((await r.json()) as any).error).toContain("propose_branch");
+  r = await fetch(`${tickets}/${t.id}/branch`, json("POST", {}));
+  expect(r.status).toBe(400);
+  expect(((await r.json()) as any).error).toContain("no Claude conversation");
+});
+
+test("the user's chat gives a ticket planner rights over its own children: adopt, change, start the plan", async () => {
+  const path = tempDir("ck-manage-");
+  const p = (await (await fetch(`${base}/api/profiles`, json("POST", { name: "Manage Proj", path }))).json()) as any;
+  const tickets = `${base}/api/profiles/${p.slug}/tickets`;
+  const post = async (u: string, b: unknown, run?: string, method = "POST") =>
+    fetch(u, { method, headers: { "content-type": "application/json", ...(run ? { "x-ckanban-run": run } : {}) }, body: JSON.stringify(b) });
+  const mgr = (await (await post(tickets, { title: "Manager" })).json()) as any;
+  const a = (await (await post(tickets, { title: "A" })).json()) as any;
+  const b = (await (await post(tickets, { title: "B", needs: ["Emulator"] })).json()) as any;
+  expect(b.needs).toEqual(["emulator"]);
+  const elsewhere = (await (await post(tickets, { title: "Elsewhere" })).json()) as any;
+  const kidOfElsewhere = (await (await post(tickets, { title: "Kid", parentId: elsewhere.id })).json()) as any;
+  const run = `${p.slug}/${mgr.id}`;
+
+  // No user chat behind the run: refused, like any board run.
+  let r = await post(`${tickets}/${mgr.id}/adopt`, { ids: [a.id] }, run);
+  expect(r.status).toBe(403);
+  r = await post(`${tickets}/${mgr.id}/plan`, { action: "start" }, run);
+  expect(r.status).toBe(403);
+
+  // The manager's run answers the user's message in its chat.
+  const real = board.userChatRun.bind(board);
+  board.userChatRun = (slug, id) => id === mgr.id || real(slug, id);
+  try {
+    r = await post(`${tickets}/${mgr.id}/adopt`, { ids: [a.id, b.id, kidOfElsewhere.id] }, run);
+    expect(r.status).toBe(200);
+    const adopt = (await r.json()) as any;
+    expect(adopt.adopted.map((t: any) => t.title)).toEqual(["A", "B"]);
+    expect(adopt.skipped).toEqual([{ id: kidOfElsewhere.id, reason: `belongs to plan ${elsewhere.id}` }]);
+    // Another ticket's run can't adopt for it.
+    r = await post(`${tickets}/${mgr.id}/adopt`, { ids: [elsewhere.id] }, `${p.slug}/${a.id}`);
+    expect(r.status).toBe(403);
+    r = await post(`${tickets}/${a.id}`, { dependsOn: [b.id], needs: ["emulator"] }, run, "PATCH");
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as any).needs).toEqual(["emulator"]);
+    r = await post(`${tickets}/${elsewhere.id}`, { title: "x" }, run, "PATCH");
+    expect(r.status).toBe(403);
+    // Created children wait in Backlog in the mode asked for; the plan isn't running.
+    r = await post(tickets, { title: "New child", mode: "interview", status: "ready" }, run);
+    const kid = (await r.json()) as any;
+    expect([kid.parentId, kid.status, kid.mode]).toEqual([mgr.id, "backlog", "interview"]);
+    r = await post(`${tickets}/${kid.id}`, { parentId: null }, run, "PATCH");
+    expect(((await r.json()) as any).parentId).toBeNull();
+    r = await post(`${tickets}/${kid.id}`, { parentId: mgr.id }, undefined, "PATCH");
+    expect(r.status).toBe(400);
+    // Only start / resume, only its own plan, and no concurrency change.
+    r = await post(`${tickets}/${mgr.id}/plan`, { action: "concurrency", maxConcurrent: 5 }, run);
+    expect(r.status).toBe(403);
+    r = await post(`${tickets}/${elsewhere.id}/plan`, { action: "start" }, run);
+    expect(r.status).toBe(403);
+    r = await post(`${tickets}/${mgr.id}/plan`, { action: "start", maxConcurrent: 9 }, run);
+    expect(r.status).toBe(200);
+    const plan = ((await r.json()) as any).plan;
+    expect([plan.state, plan.maxConcurrent]).toEqual(["running", 2]);
+    expect(store.listComments(p.slug, mgr.id).some((c) => c.text.startsWith("Plan started by the planner"))).toBe(true);
+    await post(`${tickets}/${mgr.id}/plan`, { action: "pause" });
+    // Paused: the user's chat still gives rights (the plan isn't done).
+    r = await post(`${tickets}/${a.id}`, { body: "clearer" }, run, "PATCH");
+    expect(r.status).toBe(200);
+    r = await post(`${tickets}/${mgr.id}/plan`, { action: "resume" }, run);
+    expect(((await r.json()) as any).plan.state).toBe("running");
+    await post(`${tickets}/${mgr.id}/plan`, { action: "done" });
+    // Done: no rights, no adopting.
+    r = await post(`${tickets}/${a.id}`, { body: "late" }, run, "PATCH");
+    expect(r.status).toBe(403);
+    r = await post(`${tickets}/${mgr.id}/adopt`, { ids: [elsewhere.id] }, run);
+    expect(r.status).toBe(403);
+  } finally {
+    board.userChatRun = real;
+  }
 });

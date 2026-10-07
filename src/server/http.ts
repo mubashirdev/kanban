@@ -1,21 +1,24 @@
 import { Notifications } from "./notifications";
 import { ticketReview } from "./review";
 import { ticketMetadata } from "./ticket-metadata";
-import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, normalize } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, join, normalize } from "node:path";
+import { runArtifactJob, type ArtifactJob, type ArtifactOutcome } from "./artifact";
 import { ConflictError, type Board } from "./board";
 import { dailyUsage } from "./usage-daily";
 import { claudeDefaults, listClaudeProjects, listSessions, liveSessionMatch, pickFolder, processCommands } from "./claude";
 import type { Bus, BusEvent } from "./events";
+import { DiffError, ticketDiff } from "./diff";
 import { detectBaseBranch, isGitRepo, resolveBaseBranch, which } from "./git";
 import { checkPr } from "./prpoller";
 import { resumeCommand } from "./prompts";
 import { cronError, describeCron, nextRuns, parseCron } from "./cron";
 import { shellQuote } from "./util";
 import { RUN_HEADER, ScheduleError, Scheduler } from "./scheduler";
+import { SnippetError, Snippets } from "./snippets";
 import { QuestionError, Questions } from "./questions";
-import { attentionFor } from "./attention";
+import { attentionFor, userWaitReason } from "./attention";
 import { childrenOf, isComplete, MAX_RETRIES, planActive } from "./plan";
 import { BugReportError, draftReport, submitReport, type BugBlockId, type BugSource, type GhRunner } from "./bugreport";
 import { AttachmentError, attachmentFile, attachmentType, IMAGE_TYPES, saveAttachment } from "./attachments";
@@ -30,13 +33,16 @@ import { searchBoard } from "./search";
 import { SessionCache, mergeCommandEntries } from "./session";
 import { ptySupported, ShellManager, type PtyKind, type Shell } from "./shell";
 import type { TerminalWatcher } from "./terminals";
+import { attachmentHeader, canCopyFile, copyFileToClipboard, markdownPage, markdownTitle, revealFile, ShareError } from "./share";
 import { UpdateChecker } from "./update";
+import { ClaudeLogIndex, readWindows, recordWindow, ticketRuns, ticketUsage, UsageCache, windowsNeeded } from "./ticket-usage";
 import { fetchUsage, type UsageResult } from "./usage";
 import type { Store } from "./store";
 import { STATUSES, type Config, type Profile, type ScheduleEditor, type Status, type Ticket } from "./types";
 import { nowIso, slugify } from "./util";
 import { authorizeLan, createLanSignIn, type LanAccess } from "./lan";
 import { ClaudeCommands, effortOptions } from "./commands";
+import { applyDetection, detectSetup } from "./worktree-setup";
 
 export interface ServerDeps {
   store: Store;
@@ -66,6 +72,18 @@ export interface ServerDeps {
   /** Shared with the notifier so both read each Codex transcript once. */
   codexSessions?: CodexSessions;
   commands?: Pick<ClaudeCommands, "get"> & Partial<Pick<ClaudeCommands, "catalog">>;
+  /** Machine-wide Claude Code cost, for a ticket's share of the 5h window (tests pass one on a fixture folder). */
+  claudeLogs?: ClaudeLogIndex;
+  /** Publishes output files as claude.ai pages (tests pass a fake). */
+  publishArtifact?: (job: ArtifactJob) => Promise<ArtifactOutcome>;
+}
+
+/** A Share menu publish in progress, or the error of the last one, per output file. Not persisted. */
+interface ShareJob {
+  file: string;
+  state: "publishing" | "failed";
+  error?: string;
+  at: string;
 }
 
 interface ShellSocket {
@@ -144,6 +162,13 @@ export function createServer(deps: ServerDeps) {
   const questions = deps.questions ?? new Questions(store, board);
   const notifications = deps.notifications ?? new Notifications(store);
   const commands = deps.commands ?? new ClaudeCommands(process.env.CKANBAN_CLAUDE_BIN ?? "claude");
+  const snippets = new Snippets(store, bus);
+  const windowsFile = join(store.root, "usage-windows.json");
+  const usage = new UsageCache(deps.usage ?? fetchUsage, (r) => recordWindow(windowsFile, r));
+  const claudeLogs = deps.claudeLogs ?? new ClaudeLogIndex();
+  const publishArtifact = deps.publishArtifact ?? ((job: ArtifactJob) => runArtifactJob(job));
+  // "<profile>/<ticket>" -> jobs by output file.
+  const shareJobs = new Map<string, Map<string, ShareJob>>();
 
   const profileOr404 = (slug: string): Profile => {
     const p = store.getProfile(slug);
@@ -159,17 +184,18 @@ export function createServer(deps: ServerDeps) {
   const childTitles = (slug: string, id: string) =>
     new Set(store.listTickets(slug).filter((c) => c.parentId === id).map((c) => c.title));
   /**
-   * Board runs send RUN_HEADER ("<profile>/<ticket id>") with ticket changes. Runs can't change the board,
-   * except a running plan's planner on its own child tickets. Returns that planner, or undefined for the user.
+   * Board runs send RUN_HEADER ("<profile>/<ticket id>") with ticket changes. Runs can't change the board, except
+   * a planner on its own child tickets: any run of a running plan, or a reply to the user's message in the
+   * planner's chat (see Board.plannerRights). Returns that planner, or undefined for the user.
    */
   const plannerFor = (req: Request, slug: string, target?: Ticket): Ticket | undefined => {
     const h = req.headers.get(RUN_HEADER);
     if (!h) return undefined;
     const [runSlug, runId] = h.split("/");
-    const planner = runSlug === slug && runId ? board.activePlanner(slug, runId) : null;
+    const planner = runSlug === slug && runId ? board.plannerRights(slug, runId) : null;
     if (!planner) {
       throw new HttpError(403, "changing the board is disabled inside a board run, so runs can't create or start other runs; " +
-        "only the planner of a running plan may change its own child tickets");
+        "only a planner may change its own child tickets: while its plan runs, or when the user asked for it in the planner's own chat");
     }
     if (target && target.parentId !== planner.id) {
       throw new HttpError(403, `${target.id} is not a child ticket of plan ${planner.id}; the planner may only change its own child tickets`);
@@ -201,10 +227,20 @@ export function createServer(deps: ServerDeps) {
     return {
       ...t,
       running,
+      /** Its run takes one of the board's maxParallel slots (Planning and peer replies don't). */
+      holdsSlot: running && board.holdsSlot(p.slug, t.id),
       resumeCommand: t.agent === "codex" ? (t.codexSessionId ? `cd ${shellQuote(t.workdir ?? t.worktree ?? p.path)} && codex resume ${shellQuote(t.codexSessionId)}` : null) : t.sessionId ? resumeCommand(t.workdir ?? t.worktree ?? p.path, t.sessionId) : null,
       session,
+      /** Absolute outputs folder, so the Share menu can show where a file is. */
+      outputDir: store.outputsPath(p.slug, t.id),
+      shareJobs: [...(shareJobs.get(`${p.slug}/${t.id}`)?.values() ?? [])],
+      canCopyFile: canCopyFile() || !!process.env.CKANBAN_OSASCRIPT_BIN,
       /** Linked session is open in a terminal right now (board chat still works, UI warns). */
       terminalOpen: deps.terminals?.isOpen(p.slug, t.id) ?? false,
+      /** Ticket.needs: holds them now, or which ones another ticket holds while this one would start. */
+      resources: board.resourceState(p.slug, t),
+      /** A plan child waiting on the user (never started by the plan until then). */
+      userWait: t.parentId && !isComplete(t) ? userWaitReason(t, session) : null,
       attention: attentionFor(t, session, running, {
         createdTitles: session?.pendingNewTickets.length ? childTitles(p.slug, t.id) : undefined,
         managed: t.parentId ? planActive(store.getTicket(p.slug, t.parentId)?.plan) : false,
@@ -212,6 +248,61 @@ export function createServer(deps: ServerDeps) {
       }),
     };
   };
+
+  const emitTicket = (slug: string, id: string) => {
+    const t = store.getTicket(slug, id);
+    if (t) bus.emit({ type: "ticket.updated", profile: slug, ticket: t });
+  };
+
+  /**
+   * Publish an output file as a claude.ai page in the background (the helper takes a minute or two).
+   * Markdown is rendered to a standalone page first. Publishing the same file again updates its link.
+   */
+  function startPublish(slug: string, id: string, name: string, file: string): ShareJob {
+    const key = `${slug}/${id}`;
+    const jobs = shareJobs.get(key) ?? new Map<string, ShareJob>();
+    shareJobs.set(key, jobs);
+    if (jobs.get(name)?.state === "publishing") throw new HttpError(409, "this file is already being published");
+    const job: ShareJob = { file: name, state: "publishing", at: nowIso() };
+    jobs.set(name, job);
+    emitTicket(slug, id);
+    const fail = (error: string) => {
+      jobs.set(name, { file: name, state: "failed", error, at: nowIso() });
+      emitTicket(slug, id);
+    };
+    (async () => {
+      let tmp: string | null = null;
+      try {
+        const existing = store.getTicket(slug, id)?.shareLinks?.find((l) => l.file === name)?.url;
+        let page = file;
+        let title: string | undefined;
+        if (/\.(md|markdown)$/i.test(name)) {
+          const md = readFileSync(file, "utf8");
+          const dir = join(store.root, "share-tmp");
+          mkdirSync(dir, { recursive: true });
+          tmp = page = join(dir, `${crypto.randomUUID()}.html`);
+          writeFileSync(tmp, markdownPage(md, name));
+          title = markdownTitle(md, name);
+        } else if (!/\.html?$/i.test(name)) {
+          return fail("only Markdown and HTML files can be published");
+        }
+        const r = await publishArtifact({ kind: "publish", file: page, ...(existing ? { url: existing } : {}), ...(title ? { title } : {}) });
+        if (!r.ok) return fail(r.error);
+        if (r.kind !== "publish") return fail("unexpected helper result");
+        const t = store.getTicket(slug, id);
+        if (!t) return;
+        const links = (t.shareLinks ?? []).filter((l) => l.file !== name);
+        jobs.delete(name);
+        store.updateTicket(slug, id, { shareLinks: [...links, { file: name, url: r.url, at: nowIso() }] });
+        emitTicket(slug, id);
+      } catch (e) {
+        fail(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (tmp) rmSync(tmp, { force: true });
+      }
+    })();
+    return job;
+  }
 
   async function api(req: Request, url: URL): Promise<Response | undefined> {
     const parts = url.pathname.split("/").filter(Boolean).slice(1).map(decodeURIComponent);
@@ -259,7 +350,7 @@ export function createServer(deps: ServerDeps) {
 
     if (parts[0] === "events" && m === "GET") return sse(req);
     if (parts[0] === "version" && m === "GET") return json(await updates.status());
-    if (parts[0] === "usage" && m === "GET") return json(await (deps.usage ?? fetchUsage)());
+    if (parts[0] === "usage" && m === "GET") return json(await usage.get(0));
     if (parts[0] === "inbox" && m === "GET") {
       // Every board: tickets where Claude is waiting on the user (Review is left out on purpose).
       const out = [];
@@ -292,6 +383,19 @@ export function createServer(deps: ServerDeps) {
         throw new HttpError(400, (error as Error).message);
       }
       throw new HttpError(404, "not found");
+    }
+    if (parts[0] === "tickets" && parts.length === 1 && m === "GET") {
+      // ⌘K command bar: a light row per ticket on every board (title search runs in the browser).
+      const out = [];
+      for (const p of store.listProfiles()) {
+        for (const t of store.listTickets(p.slug)) {
+          out.push({
+            profile: p.slug, profileName: p.name, id: t.id, title: t.title, status: t.status,
+            running: board.isRunning(p.slug, t.id), updatedAt: t.updatedAt,
+          });
+        }
+      }
+      return json(out);
     }
 
     // Connections panel: Claude Code MCP servers (always from the home dir, user scope for edits).
@@ -369,6 +473,18 @@ export function createServer(deps: ServerDeps) {
       throw new HttpError(404, "not found");
     }
 
+    // Prompt snippets: GET ?profile=<slug> returns global ones plus that board's.
+    if (parts[0] === "snippets") {
+      if (parts.length === 1 && m === "GET") return json(snippets.list(url.searchParams.get("profile") ?? undefined));
+      if (parts.length === 1 && m === "POST") return json(snippets.create((await body(req)) ?? {}), 201);
+      if (parts.length === 2 && m === "PATCH") return json(snippets.update(parts[1], (await body(req)) ?? {}));
+      if (parts.length === 2 && m === "DELETE") {
+        snippets.remove(parts[1]);
+        return new Response(null, { status: 204 });
+      }
+      throw new HttpError(404, "not found");
+    }
+
     // Schedule form preview: is the expression valid, what it means, when it fires next.
     if (parts[0] === "cron" && parts[1] === "preview" && parts.length === 2 && m === "GET") {
       const expr = (url.searchParams.get("expr") ?? "").trim();
@@ -441,9 +557,10 @@ export function createServer(deps: ServerDeps) {
           model: b.model || null,
           createdAt: nowIso(),
         };
-        store.saveProfile(profile);
-        bus.emit({ type: "profile.updated", slug, profile });
-        return json(profile, 201);
+        const saved = applyDetection(profile, await detectSetup(path));
+        store.saveProfile(saved);
+        bus.emit({ type: "profile.updated", slug, profile: saved });
+        return json(saved, 201);
       }
     }
 
@@ -461,6 +578,13 @@ export function createServer(deps: ServerDeps) {
         if (b.baseBranch !== undefined) next.baseBranch = String(b.baseBranch);
         if (b.maxParallel !== undefined) next.maxParallel = Math.max(1, Number(b.maxParallel) || 1);
         if (b.model !== undefined) next.model = b.model || null;
+        if (b.copyFiles !== undefined) {
+          if (!Array.isArray(b.copyFiles)) throw new HttpError(400, "copyFiles must be a list of paths");
+          next.copyFiles = [...new Set(b.copyFiles.map((f: unknown) => String(f).trim()).filter(Boolean))] as string[];
+        }
+        if (b.setupCommand !== undefined) next.setupCommand = String(b.setupCommand ?? "").trim();
+        if (b.cleanupCommand !== undefined) next.cleanupCommand = String(b.cleanupCommand ?? "").trim();
+        if (b.setupDetected !== undefined) next.setupDetected = b.setupDetected && typeof b.setupDetected === "object" ? b.setupDetected : null;
         if (next.path !== profile.path) shells.kill(slug);
         store.saveProfile(next);
         bus.emit({ type: "profile.updated", slug, profile: next });
@@ -470,11 +594,15 @@ export function createServer(deps: ServerDeps) {
       if (m === "DELETE") {
         if (board.running(slug) > 0) throw new HttpError(409, "profile has running tickets");
         store.deleteProfile(slug);
+        snippets.dropScope(slug);
         shells.kill(slug);
         bus.emit({ type: "profile.updated", slug, profile: null });
         return new Response(null, { status: 204 });
       }
     }
+
+    // /profiles/:p/detect-setup — what worktree setup detection finds now (the settings dialog decides what to save)
+    if (parts[2] === "detect-setup" && parts.length === 3 && m === "POST") return json(await detectSetup(profile.path));
 
     // /profiles/:p/sessions — Claude Code sessions started in the profile folder
     if (parts[2] === "sessions" && parts.length === 3 && m === "GET") {
@@ -600,14 +728,19 @@ export function createServer(deps: ServerDeps) {
         let parentId = typeof b.parentId === "string" && b.parentId ? b.parentId : undefined;
         const planKey = typeof b.planKey === "string" && b.planKey.trim() ? b.planKey.trim() : undefined;
         const dependsOn = strings(b.dependsOn);
+        const needs = strings(b.needs);
         if (planner) {
           // A planner adds children to its own plan; the board starts them when their dependencies are done.
           const kids = store.listTickets(slug).filter((c) => c.parentId === planner.id);
-          const cap = 2 * Math.max(1, planner.plan!.originalCount);
+          const running = planActive(planner.plan);
+          // Unattended plans are capped; in the user's chat the user is there to stop it.
+          const cap = running ? 2 * Math.max(1, planner.plan!.originalCount) : Infinity;
           if (kids.length >= cap) throw new HttpError(409, `child ticket limit reached (${cap}) for this plan`);
           const missing = (dependsOn ?? []).filter((d) => !kids.some((k) => k.id === d || k.planKey === d));
           if (missing.length) throw new HttpError(400, `unknown dependency ${missing.join(", ")}: use a sibling's ticket id or key`);
-          [parentId, status, mode] = [planner.id, "backlog", "auto"];
+          // Children wait in Backlog until the plan starts them; a running plan's children skip the interview.
+          [parentId, status] = [planner.id, "backlog"];
+          if (running) mode = "auto";
         }
         if (parentId && !store.getTicket(slug, parentId)) throw new HttpError(400, `parent ticket ${parentId} not found`);
         if (b.agent === "codex" && b.sessionId) throw new HttpError(400, "Existing Claude sessions cannot be linked to Codex tickets");
@@ -615,7 +748,7 @@ export function createServer(deps: ServerDeps) {
         // A standalone session never sits in a running column: messages start its runs.
         const standalone = b.standalone === true && !planner;
         let t = await board.createTicket(slug, {
-          ...metadata(b), title, body: String(b.body ?? ""), status: standalone ? "backlog" : b.sessionId && !planner ? "backlog" : status, mode, parentId, planKey, dependsOn,
+          ...metadata(b), title, body: String(b.body ?? ""), status: standalone ? "backlog" : b.sessionId && !planner ? "backlog" : status, mode, parentId, planKey, dependsOn, needs,
           ...(standalone ? { standalone, access: b.access === "edit" ? "edit" : "read", isolated: b.isolated === true } : {}),
           ...(b.codexSessionId ? { codexSessionId: String(b.codexSessionId) } : {}),
         });
@@ -653,6 +786,10 @@ export function createServer(deps: ServerDeps) {
         if (b.standalone === false) patch.standalone = false;
         const deps = strings(b.dependsOn);
         if (deps) patch.dependsOn = deps;
+        const needs = strings(b.needs);
+        if (needs) patch.needs = needs;
+        if (b.parentId === null) patch.parentId = null;
+        else if (b.parentId !== undefined) throw new HttpError(400, "parentId can only be cleared (null); use adopt to add a ticket to a plan");
         if (b.mode === "auto" || b.mode === "interview") patch.mode = b.mode;
         if (typeof b.expectedBody === "string") patch.expectedBody = b.expectedBody;
         if (typeof b.title === "string") patch.title = b.title;
@@ -679,7 +816,8 @@ export function createServer(deps: ServerDeps) {
           throw new HttpError(400, (e as Error).message);
         }
         if (planner) {
-          const what = Object.entries(patch).map(([k, v]) => (k === "status" ? `moved it to ${v}` : `changed ${k}`)).join(", ");
+          const what = Object.entries(patch)
+            .map(([k, v]) => (k === "status" ? `moved it to ${v}` : k === "parentId" ? `released it from plan ${planner.id}` : `changed ${k}`)).join(", ");
           if (what) store.addComment(slug, id, "ai", `Planner ${what}.`);
         }
         return json(view(profile, t));
@@ -730,10 +868,40 @@ export function createServer(deps: ServerDeps) {
       return json(view(profile, await board.updateTicket(slug, id, { [field]: value })));
     }
     if (action === "activity" && m === "GET") return json(store.readActivity(slug, id));
+    if (action === "usage" && m === "GET") {
+      // The usage endpoint rate-limits: a ticket view reuses an answer up to 5 minutes old.
+      const plan = await usage.get(5 * 60_000);
+      const activity = store.readActivity(slug, id);
+      const windows = readWindows(windowsFile);
+      const needed = windowsNeeded(ticketRuns(activity), windows);
+      if (needed.length) await claudeLogs.refresh(Math.min(...needed.map((w) => Date.parse(w.start))));
+      return json(ticketUsage({
+        activity, windows, machineCost: (a, b) => claudeLogs.costBetween(a, b), windowError: "error" in plan ? plan.error : null,
+      }));
+    }
+    if (action === "outputs" && m === "POST" && parts.length > 5) {
+      // Share menu actions; the user's alone, a board run has no business with the clipboard or Finder.
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "sharing outputs is disabled inside a board run");
+      const name = parts.slice(5).join("/");
+      const file = store.outputPath(slug, id, name);
+      if (!file) throw new HttpError(404, "output not found");
+      const what = url.searchParams.get("action");
+      try {
+        if (what === "reveal") await revealFile(file);
+        else if (what === "copy") await copyFileToClipboard(file);
+        else if (what === "publish") return json(startPublish(slug, id, name, file), 202);
+        else throw new HttpError(400, "action must be reveal, copy or publish");
+      } catch (e) {
+        if (e instanceof ShareError) throw new HttpError(e.status, e.message);
+        throw e;
+      }
+      return json({ ok: true });
+    }
     if (action === "outputs" && m === "GET") {
       if (parts.length === 5) return json(store.listOutputs(slug, id));
       const file = store.outputPath(slug, id, parts.slice(5).join("/"));
       if (!file) throw new HttpError(404, "output not found");
+      const download = url.searchParams.get("download") === "1" ? { "content-disposition": attachmentHeader(basename(file)) } : {};
       // Plain text + sandbox: files are written by Claude and must never run as HTML on this origin.
       // Only raster images get their real type so the viewer can preview them; SVG stays text (it can carry scripts).
       const image = OUTPUT_IMAGE_TYPES[file.slice(file.lastIndexOf(".") + 1).toLowerCase()];
@@ -742,8 +910,21 @@ export function createServer(deps: ServerDeps) {
           "content-type": image ?? "text/plain; charset=utf-8",
           "x-content-type-options": "nosniff",
           "content-security-policy": "sandbox",
+          ...download,
         },
       });
+    }
+    if (action === "diff" && m === "GET") {
+      // The Changes tab: the worktree (committed, uncommitted and untracked) against its merge-base with the base branch.
+      const t = store.getTicket(slug, id)!;
+      if (!t.worktree) throw new HttpError(404, "this ticket has no worktree");
+      try {
+        const base = profile.baseBranch || (await detectBaseBranch(t.worktree));
+        return json(await ticketDiff(t.worktree, base, { ignoreWhitespace: url.searchParams.get("w") === "1" }));
+      } catch (e) {
+        if (e instanceof DiffError) throw new HttpError(e.status, e.message);
+        throw e;
+      }
     }
     if (action === "conversation" && m === "GET") {
       // Read-only view of the ticket's Claude session file (terminal chat + board runs), newest last.
@@ -776,11 +957,11 @@ export function createServer(deps: ServerDeps) {
       return json(q, 201);
     }
     if (m === "POST" && action === "chat") {
-      plannerFor(req, slug, store.getTicket(slug, id)!);
+      const planner = plannerFor(req, slug, store.getTicket(slug, id)!);
       const b = await body(req);
       const text = String(b.text ?? "").trim();
       if (!text) throw new HttpError(400, "text is required");
-      const t = await board.chat(slug, id, text);
+      const t = await board.chat(slug, id, text, { fromPlanner: !!planner });
       return json(view(profile, t), 202);
     }
     // POST .../fork { model?, text? }: a copy of this chat that continues the same conversation (on another model).
@@ -815,6 +996,17 @@ export function createServer(deps: ServerDeps) {
         throw new HttpError(400, (e as Error).message);
       }
     }
+    // Branch: a new ticket with a copy of this one's conversation and committed code (the user's call, not a run's).
+    if (m === "POST" && action === "branch") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "branching is disabled inside a board run; use the propose_branch tool so the user can click Branch");
+      try {
+        const r = await board.branchTicket(slug, id);
+        return json({ ticket: view(profile, r.ticket), warning: r.warning }, 201);
+      } catch (e) {
+        if (e instanceof ConflictError) throw e;
+        throw new HttpError(400, (e as Error).message);
+      }
+    }
     if (m === "POST" && action === "stop") {
       const planner = plannerFor(req, slug, store.getTicket(slug, id)!);
       const stopped = board.stop(slug, id);
@@ -823,12 +1015,21 @@ export function createServer(deps: ServerDeps) {
     }
     // Start / pause / resume / mark done a planner's plan, or change how many children run at once.
     if (m === "POST" && action === "plan") {
-      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can start or pause a plan");
       const b = await body(req);
-      const n = b.maxConcurrent === undefined ? undefined : Number(b.maxConcurrent);
+      // A planner may start or resume its own plan (plan_control) when it has planner rights; the rest is the user's.
+      const byPlanner = !!req.headers.get(RUN_HEADER);
+      if (byPlanner) {
+        if (runTicket(req, slug) !== id || (b.action !== "start" && b.action !== "resume")) {
+          throw new HttpError(403, "a board run may only start or resume its own ticket's plan; pausing, finishing and concurrency are the user's");
+        }
+        if (!board.plannerRights(slug, id)) {
+          throw new HttpError(403, "starting the plan from a board run needs the user's go-ahead: only a reply to the user's message in this ticket's chat may do it");
+        }
+      }
+      const n = b.maxConcurrent === undefined || byPlanner ? undefined : Number(b.maxConcurrent);
       try {
         const t = b.action === "pause" ? board.pausePlan(slug, id)
-          : b.action === "start" || b.action === "resume" ? board.startPlan(slug, id, { maxConcurrent: n })
+          : b.action === "start" || b.action === "resume" ? board.startPlan(slug, id, { maxConcurrent: n, byPlanner })
           : b.action === "done" ? board.markPlanDone(slug, id)
           : b.action === "concurrency" && n !== undefined ? board.setPlanConcurrency(slug, id, n)
           : null;
@@ -853,6 +1054,21 @@ export function createServer(deps: ServerDeps) {
         if (e instanceof ConflictError) throw e;
         throw new HttpError(400, (e as Error).message);
       }
+    }
+    // Manager mode: make existing tickets children of this one (adopt_tickets). From a run, only when the user asked
+    // for it in this ticket's own chat.
+    if (m === "POST" && action === "adopt") {
+      if (req.headers.get(RUN_HEADER)) {
+        if (runTicket(req, slug) !== id || !board.userChatRun(slug, id)) {
+          throw new HttpError(403, "adopting tickets from a board run only works in a reply to the user's message in the adopting ticket's own chat");
+        }
+        if (store.getTicket(slug, id)!.plan?.state === "done") throw new HttpError(403, "this ticket's plan is done; the user can start a new one first");
+      }
+      const b = await body(req);
+      const ids = strings(b.ids);
+      if (!ids?.length) throw new HttpError(400, "ids must be a non-empty list of ticket ids");
+      const r = board.adoptTickets(slug, id, ids);
+      return json({ adopted: r.adopted.map((t) => view(profile, t)), skipped: r.skipped });
     }
     if (m === "POST" && action === "check-pr") {
       const state = await checkPr(board, store, slug, id);
@@ -993,6 +1209,7 @@ export function createServer(deps: ServerDeps) {
         if (e instanceof McpError) return json({ error: e.message }, e.status);
         if (e instanceof AgentError) return json({ error: e.message }, e.status);
         if (e instanceof ScheduleError) return json({ error: e.message }, e.status);
+        if (e instanceof SnippetError) return json({ error: e.message }, e.status);
         if (e instanceof QuestionError) return json({ error: e.message }, e.status);
         if (e instanceof URIError) return json({ error: "malformed URL" }, 400);
         console.error(e);

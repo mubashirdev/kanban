@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { safeHref, type Status, type Ticket } from "./api";
+import { safeHref, waitsForSlot, type Status, type Ticket } from "./api";
 import { AgentMark } from "./AgentMark";
 import { CheckIcon, ClockIcon, PlayIcon } from "./icons";
+import { ResourceChip, resourceWait } from "./Needs";
 import { elapsed, fullTime, plainPreview, timeAgo, useNow } from "./time";
 
 /** Live running time: ticks every second for the first minute, then every 30s. */
@@ -23,6 +24,7 @@ function workingBadge(label: string, since?: string | null) {
 const QUIET_ACTIVITY = new Set(["Starting…", "Claude is replying…"]);
 
 export function outcomeBadge(t: Ticket) {
+  if (waitsForSlot(t)) return <span className="badge queued" title="Your reply starts when a run slot is free">Queued</span>;
   if (t.status === "in_progress") return workingBadge("Running", t.runStartedAt);
   if (t.running) return workingBadge("Replying", t.runStartedAt);
   if (t.error?.startsWith("corrupt")) return <span className="badge failed">Corrupt file</span>;
@@ -44,10 +46,12 @@ const QUICK_ACTIONS: Partial<Record<Status, { label: string; to: Status }>> = {
 };
 
 export function Card({ ticket, onClick, dragging, queued, held, onQuick }: { ticket: Ticket; onClick?: () => void; dragging?: boolean; queued?: number; held?: boolean; onQuick?: (to: Status) => void }) {
-  const working = ticket.status === "in_progress" || !!ticket.running;
+  const working = (ticket.status === "in_progress" && !waitsForSlot(ticket)) || !!ticket.running;
   const quick = QUICK_ACTIONS[ticket.status];
   const att = working ? null : ticket.attention ?? null;
+  const waitFor = resourceWait(ticket);
   const badge = att ? null
+    : waitFor.length ? <span className="badge wait" title={`Waiting for ${waitFor.join(", ")}: another ticket is using it`}>waiting</span>
     : queued && !working ? (held
       ? <span className="badge queued" title="A daemon restart is pending; queued tickets start right after it">Waits for restart</span>
       : <span className="badge queued" title="Starts when a run slot is free">Queued · #{queued}</span>)
@@ -90,6 +94,7 @@ export function Card({ ticket, onClick, dragging, queued, held, onQuick }: { tic
             <ClockIcon size={11} strokeWidth={1.8} />
           </span>
         )}
+        {ticket.needs?.map((n) => <ResourceChip key={n} name={n} held={!!ticket.resources?.holding} />)}
         {badge}
         {ticket.prUrl && (
           <a className="badge pr" href={safeHref(ticket.prUrl)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
