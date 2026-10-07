@@ -417,6 +417,7 @@ export const api = {
   setEffort: (slug: string, id: string, effort: Effort | null) => req<Ticket>("POST", `${t(slug, id)}/effort`, { effort }),
   setOutputStyle: (slug: string, id: string, outputStyle: string | null) => req<Ticket>("POST", `${t(slug, id)}/output-style`, { outputStyle }),
   claudeProjects: () => req<ClaudeProject[]>("GET", "/api/claude/projects"),
+  claudeModels: () => req<ClaudeModel[]>("GET", "/api/claude/models"),
   claudeDefaults: () => req<{ model: string | null }>("GET", "/api/claude/defaults"),
   pickFolder: () => req<{ path: string | null }>("POST", "/api/pick-folder"),
   /** Claude plan usage (5h / weekly windows) or a plain-words error. */

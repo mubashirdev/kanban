@@ -1,18 +1,20 @@
 import { useEffect, useState } from "react";
-import { api } from "./api";
+import { api, type ClaudeModel } from "./api";
 import { Modal } from "./Modal";
 import { Select } from "./Select";
 
-const CLAUDE_MODELS = ["opus", "sonnet", "haiku"];
 const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const CODEX_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"];
 
+interface CodexModel { value: string; displayName: string; efforts: string[] }
+
 export function DefaultModelsDialog({ onClose }: { onClose: () => void }) {
   const [claudeModel, setClaudeModel] = useState("");
-  const [codexModel, setCodexModel] = useState("");
   const [claudeEffort, setClaudeEffort] = useState("");
+  const [codexModel, setCodexModel] = useState("");
   const [codexEffort, setCodexEffort] = useState("");
-  const [codexModels, setCodexModels] = useState<{ value: string; displayName: string; efforts: string[] }[]>([]);
+  const [claudeModels, setClaudeModels] = useState<ClaudeModel[]>([]);
+  const [codexModels, setCodexModels] = useState<CodexModel[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -20,11 +22,12 @@ export function DefaultModelsDialog({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     api.settings().then((s) => {
       setClaudeModel(s.claudeModel ?? "");
-      setCodexModel(s.codexModel ?? "");
       setClaudeEffort(s.claudeEffort ?? "");
+      setCodexModel(s.codexModel ?? "");
       setCodexEffort(s.codexEffort ?? "");
       setLoaded(true);
     }).catch((e) => setError((e as Error).message));
+    api.claudeModels().then(setClaudeModels).catch(() => {});
     api.codexModels().then(setCodexModels).catch(() => {});
   }, []);
 
@@ -40,47 +43,41 @@ export function DefaultModelsDialog({ onClose }: { onClose: () => void }) {
     }
   }
 
-  const effortOptions = (efforts: string[], label: string) => [{ value: "", label }, ...efforts.map((e) => ({ value: e, label: e }))];
+  const claudeOptions = [
+    { value: "", label: "Claude default", hint: "follows ~/.claude/settings.json" },
+    ...claudeModels.map((m) => ({ value: m.value, label: m.displayName, hint: m.description })),
+  ];
+  // A saved model the live list doesn't know (older config) stays selectable.
+  if (claudeModel && !claudeOptions.some((o) => o.value === claudeModel)) claudeOptions.push({ value: claudeModel, label: claudeModel, hint: "" });
+  const codexOptions = [
+    { value: "", label: "Codex default", hint: "follows ~/.codex/config.toml" },
+    ...codexModels.map((m) => ({ value: m.value, label: m.displayName, hint: m.value })),
+  ];
+  if (codexModel && !codexOptions.some((o) => o.value === codexModel)) codexOptions.push({ value: codexModel, label: codexModel, hint: "" });
+
+  const efforts = (levels: string[]) => [{ value: "", label: "Auto effort", hint: "" }, ...levels.map((e) => ({ value: e, label: e, hint: "" }))];
+  const claudeEfforts = claudeModels.find((m) => m.value === claudeModel)?.supportedEffortLevels ?? CLAUDE_EFFORTS;
   const codexEfforts = codexModels.find((m) => m.value === codexModel)?.efforts ?? CODEX_EFFORTS;
-  const withCurrent = (models: string[], current: string) => (current && !models.includes(current) ? [...models, current] : models);
 
   return (
     <Modal title="Default models" onClose={onClose}>
       <div className="form">
         <p className="muted small">Used for every board and ticket that doesn’t pick its own. A board’s own Claude model or a ticket’s own choice still wins.</p>
         <label>
-          Claude
-          <Select
-            ariaLabel="Default Claude model"
-            value={claudeModel}
-            onChange={setClaudeModel}
-            options={[
-              { value: "", label: "Claude default", hint: "follows ~/.claude/settings.json" },
-              ...withCurrent(CLAUDE_MODELS, claudeModel).map((m) => ({ value: m, label: m })),
-            ]}
-          />
+          Claude model
+          <Select ariaLabel="Default Claude model" value={claudeModel} onChange={setClaudeModel} options={claudeOptions} />
         </label>
         <label>
           Claude effort
-          <Select ariaLabel="Default Claude effort" value={claudeEffort} onChange={setClaudeEffort} options={effortOptions(CLAUDE_EFFORTS, "Auto effort")} />
+          <Select ariaLabel="Default Claude effort" value={claudeEffort} onChange={setClaudeEffort} options={efforts(claudeEfforts)} />
         </label>
         <label>
-          Codex
-          <Select
-            ariaLabel="Default Codex model"
-            value={codexModel}
-            onChange={setCodexModel}
-            options={[
-              { value: "", label: "Codex default", hint: "follows ~/.codex/config.toml" },
-              ...withCurrent(codexModels.map((m) => m.value), codexModel).map((value) => ({
-                value, label: codexModels.find((m) => m.value === value)?.displayName ?? value,
-              })),
-            ]}
-          />
+          Codex model
+          <Select ariaLabel="Default Codex model" value={codexModel} onChange={setCodexModel} options={codexOptions} />
         </label>
         <label>
           Codex effort
-          <Select ariaLabel="Default Codex effort" value={codexEffort} onChange={setCodexEffort} options={effortOptions(codexEfforts, "Auto effort")} />
+          <Select ariaLabel="Default Codex effort" value={codexEffort} onChange={setCodexEffort} options={efforts(codexEfforts)} />
         </label>
         {error && <div className="form-error">{error}</div>}
         <div className="form-actions">

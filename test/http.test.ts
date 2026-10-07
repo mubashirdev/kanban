@@ -557,3 +557,16 @@ test("default models are saved board-wide, validated, and cleared with null", as
   expect(await cleared.json()).toMatchObject({ claudeModel: null, codexModel: "gpt-5.6-sol" });
   expect((await fetch(`${base}/api/settings`, json("PATCH", { codexEffort: "bogus" }))).status).toBe(400);
 });
+
+test("Claude model list for the defaults dialog comes from the live catalog, without the 'default' entry", async () => {
+  const bus = new Bus();
+  const models = [
+    { value: "default", displayName: "Default (recommended)", description: "Sonnet 5.5" },
+    { value: "opus", displayName: "Opus 5.5", description: "Complex work", supportedEffortLevels: ["low", "medium"] as ("low" | "medium")[] },
+  ];
+  const catalog = async () => ({ commands: [], models });
+  const server = createServer({ store: new Store(tempDir()), bus, board: new Board(new Store(tempDir()), bus, { claudeBin: "/bin/false" }), port: 0, webDir: tempDir(), commands: { get: async () => [], catalog } });
+  const list = (await (await fetch(`http://127.0.0.1:${server.port}/api/claude/models`)).json()) as { value: string }[];
+  expect(list.map((m) => m.value)).toEqual(["opus"]);
+  server.stop(true);
+});

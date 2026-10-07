@@ -2,6 +2,7 @@ import { Notifications } from "./notifications";
 import { ticketReview } from "./review";
 import { ticketMetadata } from "./ticket-metadata";
 import { existsSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, normalize } from "node:path";
 import { ConflictError, type Board } from "./board";
 import { claudeDefaults, listClaudeProjects, listSessions, liveSessionMatch, pickFolder, processCommands } from "./claude";
@@ -378,6 +379,12 @@ export function createServer(deps: ServerDeps) {
       return json(listClaudeProjects().map((p) => ({ ...p, hasProfile: taken.has(p.path) })));
     }
     if (parts[0] === "claude" && parts[1] === "defaults" && m === "GET") return json(claudeDefaults());
+    if (parts[0] === "claude" && parts[1] === "models" && m === "GET") {
+      try {
+        const catalog = commands.catalog ? await commands.catalog(homedir(), false) : { models: [] };
+        return json(catalog.models.filter((model) => model.value !== "default"));
+      } catch (error) { throw new HttpError(503, (error as Error).message); }
+    }
     if (parts[0] === "pick-folder" && m === "POST") return json({ path: await pickFolder() });
     if (parts[0] === "restart" && parts.length === 1) {
       if (m === "GET") return json(board.restartState());
