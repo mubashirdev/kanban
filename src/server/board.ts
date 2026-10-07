@@ -394,6 +394,25 @@ export class Board {
     return this.chat(slug, id, msg.text, { peer: msg.peer, fromPlanner: msg.fromPlanner });
   }
 
+  /**
+   * "Send now" on a queued message: stop the current reply, then answer this message first,
+   * like pressing Esc in the CLI and typing. Other queued messages stay as "not sent".
+   */
+  async sendNow(slug: string, id: string, msgId: string): Promise<Ticket> {
+    const msg = this.store.getTicket(slug, id)?.queued?.find((m) => m.id === msgId);
+    if (!msg) throw new Error("message not found");
+    const run = this.runs.get(this.key(slug, id));
+    if (run) {
+      this.stopRun(run);
+      await run.promise;
+    }
+    const after = this.store.getTicket(slug, id)?.queued?.find((m) => m.id === msgId);
+    // The agent read it just before it stopped: send it again so it gets an answer.
+    if (!after) return this.chat(slug, id, msg.text, { peer: msg.peer, fromPlanner: msg.fromPlanner });
+    if (after.state === "queued") throw new ConflictError("Waiting for the board to restart; it is sent right after");
+    return this.sendQueued(slug, id, msgId);
+  }
+
   discardQueued(slug: string, id: string, msgId: string): Ticket {
     const msg = this.store.getTicket(slug, id)?.queued?.find((m) => m.id === msgId);
     if (!msg) throw new Error("message not found");

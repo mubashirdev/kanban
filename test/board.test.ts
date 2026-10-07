@@ -702,6 +702,19 @@ test("Stop keeps unread messages as unsent; send or discard them later", async (
   expect(() => board.discardQueued("p", t.id, q[0].id)).toThrow(/not found/);
 }, 15000);
 
+test("Send now stops the run and sends the queued message as the next turn", async () => {
+  await setup();
+  process.env.FAKE_MODE = "slow";
+  const t = await board.createTicket("p", { title: "x", body: "", status: "ready" });
+  await Bun.sleep(400);
+  const queued = await board.chat("p", t.id, "do this instead");
+  process.env.FAKE_MODE = "ok";
+  await board.sendNow("p", t.id, queued.queued![0].id);
+  await board.whenIdle();
+  expect(store.getTicket("p", t.id)!.queued).toEqual([]);
+  expect(readArgs().at(-1)!.prompt.startsWith("do this instead")).toBe(true);
+}, 15000);
+
 test("daemon restart keeps unread messages and delivers them after recovery", async () => {
   await setup();
   process.env.FAKE_MODE = "slow";

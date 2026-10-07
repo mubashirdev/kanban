@@ -977,8 +977,17 @@ export function createServer(deps: ServerDeps) {
         throw new HttpError(400, (e as Error).message);
       }
     }
+    // Send now: POST .../queued/<msgId>/now stops the current reply and answers this message first.
+    if (action === "queued" && parts[5] && parts[6] === "now" && m === "POST") {
+      try {
+        return json(view(profile, await board.sendNow(slug, id, parts[5])), 202);
+      } catch (e) {
+        if (e instanceof ConflictError) throw e;
+        throw new HttpError(404, (e as Error).message);
+      }
+    }
     // A message Stop left unsent: POST .../queued/<msgId> sends it, DELETE discards it.
-    if (action === "queued" && parts[5] && (m === "POST" || m === "DELETE")) {
+    if (action === "queued" && parts[5] && !parts[6] && (m === "POST" || m === "DELETE")) {
       try {
         const t = m === "POST" ? await board.sendQueued(slug, id, parts[5]) : board.discardQueued(slug, id, parts[5]);
         return json(view(profile, t), m === "POST" ? 202 : 200);

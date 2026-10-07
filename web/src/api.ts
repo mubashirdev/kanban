@@ -608,6 +608,7 @@ export const api = {
   fork: (slug: string, id: string, input: { model?: string; text?: string }) => req<Ticket>("POST", `${t(slug, id)}/fork`, input),
   search: (slug: string, q: string) => req<SearchHit[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/search?q=${encodeURIComponent(q)}`),
   sendQueued: (slug: string, id: string, msgId: string) => req<Ticket>("POST", `${t(slug, id)}/queued/${msgId}`),
+  sendQueuedNow: (slug: string, id: string, msgId: string) => req<Ticket>("POST", `${t(slug, id)}/queued/${msgId}/now`),
   discardQueued: (slug: string, id: string, msgId: string) => req<Ticket>("DELETE", `${t(slug, id)}/queued/${msgId}`),
   conversation: (slug: string, id: string, before?: number) =>
     req<{ entries: SessionEntry[]; start: number; total: number; title: string | null }>(
