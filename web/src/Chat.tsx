@@ -170,7 +170,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       <button type="button" className="status-chip" aria-haspopup="menu" aria-expanded={picking === kind} disabled={stopping}
         onClick={() => { commands.close(); setPicking(picking === kind ? null : kind); }}>
         {kind === "model"
-          ? modelLabel((codex ? ticket.codexModel : ticket.model) ?? (codex ? defaults?.codexModel : defaults?.claudeModel))
+          ? modelLabel((codex ? ticket.codexModel : ticket.model === "default" ? null : ticket.model) ?? (codex ? defaults?.codexModel : defaults?.claudeModel))
           : chipLabel((codex ? ticket.codexEffort : ticket.effort) ?? (codex ? defaults?.codexEffort : defaults?.claudeEffort), "Auto effort")}
       </button>
       {picking === kind && <QuickPick slug={slug} ticket={ticket} kind={kind} onClose={() => setPicking(null)}

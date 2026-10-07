@@ -424,7 +424,7 @@ export class Board {
       cwd: session.dir,
       args: codex
         ? codexArgs({ sessionId: t.codexSessionId, refine, model: t.codexModel ?? this.store.config().codexModel, effort: t.codexEffort ?? this.store.config().codexEffort, writableRoots, instructions: t.standalone ? systemPrompt : undefined })
-        : buildArgs(session.sessionId, session.existed, t.model ?? profile.model ?? this.store.config().claudeModel, refine ? "plan" : "bypassPermissions", mcpConfig(), systemPrompt, t.effort ?? this.store.config().claudeEffort, t.outputStyle),
+        : buildArgs(session.sessionId, session.existed, (t.model === "default" ? null : t.model) ?? profile.model ?? this.store.config().claudeModel, refine ? "plan" : "bypassPermissions", mcpConfig(), systemPrompt, t.effort ?? this.store.config().claudeEffort, t.outputStyle),
       input: prompt,
       // CKANBAN_TICKET marks board runs: the ckanban MCP/CLI refuses board changes there (no runs starting runs).
       env: { CKANBAN_OUTPUT_DIR: outputDir, CKANBAN_TICKET: `${slug}/${id}`, ...(t.effort ? { CLAUDE_CODE_EFFORT_LEVEL: t.effort } : {}) },
