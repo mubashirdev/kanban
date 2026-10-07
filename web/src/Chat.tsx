@@ -621,19 +621,9 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       {phone ? (
         // Phones: one row like a messaging app. Extra actions sit behind +, and the one round button
         // is Stop while the agent works with nothing typed, otherwise Send.
-        <>
-        <div className="composer-status phone-status">{statusChips}</div>
-        <div className="composer composer-row">
+        <div className="composer composer-card">
           {commands.popup}
           {mentions.popup}
-          <div className="composer-more">
-            <button type="button" className="icon-btn composer-plus" aria-label="More actions" aria-haspopup="menu" aria-expanded={moreOpen} disabled={stopping} onClick={() => setMoreOpen((v) => !v)}><PlusIcon size={20} /></button>
-            {moreOpen && <ComposerMenu onClose={() => setMoreOpen(false)} items={[
-              { label: "Attach images", icon: <ImageIcon size={18} />, onSelect: () => imageInput.current?.click() },
-              { label: `${agentName} settings`, icon: <SlidersIcon size={18} />, onSelect: () => { commands.close(); setSettingsTab("model"); } },
-              { label: "Commands", icon: <SlashIcon size={18} />, onSelect: commands.toggle },
-            ]} />}
-          </div>
           <textarea ref={composer} rows={phone ? 1 : 2} value={draft} disabled={stopping} className={images.dragOver ? "drop-target" : undefined} {...images.handlers} {...commands.aria} role="combobox" aria-label={`Message ${agentName}`}
             placeholder={placeholder}
             onFocus={commands.prefetch}
@@ -646,12 +636,22 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                 send(draft);
               }
             }} />
+          <div className="composer-bar">
+          <div className="composer-more">
+            <button type="button" className="icon-btn composer-plus" aria-label="More actions" aria-haspopup="menu" aria-expanded={moreOpen} disabled={stopping} onClick={() => setMoreOpen((v) => !v)}><PlusIcon size={20} /></button>
+            {moreOpen && <ComposerMenu onClose={() => setMoreOpen(false)} items={[
+              { label: "Attach images", icon: <ImageIcon size={18} />, onSelect: () => imageInput.current?.click() },
+              { label: `${agentName} settings`, icon: <SlidersIcon size={18} />, onSelect: () => { commands.close(); setSettingsTab("model"); } },
+              { label: "Commands", icon: <SlashIcon size={18} />, onSelect: commands.toggle },
+            ]} />}
+          </div>
+            <div className="composer-status phone-status">{statusChips}</div>
           {micButton}
           {running && !draft.trim()
             ? <button type="button" className="btn danger send-round" aria-label={stopping ? "Stopping" : `Stop ${agentName}`} disabled={stopping} onClick={stop}><span className="stop-square" aria-hidden /></button>
             : <button type="button" className="btn primary send-round" aria-label={images.uploading ? "Uploading" : "Send"} disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? <span className="spinner" /> : <ArrowUpIcon size={18} />}</button>}
+          </div>
         </div>
-        </>
       ) : (
       <div className="composer">
         {commands.popup}

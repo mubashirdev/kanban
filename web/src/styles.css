@@ -1987,10 +1987,11 @@ body { letter-spacing: -0.011em; }
   :root[data-keyboard-open] .tabbar { display: none; }
 
   .fab {
-    position: fixed; right: 16px; bottom: calc(56px + env(safe-area-inset-bottom)); z-index: 25; display: inline-flex; align-items: center; gap: 8px;
-    height: 48px; padding: 0 20px 0 14px; border: 0; border-radius: 24px; background: var(--accent); color: var(--on-accent);
-    font-weight: 600; font-size: 15px; cursor: pointer; box-shadow: 0 6px 18px rgba(0, 113, 227, 0.35), 0 1px 3px rgba(0, 0, 0, 0.2);
+    position: fixed; right: 16px; bottom: calc(58px + env(safe-area-inset-bottom)); z-index: 25; display: grid; place-items: center;
+    width: 56px; height: 56px; padding: 0; border: 0; border-radius: 50%; background: var(--accent); color: var(--on-accent);
+    cursor: pointer; box-shadow: 0 6px 18px rgba(0, 113, 227, 0.35), 0 1px 3px rgba(0, 0, 0, 0.2);
   }
+  .fab:active { transform: scale(0.96); }
   :root[data-keyboard-open] .fab { display: none; }
   /* Last cards stay clear of the button. */
   .column-body { padding-bottom: 88px; }
@@ -2006,3 +2007,38 @@ body { letter-spacing: -0.011em; }
   .session-head .segmented button { min-height: 32px; padding: 0 10px; font-size: 13px; }
   .session-head .title-input { min-width: 0; }
 }
+
+/* Composer polish (phone): model + effort read as one joined control, round action buttons, everything on one centre line. */
+.composer-row .send-round, .composer-row .composer-mic, .composer-row .composer-plus { border-radius: 50%; padding: 0; display: grid; place-items: center; }
+.composer-row .send-round { box-shadow: none; }
+.composer-row .send-round.danger { background: var(--err); }
+.composer-row .send-round:disabled { background: var(--surface-2); color: var(--muted); opacity: 1; }
+.phone-status { display: flex; width: fit-content; margin: 0 14px 6px; padding: 2px; gap: 0; background: var(--surface-2); border-radius: 999px; }
+.phone-status .status-pick { position: relative; }
+.phone-status .status-pick + .status-pick::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 1px; background: var(--border); }
+.phone-status .status-chip { min-height: 30px; padding: 0 14px; border-radius: 999px; background: transparent; color: var(--text); font-size: 13px; font-weight: 600; }
+.phone-status .status-chip[aria-expanded="true"] { background: var(--surface); box-shadow: var(--shadow); }
+
+/* Desktop top bar: the repo picker shrinks instead of sitting on top of the running pill. */
+@media (min-width: 768px) {
+  .topbar .profile-select { flex: 0 1 220px; min-width: 120px; }
+  .topbar .profile-select .select-trigger { min-width: 0; width: 100%; }
+}
+
+/* Phone composer: one card (text on top; + on the left, model and effort, mic and send on the right). */
+.composer.composer-card { flex-direction: column; gap: 8px; margin: 0 12px 10px; padding: 14px 12px 10px 16px; border-radius: 24px; background: var(--surface); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); }
+.composer-card textarea { width: 100%; min-height: 28px; max-height: 40vh; padding: 0; font-size: 16px; line-height: 24px; }
+.composer-bar { display: flex; align-items: center; gap: 2px; }
+.composer-card .phone-status { width: auto; margin: 0 2px 0 auto; padding: 0; gap: 0; background: none; border-radius: 0; }
+.composer-card .phone-status .status-pick + .status-pick::before { display: none; }
+.composer-card .phone-status .status-chip { min-height: 36px; padding: 0 6px; background: none; color: var(--text); font-size: 14px; font-weight: 600; }
+.composer-card .phone-status .status-pick:last-child .status-chip { color: var(--muted); font-weight: 500; }
+.composer-card .phone-status .status-pick:last-child .status-chip::after { content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 8px; border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor; transform: translateY(-2px) rotate(45deg); }
+.composer-card .status-pick { position: static; }
+.composer-card .quick-pick { left: 0; right: auto; }
+.composer-card .composer-plus, .composer-card .composer-mic, .composer-card .send-round { width: 36px; height: 36px; border-radius: 50%; padding: 0; display: grid; place-items: center; flex: none; }
+.composer-card .composer-plus, .composer-card .composer-mic { color: var(--muted); }
+.composer-card .send-round { background: var(--text); color: var(--surface); box-shadow: none; }
+.composer-card .send-round.danger { background: var(--err); color: #fff; }
+.composer-card .send-round:disabled { background: var(--surface-2); color: var(--muted); }
+:root[data-keyboard-open] .composer.composer-card { margin-bottom: 6px; }

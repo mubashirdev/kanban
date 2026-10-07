@@ -749,8 +749,9 @@ export function App() {
         </nav>
       )}
       {profile && compact && !open && (
-        <button type="button" className="fab" onClick={() => (mode === "chats" ? (wideChats ? closeTicket() : setNewSession(true)) : setNewTicket(true))}>
-          <PlusIcon size={20} />{mode === "chats" ? "New chat" : "New ticket"}
+        <button type="button" className="fab" aria-label={mode === "chats" ? "New chat" : "New ticket"} title={mode === "chats" ? "New chat" : "New ticket"}
+          onClick={() => (mode === "chats" ? (wideChats ? closeTicket() : setNewSession(true)) : setNewTicket(true))}>
+          <PlusIcon size={26} />
         </button>
       )}
       {open && profile && open.standalone && !wideChats && <SessionView key={open.id} profile={profile} ticket={open} tickets={tickets} onClose={closeTicket} onOpenTicket={openTicket} />}
