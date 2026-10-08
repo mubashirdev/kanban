@@ -117,6 +117,8 @@ function readArgs(): { args: string[]; cwd: string; prompt: string }[] {
   return readFileSync(argsFile, "utf8").trim().split("\n").map((l) => JSON.parse(l));
 }
 
+const systemPrompt = (call: { args: string[] }) => call.args[call.args.indexOf("--append-system-prompt") + 1];
+
 beforeEach(() => {
   store = new Store(tempDir("ck-home-"));
   bus = new Bus();
@@ -534,11 +536,11 @@ test("chat in Planning refines read-only and keeps the card in place", async () 
   expect(call.args[call.args.indexOf("--permission-mode") + 1]).toBe("plan");
   // The planning tools come from the board's own MCP server, whatever the user registered.
   expect(JSON.parse(call.args[call.args.indexOf("--mcp-config") + 1]).mcpServers.ckanban.args.at(-1)).toBe("mcp");
-  const prompt = call.prompt;
-  expect(prompt.startsWith("Help me shape this idea")).toBe(true);
-  expect(prompt).toContain("<ckanban-context");
-  expect(prompt).toContain("propose_ticket");
-  expect(prompt).toContain("<ckanban-ticket>");
+  // The message is only what the user typed; the chat's rules go in the system prompt.
+  expect(call.prompt).toBe("Help me shape this idea");
+  const rules = systemPrompt(call);
+  expect(rules).toContain("propose_ticket");
+  expect(rules).toContain("<ckanban-ticket>");
   // second message resumes the same session
   await board.chat("p", t.id, "Just for me");
   await board.whenIdle();
@@ -843,7 +845,7 @@ test("creating a ticket in Planning starts the refine interview automatically", 
   const call = readArgs()[0];
   expect(call.args[call.args.indexOf("--permission-mode") + 1]).toBe("plan");
   expect(call.prompt.startsWith("<ckanban-context")).toBe(true);
-  expect(call.prompt).toContain("gym tracker");
+  expect(systemPrompt(call)).toContain("gym tracker");
   const got = store.getTicket("p", t.id)!;
   expect(got.refineStarted).toBe(true);
   expect(got.status).toBe("planning");
@@ -914,7 +916,7 @@ test("planning-only message in Review: Claude marks it and the card moves to Pla
   const got = store.getTicket("p", t.id)!;
   expect(got.status).toBe("planning");
   expect(got.outcome).toBeNull();
-  const prompt = readArgs()[1].prompt;
+  const prompt = systemPrompt(readArgs()[1]);
   expect(prompt).toContain('<ckanban-move to="planning"/>');
 });
 
@@ -933,7 +935,7 @@ test("tickets-only message in Done: Claude marks it and the card stays in Done",
   const got = store.getTicket("p", t.id)!;
   expect(got.status).toBe("done");
   expect(got.outcome).toBe("done");
-  expect(readArgs().at(-1)!.prompt).toContain("<ckanban-stay/>");
+  expect(systemPrompt(readArgs().at(-1)!)).toContain("<ckanban-stay/>");
 });
 
 test("normal Review chat still lands back in Review", async () => {

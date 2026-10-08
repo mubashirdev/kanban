@@ -16,7 +16,7 @@ import { forkSessionFile } from "./fork";
 import { saveMockups } from "./mockups";
 import { userWaitReason } from "./attention";
 import type { SessionSummary } from "./session";
-import { chatPrompt, sessionPrompt, firstRunPrompt, interruptedPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumePrompt, steerPrompt, type ChatMode, type PlanWake } from "./prompts";
+import { chatMessage, chatRules, sessionPrompt, firstRunPrompt, interruptedPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumePrompt, steerPrompt, type ChatMode, type PlanWake } from "./prompts";
 import {
   childrenOf, DEFAULT_MAX_CONCURRENT, findCycle, isComplete, normalizeNeeds, planActive, planProblem, planStep, planTable, resolveDeps, wakeupCap,
 } from "./plan";
@@ -584,7 +584,7 @@ export class Board {
     const prompt = withSetup(localizeImages(run.chat?.raw || command
       ? run.chat!.text
       : run.chat
-      ? chatPrompt(t, run.chat.text, run.chat.mode, outputDir)
+      ? chatMessage(run.chat.text, run.chat.mode)
       : t.runCount === 0
       ? firstRunPrompt(t, {
         isGit: session.isGit, linked: !!t.workdir, comments: t.workdir ? newComments : [], outputDir,
@@ -614,13 +614,13 @@ export class Board {
     }
     // A fork's first run copies the parent session; once the new session exists it is resumed like any other.
     const forkFrom = t.forkOf && !this.sessionExists(session.sessionId) ? t.forkOf : null;
-    const systemPrompt = t.standalone ? sessionPrompt(t.access ?? "read") : command ? chatPrompt(t, "", run.chat!.mode, outputDir) : undefined;
+    const systemPrompt = t.standalone ? sessionPrompt(t.access ?? "read") : run.chat && !run.chat.raw ? chatRules(t, run.chat.mode, outputDir) : undefined;
     const launch = codex ? startCodexRun : startRun;
     run.handle = launch({
       bin: codex ? this.opts.codexBin ?? resolveCodexBin() : this.opts.claudeBin,
       cwd: session.dir,
       args: codex
-        ? codexArgs({ sessionId: t.codexSessionId, refine, model: t.codexModel ?? this.store.config().codexModel, effort: t.codexEffort ?? this.store.config().codexEffort, writableRoots, instructions: t.standalone ? systemPrompt : undefined })
+        ? codexArgs({ sessionId: t.codexSessionId, refine, model: t.codexModel ?? this.store.config().codexModel, effort: t.codexEffort ?? this.store.config().codexEffort, writableRoots, instructions: systemPrompt })
         : buildArgs(session.sessionId, session.existed, (t.model === "default" ? null : t.model) ?? profile.model ?? this.store.config().claudeModel, refine ? "plan" : "bypassPermissions", mcpConfig(), systemPrompt, t.effort ?? this.store.config().claudeEffort, t.outputStyle, forkFrom),
       input: prompt,
       // CKANBAN_TICKET marks board runs: the ckanban MCP/CLI refuses board changes there (no runs starting runs).

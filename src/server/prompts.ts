@@ -270,16 +270,30 @@ export function interruptedPrompt(): string {
   return context("Reply interrupted by daemon restart; Claude continues", `The board restarted while you were replying, so your last reply was cut off and the user never saw its end. Continue from where you stopped: finish what you were doing and give the user your full reply. Keep following the instructions you were given earlier in this conversation (same mode, same rules, same way to end).`);
 }
 
-/** A message the user typed in the ticket's chat. Their text comes first; board instructions are wrapped so the UI can hide them. */
+const PLANNING_START = `The user just moved this ticket to Planning and is waiting for you in the ticket chat. Start now:
+- If important things are unclear, briefly say what you understood so far and interview them.
+- If the ticket is already clear enough to work on autonomously, skip the questions: propose the polished ticket, or say it looks ready.`;
+
+/** The user's message plus the ticket chat's rules, in one prompt. */
 export function chatPrompt(t: Ticket, text: string, mode: ChatMode, outputDir: string): string {
   const typed = text.trim();
-  if (mode === "refine") {
-    const start = typed ? "" : `The user just moved this ticket to Planning and is waiting for you in the ticket chat. Start now:
-- If important things are unclear, briefly say what you understood so far and interview them.
-- If the ticket is already clear enough to work on autonomously, skip the questions: propose the polished ticket, or say it looks ready.
+  if (mode === "refine" && !typed) return context("Board asked Claude to help refine this ticket", `${PLANNING_START}\n\n${chatRules(t, mode, outputDir)}`);
+  return `${typed}\n\n${context("", chatRules(t, mode, outputDir))}`;
+}
 
-`;
-    return `${typed}${typed ? "\n\n" : ""}${context(typed ? "" : "Board asked Claude to help refine this ticket", `${start}(Sent from the kanban board's ticket chat. The user reads your reply there, not in a terminal.)
+/**
+ * What a ticket chat message sends: only the user's text. The rules go in the system prompt
+ * (chatRules), so they aren't repeated in the conversation on every message.
+ */
+export function chatMessage(text: string, mode: ChatMode): string {
+  const typed = text.trim();
+  return mode === "refine" && !typed ? context("Board asked Claude to help refine this ticket", PLANNING_START) : typed;
+}
+
+/** The ticket chat's rules and the current ticket; sent as the system prompt, so it is always up to date. */
+export function chatRules(t: Ticket, mode: ChatMode, outputDir: string): string {
+  if (mode === "refine") {
+    return `(Sent from the kanban board's ticket chat. The user reads your reply there, not in a terminal.)
 You are helping the user shape this ticket BEFORE any work starts. Do not modify files or start the work (mockups go in reply blocks, see below); reading code, docs and links to understand the context is fine.
 
 Current ticket
@@ -306,11 +320,9 @@ ${TICKET_FORMAT}
 
 ${TICKETS_FORMAT}
 
-${BRANCH_FORMAT}`)}`;
+${BRANCH_FORMAT}`;
   }
-  return `${typed}
-
-${context("", `(Sent from the kanban board's ticket chat for "${t.title}". The user reads your reply there, not in a terminal.)
+  return `(Sent from the kanban board's ticket chat for "${t.title}". The user reads your reply there, not in a terminal.)
 Act on the message as you would in an interactive session. If a pull request already exists, push new commits to the same branch. Save research/writing deliverables in ${outputDir}.
 If the message only asks you to plan, audit, review, list ideas, propose or discuss, and no changes are wanted yet (e.g. "don't change anything yet"): do not modify any files, answer, and end your reply with <ckanban-move to="planning"/> on its own line. The board then moves the ticket to Planning, where the next steps get shaped before any work.
 If you need decisions from the user, ask with the ask_questions tool.
@@ -327,7 +339,7 @@ ${targetDesignRule(outputDir)}${QUESTIONS_FORMAT}
 
 ${artifactRule()}
 
-${RESULT_RULE}`)}`;
+${RESULT_RULE}`;
 }
 
 export function planningPrompt(t: Ticket, ticketFile: string): string {
