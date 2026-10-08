@@ -7,9 +7,15 @@ test("agent steps read as plain sentences", () => {
   expect(describeStep("Bash: cd /repo && bun test test").label).toBe("Ran tests");
   expect(describeStep("Bash: git status --short").label).toBe("Git status");
   expect(describeStep("Bash: python3 - <<'EOF'").label).toBe("Ran python3");
+  expect(describeStep("Bash: P=/tmp/x; git worktree add $P").label).toBe("Ran a shell script");
+  expect(describeStep("Bash: cat >> web/src/styles.css <<'EOF'")).toMatchObject({ kind: "edit", label: "Wrote styles.css" });
+  expect(describeStep("Bash: for i in 1 2; do curl -s x; done").label).toBe("Ran a shell script");
   expect(describeStep("Grep: usagePill").label).toBe("Searched for “usagePill”");
   expect(describeStep("WebFetch: https://docs.example.com/x").label).toBe("Opened docs.example.com");
-  expect(describeStep("mcp__playwright__browser_click: Send").label).toBe("Browser click (playwright)");
+  expect(describeStep("mcp__playwright__browser_click: Send")).toMatchObject({ kind: "web", label: "Clicked on the page" });
+  expect(describeStep("mcp__playwright-isolated__browser_run_code_unsafe").label).toBe("Ran a script in the browser");
+  expect(describeStep("mcp__ckanban__ask_questions").label).toBe("Asked you questions");
+  expect(describeStep("mcp__linear__search_issues: bug").label).toBe("Search issues · linear");
   // The raw command stays available for the opened view.
   expect(describeStep("Bash: git status --short").detail).toBe("git status --short");
 });

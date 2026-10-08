@@ -52,6 +52,21 @@ function describeBash(cmd: string): string {
   return `Running ${clip(w.split("/").pop()!, 30)}`;
 }
 
+/** Browser and board tools in words ("Clicking on the page"); others as "search issues · linear". */
+function describeMcp(server: string, tool: string): string {
+  if (/chrome|playwright|browser|puppeteer/i.test(server)) {
+    return /navigate|open|tabs_create/.test(tool) ? "Opening a page"
+      : /screenshot|snapshot|read_page|get_page/.test(tool) ? "Looking at the page"
+      : /click|tap|hover|drag/.test(tool) ? "Clicking on the page"
+      : /type|fill|form|press|key/.test(tool) ? "Typing on the page"
+      : /run_code|evaluate|javascript/.test(tool) ? "Running a script in the browser"
+      : "Using the browser";
+  }
+  const words = tool.replace(/[_-]+/g, " ");
+  if (server === "ckanban") return `Board: ${words}`;
+  return `${words.replace(/^\w/, (c) => c.toUpperCase())} · ${server.replace(/[_-]+/g, " ")}`;
+}
+
 /** Plain-English line for a tool call ("Reading Card.tsx"); unknown tools keep the `Name: arg` form. */
 export function describeTool(name: string, input: any): string {
   const str = (k: string) => (typeof input?.[k] === "string" && input[k] ? (input[k] as string) : null);
@@ -73,7 +88,7 @@ export function describeTool(name: string, input: any): string {
     case "TodoWrite": return "Updating the plan";
   }
   const mcp = /^mcp__(.+?)__(.+)$/.exec(name);
-  if (mcp) return `${mcp[1].replace(/_/g, " ")}: ${mcp[2].replace(/_/g, " ")}`;
+  if (mcp) return describeMcp(mcp[1], mcp[2]);
   return rawTool(name, input);
 }
 

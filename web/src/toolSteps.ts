@@ -16,6 +16,8 @@ function inspect(first: string): Step | null {
   const tool = first.split(/\s+/)[0];
   const args = operands(first);
   if (/^(rg|grep|ag|fd|find)$/.test(tool)) return { kind: "search", label: args[0] ? `Searched for ${quote(args[0])}` : "Searched the code", detail: first };
+  const target = /^cat\b.*?>>?\s*(\S+)/.exec(first)?.[1];
+  if (target) return { kind: "edit", label: `Wrote ${base(target)}`, detail: first };
   if (/^(cat|sed|head|tail|nl|bat)$/.test(tool) && args.length) return { kind: "read", label: `Read ${base(args.at(-1)!)}`, detail: first };
   if (tool === "apply_patch" || first.startsWith("*** Begin Patch")) return { kind: "edit", label: "Edited files", detail: "" };
   return null;
@@ -31,7 +33,32 @@ function command(cmd: string): Step {
   if (/\b(vite build|run build|build:web)\b/.test(first)) return run("Built the app");
   const git = /^git (\w+)/.exec(first);
   if (git) return run(`Git ${git[1]}`);
-  return run(`Ran ${base(first.split(/\s+/)[0] || "a command")}`);
+  const tool = first.split(/[\s;]+/)[0];
+  // "P=/x; ...", "for i in ...", "env -u X bun ..." are scripts, not a program called "P=" or "for".
+  if (!tool || tool.includes("=") || /^(for|while|until|if|env|export|set|case|[({])$/.test(tool)) return run("Ran a shell script");
+  return run(`Ran ${base(tool)}`);
+}
+
+const BOARD_TOOLS: Record<string, string> = {
+  ask_questions: "Asked you questions", propose_ticket: "Proposed a ticket", propose_tickets: "Proposed tickets",
+  propose_branch: "Offered a branch", create_ticket: "Created a ticket", update_ticket: "Updated a ticket",
+  move_ticket: "Moved a ticket", get_ticket: "Read a ticket", list_tickets: "Listed tickets", ask_ticket: "Asked another ticket",
+  reply_ticket: "Replied to another ticket", comment_ticket: "Commented on a ticket", report_bug: "Reported a bug",
+};
+
+/** "mcp__playwright__browser_click" reads as "Clicked on the page", not "Browser click (playwright)". */
+function mcpStep(server: string, tool: string, arg: string): Step {
+  if (/chrome|playwright|browser|puppeteer/i.test(server)) {
+    const label = /navigate|open|tabs_create/.test(tool) ? "Opened a page"
+      : /screenshot|snapshot|read_page|get_page/.test(tool) ? "Looked at the page"
+      : /click|tap|hover|drag/.test(tool) ? "Clicked on the page"
+      : /type|fill|form|press|key/.test(tool) ? "Typed on the page"
+      : /run_code|evaluate|javascript/.test(tool) ? "Ran a script in the browser"
+      : "Used the browser";
+    return { kind: "web", label, detail: arg };
+  }
+  if (server === "ckanban") return { kind: "other", label: BOARD_TOOLS[tool] ?? `${words(tool).replace(/^\w/, (c) => c.toUpperCase())} on the board`, detail: arg };
+  return { kind: "other", label: `${words(tool).replace(/^\w/, (c) => c.toUpperCase())} · ${words(server)}`, detail: arg };
 }
 
 export function describeStep(text: string): Step {
@@ -53,7 +80,7 @@ export function describeStep(text: string): Step {
     case "Skill": return { kind: "other", label: `Used the ${arg} skill`, detail: "" };
   }
   const mcp = /^mcp__(.+?)__(.+)$/.exec(name);
-  if (mcp) return { kind: "other", label: `${words(mcp[2]).replace(/^\w/, (c) => c.toUpperCase())} (${words(mcp[1])})`, detail: arg };
+  if (mcp) return mcpStep(mcp[1], mcp[2], arg);
   return { kind: "other", label: words(name), detail: arg };
 }
 

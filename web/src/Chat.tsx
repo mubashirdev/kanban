@@ -39,6 +39,23 @@ function clock(iso: string, now: number): string {
 }
 
 /** Claude ended its turn to wait for background tasks; the run stays open and it resumes when they finish. */
+/** What the agent is doing right now and for how long, like the desktop apps' "Working · 1m 12s". */
+function WorkingRow({ text, since }: { text: string; since?: string | null }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const secs = since ? Math.max(0, Math.floor((now - Date.parse(since)) / 1000)) : null;
+  return (
+    <div className="working-row" role="status">
+      <span className="spinner" />
+      <span className="working-text">{text}</span>
+      {secs !== null && <span className="working-time">{secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`}</span>}
+    </div>
+  );
+}
+
 function WaitingCard({ tasks }: { tasks: NonNullable<Ticket["waitingOn"]> }) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -503,8 +520,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   };
   const renderEntry = (b: Block, old: boolean) => {
           if (b.kind === "tools") {
-            const i = blocks.indexOf(b);
-            const tools = <ToolGroup key={b.items[0].uuid} texts={b.items.map((t) => t.text)} details={b.items.map((t) => t.tool)} working={running && !live && i === blocks.length - 1} />;
+            const tools = <ToolGroup key={b.items[0].uuid} texts={b.items.map((t) => t.text)} details={b.items.map((t) => t.tool)} />;
             return old ? <div key={b.items[0].uuid} className="inherited">{tools}</div> : tools;
           }
           const e = b.e;
@@ -680,7 +696,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
         )}
         {running && !live && !!ticket.waitingOn?.length && <WaitingCard tasks={ticket.waitingOn} />}
         {running && !live && !ticket.waitingOn?.length && (
-          <div className="chat-typing"><span className="spinner" /> {ticket.lastActivity && ticket.lastActivity !== "Starting…" ? ticket.lastActivity : ` ${agentName} is working…`}</div>
+          <WorkingRow text={ticket.lastActivity && ticket.lastActivity !== "Starting…" ? ticket.lastActivity : `${agentName} is working…`} since={ticket.runStartedAt} />
         )}
         {pending.filter((p) => p.steer && !queued.some((q) => q.text === p.text)).map((p, i) => (
           <div key={i} className="conv-msg user pending">

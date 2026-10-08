@@ -32,13 +32,22 @@ function StepResult({ detail }: { detail?: ToolDetail }) {
   );
 }
 
-/** A run of tool steps folded into one row: what the agent did, at a glance; tap to see each step. */
-export function ToolGroup({ texts, details, working }: { texts: string[]; details?: (ToolDetail | undefined)[]; working: boolean }) {
+/** "+12 −3" for an edit's diff, like the desktop apps. */
+function DiffCount({ diff }: { diff: string }) {
+  const lines = diff.split("\n");
+  const added = lines.filter((l) => l.startsWith("+") && !l.startsWith("+++")).length;
+  const removed = lines.filter((l) => l.startsWith("-") && !l.startsWith("---")).length;
+  return <span className="diff-count"><span className="add">+{added}</span> <span className="del">−{removed}</span></span>;
+}
+
+/** A run of tool steps folded into one quiet row: what the agent did, at a glance; tap to see each step.
+ *  What it is doing right now shows once, in the working row under the conversation. */
+export function ToolGroup({ texts, details }: { texts: string[]; details?: (ToolDetail | undefined)[] }) {
   const steps = texts.map(describeStep);
   return (
     <details className="tool-group">
       <summary>
-        <span className="tool-lead">{working ? <span className="spinner" /> : <StepIcon kind={steps.at(-1)!.kind} />}</span>
+        <span className="tool-lead"><StepIcon kind={steps.at(-1)!.kind} /></span>
         <span className="tool-summary">{summarizeSteps(texts)}</span>
         <ChevronRightIcon className="tool-chevron" size={14} />
       </summary>
@@ -49,7 +58,7 @@ export function ToolGroup({ texts, details, working }: { texts: string[]; detail
             <li key={i} className={`tool-step kind-${step.kind}${detail?.ok === false ? " failed" : ""}`}>
               <span className="tool-lead"><StepIcon kind={step.kind} /></span>
               <span className="tool-step-text">
-                <span className="step-label">{step.label}</span>
+                <span className="step-label">{step.label}{detail?.diff && <DiffCount diff={detail.diff} />}</span>
                 {step.detail && <code className="step-detail">{step.detail}</code>}
                 {detail?.diff && <Diff text={detail.diff} />}
                 {detail?.output && (

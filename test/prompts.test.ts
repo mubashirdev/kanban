@@ -41,7 +41,8 @@ test("summarizeEvent describes tool calls in plain English", () => {
   expect(tool("WebSearch", { query: "bun test" })).toBe("Searching the web");
   expect(tool("Task", { description: "Find card CSS" })).toBe("Delegating: Find card CSS");
   expect(tool("Agent", { description: "Review diff" })).toBe("Delegating: Review diff");
-  expect(tool("mcp__ckanban__list_tickets", {})).toBe("ckanban: list tickets");
+  expect(tool("mcp__ckanban__list_tickets", {})).toBe("Board: list tickets");
+  expect(tool("mcp__claude-in-chrome__navigate", {})).toBe("Opening a page");
   expect(tool("SomethingNew", { path: "/a/b/c.ts" })).toBe("SomethingNew: b/c.ts");
   expect(tool("SomethingNew", {})).toBe("SomethingNew");
   const ev = { type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "sed -n 1,60p src/x.ts" } }] } };
