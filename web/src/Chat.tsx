@@ -369,7 +369,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   );
   // On iPhone a tap on a button blurs the text box first: the keyboard closes, the composer slides down
   // and the tap lands beside the button, so nothing is sent. Keeping focus keeps the button in place.
-  const keepKeyboard = (e: React.PointerEvent) => { if (document.activeElement === composer.current) e.preventDefault(); };
+  const keepKeyboard = (e: React.PointerEvent | React.MouseEvent) => { if (document.activeElement === composer.current) e.preventDefault(); };
   const send = async (text: string, preserveDraft = false) => {
     const t = text.trim();
     if (!t || stopping || images.uploading) return;
@@ -834,8 +834,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           ))}
           {micButton}
           {running && !draft.trim()
-            ? <button type="button" className="btn danger send-round" aria-label={stopping ? "Stopping" : `Stop ${agentName}`} disabled={stopping} onPointerDown={keepKeyboard} onClick={stop}><span className="stop-square" aria-hidden /></button>
-            : <button type="button" className="btn primary send-round" aria-label={images.uploading ? "Uploading" : "Send"} disabled={!draft.trim() || stopping || images.uploading} onPointerDown={keepKeyboard} onClick={() => send(draft)}>{images.uploading ? <span className="spinner" /> : <ArrowUpIcon size={18} />}</button>}
+            ? <button type="button" className="btn danger send-round" aria-label={stopping ? "Stopping" : `Stop ${agentName}`} disabled={stopping} onPointerDown={keepKeyboard} onMouseDown={keepKeyboard} onClick={stop}><span className="stop-square" aria-hidden /></button>
+            : <button type="button" className="btn primary send-round" aria-label={images.uploading ? "Uploading" : "Send"} disabled={!draft.trim() || stopping || images.uploading} onPointerDown={keepKeyboard} onMouseDown={keepKeyboard} onClick={() => send(draft)}>{images.uploading ? <span className="spinner" /> : <ArrowUpIcon size={18} />}</button>}
         </div>
       </div>
       {images.error && <div className="form-error composer-error">{images.error}</div>}
