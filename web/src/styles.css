@@ -5,8 +5,9 @@
   --border: #d4d4d9;
   --text: #1c1c1e;
   --muted: #636366;
-  --accent: #0071e3;
-  --accent-soft: #e3effd;
+  /* Neutral, like the Claude and Codex apps: near-black actions on light grey. */
+  --accent: #1c1c1e;
+  --accent-soft: #e9e9ee;
   --on-accent: #ffffff;
   --ok: #248a3d;
   --ok-soft: #e1f3e6;
@@ -32,9 +33,9 @@
     --border: #38383a;
     --text: #f5f5f7;
     --muted: #98989f;
-    --accent: #0a84ff;
-    --accent-soft: #10263f;
-    --on-accent: #ffffff;
+    --accent: #f5f5f7;
+    --accent-soft: #2c2c2e;
+    --on-accent: #1c1c1e;
     --ok: #30d158;
     --ok-soft: #12301b;
     --warn: #ff9f0a;
@@ -1352,7 +1353,7 @@ button.pill:hover { color: var(--text); }
 .changes-file.on { background: var(--accent-soft); }
 .changes-file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .changes-caret { width: 14px; text-align: center; flex: none; }
-.changes-cmt-count { flex: none; font-size: 10px; line-height: 16px; background: var(--accent); color: #fff; border-radius: 99px; padding: 0 5px; }
+.changes-cmt-count { flex: none; font-size: 10px; line-height: 16px; background: var(--accent); color: var(--on-accent); border-radius: 99px; padding: 0 5px; }
 .diff-st { flex: none; width: 14px; text-align: center; font-size: 10.5px; font-weight: 700; }
 .diff-st.st-A { color: var(--ok); }
 .diff-st.st-M { color: var(--info); }
@@ -1376,7 +1377,7 @@ button.pill:hover { color: var(--text); }
 .dl-hunk td { background: var(--info-soft); color: var(--info); }
 .add-cmt {
   position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px;
-  background: var(--accent); color: #fff; font: 700 12px/16px var(--mono); cursor: pointer; opacity: 0;
+  background: var(--accent); color: var(--on-accent); font: 700 12px/16px var(--mono); cursor: pointer; opacity: 0;
 }
 .dl:hover .add-cmt, .add-cmt:focus-visible { opacity: 1; }
 .dl-cmt td { padding: 8px 14px; background: var(--surface); font-family: -apple-system, BlinkMacSystemFont, "Inter", sans-serif; font-size: 13px; }
@@ -2274,7 +2275,7 @@ body { letter-spacing: -0.011em; }
   .fab {
     position: fixed; right: 16px; bottom: calc(58px + env(safe-area-inset-bottom)); z-index: 25; display: grid; place-items: center;
     width: 56px; height: 56px; padding: 0; border: 0; border-radius: 50%; background: var(--accent); color: var(--on-accent);
-    cursor: pointer; box-shadow: 0 6px 18px rgba(0, 113, 227, 0.35), 0 1px 3px rgba(0, 0, 0, 0.2);
+    cursor: pointer; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.2);
   }
   .fab:active { transform: scale(0.96); }
   :root[data-keyboard-open] .fab { display: none; }
@@ -2621,7 +2622,7 @@ body { letter-spacing: -0.011em; }
 .swipe-row { position: relative; overflow: hidden; }
 .swipe-actions { position: absolute; top: 0; right: 0; bottom: 0; display: flex; }
 .swipe-action { flex: 1; border: 0; border-radius: 0; background: var(--muted); color: #fff; font: 600 14px/1 inherit; font-family: inherit; }
-.swipe-action:first-child:not(.danger) { background: var(--accent); }
+.swipe-action:first-child:not(.danger) { background: var(--accent); color: var(--on-accent); }
 .swipe-action.danger { background: var(--err); }
 .swipe-content { position: relative; background: var(--bg); transition: transform 0.2s ease; touch-action: pan-y; }
 .swipe-content.dragging { transition: none; }
