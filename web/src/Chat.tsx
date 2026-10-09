@@ -239,6 +239,13 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   );
   const [defaults, setDefaults] = useState<DefaultModels | null>(null);
   useEffect(() => { api.settings().then(setDefaults).catch(() => {}); }, [picking]);
+  // Looking at the chat marks its latest reply as read (chats and Planning tickets).
+  const lastReply = ticket.session?.lastMessage?.at;
+  useEffect(() => {
+    if (ticket.running || !lastReply || (ticket.readAt && ticket.readAt >= lastReply)) return;
+    // The reply's own time, from the server's clock: the phone's clock may run behind.
+    api.updateTicket(slug, ticket.id, { readAt: lastReply }).catch(() => {});
+  }, [lastReply, ticket.running]);
   const [modelNames, setModelNames] = useState<Record<string, string>>({});
   useEffect(() => {
     Promise.all([api.claudeModels(), api.codexModels()])

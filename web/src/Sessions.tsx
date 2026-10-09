@@ -336,13 +336,6 @@ export function SessionView({ profile, ticket, tickets, onClose, onOpenTicket, e
   useLayer(onClose, { active: !embedded && !menu && !confirmDelete && !forking });
   useEffect(() => setTitle(ticket.title), [ticket.title]);
 
-  // Looking at the session marks its latest reply as read.
-  const lastReply = ticket.session?.lastMessage?.at;
-  useEffect(() => {
-    if (ticket.running || !lastReply || (ticket.readAt && ticket.readAt >= lastReply)) return;
-    // The reply's own time, from the server's clock: the phone's clock may run behind.
-    api.updateTicket(slug, ticket.id, { readAt: lastReply }).catch(() => {});
-  }, [lastReply, ticket.running]);
 
   const saveTitle = () => {
     const next = title.trim();

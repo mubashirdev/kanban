@@ -36,6 +36,10 @@ test("review column and Claude replies in planning", () => {
   expect(attentionFor(T({ status: "review", outcome: "done" }), null, false)).toEqual({ kind: "review", label: "Ready for review" });
   const replied = S({ lastMessage: { role: "assistant", text: "hi", at: "" } });
   expect(attentionFor(T({}), replied, false)).toEqual({ kind: "reply", label: "Claude replied" });
+  // Opened since: read, until Claude replies again.
+  const at = S({ lastMessage: { role: "assistant", text: "hi", at: "2026-10-09T10:00:00.000Z" } });
+  expect(attentionFor(T({ readAt: "2026-10-09T10:00:00.000Z" }), at, false)).toBeNull();
+  expect(attentionFor(T({ readAt: "2026-10-09T09:00:00.000Z" }), at, false)).toEqual({ kind: "reply", label: "Claude replied" });
   // Cut off by a restart: not a reply yet.
   expect(attentionFor(T({ interrupted: { at: "", mode: "refine", partial: "Half" } }), replied, false)).toBeNull();
   expect(attentionFor(T({ status: "backlog" }), replied, false)).toBeNull();
