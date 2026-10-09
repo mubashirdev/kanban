@@ -363,6 +363,19 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     else setJump((j) => (j ? { fresh: true } : j));
   }, [page, pending, running, live, waitingHandoff]);
 
+  // File cards, images and quick replies arrive after the first scroll: stay pinned to the bottom while
+  // they grow the conversation, unless the user scrolled up.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const resized = new ResizeObserver(() => { if (stickToBottom.current) el.scrollTop = el.scrollHeight; });
+    const watchChildren = () => { resized.disconnect(); for (const child of el.children) resized.observe(child); };
+    watchChildren();
+    const added = new MutationObserver(watchChildren);
+    added.observe(el, { childList: true });
+    return () => { resized.disconnect(); added.disconnect(); };
+  }, []);
+
   const toBottom = () => {
     const el = scroller.current;
     if (!el) return;
