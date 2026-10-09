@@ -2605,3 +2605,14 @@ body { letter-spacing: -0.011em; }
 .tool-group .step-output { margin-top: 0; }
 .tool-group .step-output > summary { min-height: 28px; font-size: 12px; }
 .tool-group { margin: -6px 0; }
+
+/* One reading column on wide screens: messages, the terminal note and the composer share the same width. */
+:root { --read-max: 860px; }
+.panel-main .composer.composer-card, .panel-main > .chat > .composer-warn, .panel-main .chat > .composer-warn {
+  margin-left: max(12px, calc((100% - var(--read-max)) / 2));
+  margin-right: max(12px, calc((100% - var(--read-max)) / 2));
+}
+.panel-main .chat > .composer-warn { margin-bottom: 8px; padding: 8px 12px; border-radius: 12px; }
+/* Focus: a soft lift, not a blue ring. */
+.composer.composer-card:focus-within { border-color: color-mix(in srgb, var(--text) 22%, transparent); box-shadow: 0 2px 14px rgba(0, 0, 0, 0.08); }
+.composer-warn .link-btn { display: inline; min-height: 0; min-width: 0; padding: 0; vertical-align: baseline; font-size: inherit; }

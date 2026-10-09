@@ -29,5 +29,5 @@ test("Codex shell commands read like the equivalent Claude steps", () => {
 
 test("a folded group of steps is summed up by kind", () => {
   expect(summarizeSteps(["Read: a.ts"])).toBe("Read a.ts");
-  expect(summarizeSteps(["Read: a.ts", "Read: b.ts", "Edit: a.ts", "Bash: ls", "Bash: bun test"])).toBe("Read 2 files · edited 1 · ran 2 commands");
+  expect(summarizeSteps(["Read: a.ts", "Read: b.ts", "Edit: a.ts", "Bash: ls", "Bash: bun test"])).toBe("Read 2 files · edited 1 file · ran 2 commands");
 });

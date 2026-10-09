@@ -91,7 +91,7 @@ export function summarizeSteps(texts: string[]): string {
   const count = (kind: Step["kind"]) => steps.filter((s) => s.kind === kind).length;
   const parts = [
     count("read") && `read ${count("read")} ${count("read") === 1 ? "file" : "files"}`,
-    count("edit") && `edited ${count("edit")}`,
+    count("edit") && `edited ${count("edit")} ${count("edit") === 1 ? "file" : "files"}`,
     count("run") && `ran ${count("run")} ${count("run") === 1 ? "command" : "commands"}`,
     count("search") && `searched ${count("search")} ${count("search") === 1 ? "time" : "times"}`,
     count("web") && `opened ${count("web")} ${count("web") === 1 ? "page" : "pages"}`,
