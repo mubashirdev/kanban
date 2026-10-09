@@ -221,6 +221,10 @@ test("a tool step gets its result, duration and the change it made, for Claude a
   const [edit, bash] = parseSession(claude).entries;
   expect(edit.tool).toEqual({ diff: "-let x = 1\n+let x = 2", ok: true, output: "File updated", ms: 2500 });
   expect(bash.tool).toMatchObject({ ok: false, output: "1 fail", ms: 1000 });
+  // Only the changed line is marked; the lines around it stay as context.
+  const fn = [{ type: "assistant", uuid: "a3", timestamp: "2026-10-07T10:00:05.000Z", message: { role: "assistant", content: [{ type: "tool_use", id: "t3", name: "Edit",
+    input: { file_path: "/repo/m.ts", old_string: "function add() {\n  return a - b;\n}", new_string: "function add() {\n  return a + b;\n}" } }] } }].map((e) => JSON.stringify(e)).join("\n");
+  expect(parseSession(fn).entries[0].tool?.diff).toBe(" function add() {\n-  return a - b;\n+  return a + b;\n }");
 
   const patch = "*** Begin Patch\n*** Update File: a.ts\n@@\n-old\n+new\n*** End Patch";
   const codex = [

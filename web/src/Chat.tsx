@@ -239,6 +239,12 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   );
   const [defaults, setDefaults] = useState<DefaultModels | null>(null);
   useEffect(() => { api.settings().then(setDefaults).catch(() => {}); }, [picking]);
+  // A blocked run says why in its last board comment; the reply itself may hold only the result line.
+  const [blockedReason, setBlockedReason] = useState("");
+  useEffect(() => {
+    if (ticket.running || ticket.outcome !== "blocked") return setBlockedReason("");
+    api.comments(slug, ticket.id).then((cs) => setBlockedReason(cs.filter((c) => c.author === "ai").at(-1)?.text ?? ""), () => {});
+  }, [ticket.id, ticket.outcome, ticket.running]);
   // Looking at the chat marks its latest reply as read (chats and Planning tickets).
   const lastReply = ticket.session?.lastMessage?.at;
   useEffect(() => {
@@ -770,6 +776,12 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             <pre>{ticket.error}</pre>
             {/model/i.test(ticket.error) && <button className="btn small" onClick={() => setSettingsTab("model")}>Choose model</button>}
             {retryButtons}
+          </div>
+        )}
+        {!running && !ticket.error && ticket.outcome === "blocked" && blockedReason && (
+          <div className="banner warn inline run-blocked" role="status">
+            <b>{agentName} is blocked</b>
+            <Markdown text={blockedReason} />
           </div>
         )}
         {!running && !ticket.error && ticket.outcome === "stopped" && ticket.lastPrompt && (

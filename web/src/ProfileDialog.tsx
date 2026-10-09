@@ -140,7 +140,14 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted }: {
               </div>
               <div className="picker-list" role="listbox" aria-label="Recent folders">
                 {recent === null && <div className="picker-empty">Loading…</div>}
-                {recent !== null && shown.length === 0 && (
+                {/* A typed path is a folder too, not just a filter. */}
+                {/^[~/]/.test(filter.trim()) && path !== filter.trim() && (
+                  <button type="button" role="option" aria-selected={false} className="picker-row" onClick={() => choose(filter.trim())}>
+                    <span className="picker-name">Use this folder</span>
+                    <span className="picker-path">{filter.trim()}</span>
+                  </button>
+                )}
+                {recent !== null && shown.length === 0 && !/^[~/]/.test(filter.trim()) && (
                   <div className="picker-empty">{recent.length ? "No match." : "No Claude Code sessions found. Browse for a folder below."}</div>
                 )}
                 {shown.map((p) => (

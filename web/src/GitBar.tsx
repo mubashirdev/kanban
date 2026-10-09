@@ -44,7 +44,7 @@ export function GitBar({ slug, ticket, git, onDone, onError }: {
         <form className="git-commit" onSubmit={(e) => { e.preventDefault(); if (message.trim()) void act("commit", () => api.gitAction(slug, ticket.id, "commit", message), "Committed."); }}>
           <input value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Commit message" aria-label="Commit message" maxLength={500} disabled={!!busy || running} />
           <button className="btn primary" disabled={!message.trim() || !!busy || running}>{busy === "commit" ? "Committing…" : "Commit all"}</button>
-          <button type="button" className="link-btn small" disabled={!!busy || running} onClick={askAgent}>Let {agent} write the message and commit</button>
+          <button type="button" className="btn small git-ask" disabled={!!busy || running} onClick={askAgent}>Let {agent} write the message and commit</button>
         </form>
       )}
       <div className="git-actions">

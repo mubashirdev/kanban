@@ -47,7 +47,8 @@ export function ReviewPanel({
   }, [slug, ticket.id, refresh, ticket.runCount, ticket.running]);
   useEffect(() => {
     let active = true;
-    if (!file) {
+    // Waits for the fresh file list: after a commit the old file may be gone.
+    if (!file || !data?.files.some((f) => f.path === file)) {
       setDiff("");
       return;
     }
@@ -76,7 +77,7 @@ export function ReviewPanel({
     return () => {
       active = false;
     };
-  }, [slug, ticket.id, file, refresh]);
+  }, [slug, ticket.id, file, data]);
   const request = async () => {
     if (!note.trim() || sending) return;
     setSending(true);

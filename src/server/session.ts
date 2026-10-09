@@ -46,15 +46,31 @@ export interface ToolDetail {
 const OUTPUT_LIMIT = 4000;
 const DIFF_LIMIT = 20_000;
 
+/** An edit as diff lines: lines both sides share at the start and end stay as context, so only the change is marked. */
+function editLines(oldText: unknown, newText: unknown): string[] {
+  const a = typeof oldText === "string" ? oldText.split("\n") : [];
+  const b = typeof newText === "string" ? newText.split("\n") : [];
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  let end = 0;
+  while (end < a.length - start && end < b.length - start && a[a.length - 1 - end] === b[b.length - 1 - end]) end++;
+  return [
+    ...a.slice(0, start).map((l) => ` ${l}`),
+    ...a.slice(start, a.length - end).map((l) => `-${l}`),
+    ...b.slice(start, b.length - end).map((l) => `+${l}`),
+    ...a.slice(a.length - end).map((l) => ` ${l}`),
+  ];
+}
+
 /** The change an edit tool made, as "- old / + new" lines, or Codex's patch text as it came. */
 function toolDiff(block: any): string | undefined {
   const input = block.input ?? {};
   const lines = (prefix: string, text: unknown) => (typeof text === "string" && text ? text.split("\n").map((l) => `${prefix}${l}`) : []);
   let out: string[] = [];
   if (typeof input.patch === "string") return input.patch.slice(0, DIFF_LIMIT);
-  if (block.name === "Edit") out = [...lines("-", input.old_string), ...lines("+", input.new_string)];
+  if (block.name === "Edit") out = editLines(input.old_string, input.new_string);
   else if (block.name === "Write") out = lines("+", input.content);
-  else if (block.name === "MultiEdit" && Array.isArray(input.edits)) out = input.edits.flatMap((e: any) => [...lines("-", e?.old_string), ...lines("+", e?.new_string)]);
+  else if (block.name === "MultiEdit" && Array.isArray(input.edits)) out = input.edits.flatMap((e: any) => editLines(e?.old_string, e?.new_string));
   return out.length ? out.join("\n").slice(0, DIFF_LIMIT) : undefined;
 }
 
