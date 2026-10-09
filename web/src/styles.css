@@ -2616,3 +2616,12 @@ body { letter-spacing: -0.011em; }
 /* Focus: a soft lift, not a blue ring. */
 .composer.composer-card:focus-within { border-color: color-mix(in srgb, var(--text) 22%, transparent); box-shadow: 0 2px 14px rgba(0, 0, 0, 0.08); }
 .composer-warn .link-btn { display: inline; min-height: 0; min-width: 0; padding: 0; vertical-align: baseline; font-size: inherit; }
+
+/* Chat list: swipe a row left for Stop, Read / Unread and Delete. */
+.swipe-row { position: relative; overflow: hidden; }
+.swipe-actions { position: absolute; top: 0; right: 0; bottom: 0; display: flex; }
+.swipe-action { flex: 1; border: 0; border-radius: 0; background: var(--muted); color: #fff; font: 600 14px/1 inherit; font-family: inherit; }
+.swipe-action:first-child:not(.danger) { background: var(--accent); }
+.swipe-action.danger { background: var(--err); }
+.swipe-content { position: relative; background: var(--bg); transition: transform 0.2s ease; touch-action: pan-y; }
+.swipe-content.dragging { transition: none; }

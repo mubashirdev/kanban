@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, copy, type ClaudeSession, type Profile, type Ticket } from "./api";
 import { autoGrow } from "./autoGrow";
 import { rememberFirstMessage } from "./drafts";
@@ -60,6 +60,50 @@ function SessionCard({ ticket, onOpen }: { ticket: Ticket; onOpen: () => void })
   );
 }
 
+type SwipeAction = { label: string; danger?: boolean; run: () => void };
+const ACTION_WIDTH = 76;
+
+/** Swipe a chat left for quick actions, like Mail on iPhone; a tap anywhere on the row closes them again. */
+function SwipeRow({ actions, children }: { actions: SwipeAction[]; children: ReactNode }) {
+  const [offset, setOffset] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const drag = useRef<{ x: number; y: number; base: number; sideways: boolean | null } | null>(null);
+  const width = actions.length * ACTION_WIDTH;
+  return (
+    <div className="swipe-row">
+      <div className="swipe-actions" style={{ width }} aria-hidden={offset === 0}>
+        {actions.map((a) => (
+          <button key={a.label} type="button" tabIndex={offset ? 0 : -1} className={`swipe-action${a.danger ? " danger" : ""}`}
+            onClick={() => { setOffset(0); a.run(); }}>{a.label}</button>
+        ))}
+      </div>
+      <div className={`swipe-content${dragging ? " dragging" : ""}`} style={{ transform: `translateX(${-offset}px)` }}
+        onTouchStart={(e) => { const t = e.touches[0]; drag.current = { x: t.clientX, y: t.clientY, base: offset, sideways: null }; }}
+        onTouchMove={(e) => {
+          const d = drag.current;
+          if (!d) return;
+          const t = e.touches[0];
+          const dx = d.x - t.clientX;
+          // Decide once per touch: sideways opens the actions, up and down scrolls the list.
+          if (d.sideways === null && Math.abs(dx) + Math.abs(t.clientY - d.y) > 8) {
+            d.sideways = Math.abs(dx) > Math.abs(t.clientY - d.y);
+            setDragging(d.sideways);
+          }
+          if (d.sideways) setOffset(Math.min(width, Math.max(0, d.base + dx)));
+        }}
+        onTouchEnd={() => {
+          const sideways = drag.current?.sideways;
+          drag.current = null;
+          setDragging(false);
+          if (sideways) setOffset((o) => (o > width / 2 ? width : 0));
+        }}
+        onClickCapture={(e) => { if (offset > 0) { e.stopPropagation(); setOffset(0); } }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Chats mode: sessions as a messenger. Phones show the thread list (a thread opens full screen);
  * wide screens show the list on the left and the open chat, or a new-chat box, on the right.
@@ -71,7 +115,20 @@ export function ChatsView({ profile, sessions, tickets, openId, wide, onOpen, on
   useNow();
   const [query, setQuery] = useState("");
   const [resuming, setResuming] = useState(false);
+  const [deleting, setDeleting] = useState<Ticket | null>(null);
   const q = query.trim().toLowerCase();
+  const failed = (e: Error) => toast(e.message, { tone: "error" });
+  const actionsFor = (t: Ticket): SwipeAction[] => {
+    const last = t.session?.lastMessage;
+    const unread = t.attention?.kind === "reply";
+    return [
+      ...(t.running ? [{ label: "Stop", run: () => { api.stop(profile.slug, t.id).catch(failed); } }] : []),
+      ...(unread && last?.at ? [{ label: "Read", run: () => { api.updateTicket(profile.slug, t.id, { readAt: last.at }).catch(failed); } }] : []),
+      // Any time before the last reply makes it unread again.
+      ...(!unread && !t.running && last?.role === "assistant" ? [{ label: "Unread", run: () => { api.updateTicket(profile.slug, t.id, { readAt: new Date(0).toISOString() }).catch(failed); } }] : []),
+      { label: "Delete", danger: true, run: () => setDeleting(t) },
+    ];
+  };
   const threads = sessions
     .filter((t) => !q || `${t.title}\n${t.session?.lastMessage?.text ?? ""}`.toLowerCase().includes(q))
     .sort((a, b) => lastAt(b).localeCompare(lastAt(a)));
@@ -87,7 +144,9 @@ export function ChatsView({ profile, sessions, tickets, openId, wide, onOpen, on
         ) : (
           <ul>
             {threads.map((t) => (
-              <li key={t.id} className={t.id === openId && wide ? "active" : undefined}><SessionCard ticket={t} onOpen={() => onOpen(t.id)} /></li>
+              <li key={t.id} className={t.id === openId && wide ? "active" : undefined}>
+                <SwipeRow actions={actionsFor(t)}><SessionCard ticket={t} onOpen={() => onOpen(t.id)} /></SwipeRow>
+              </li>
             ))}
           </ul>
         )}
@@ -106,6 +165,12 @@ export function ChatsView({ profile, sessions, tickets, openId, wide, onOpen, on
         </div>
       )}
       {resuming && <ResumeDialog profile={profile} onClose={() => setResuming(false)} onResumed={(id) => { setResuming(false); onOpen(id); }} />}
+      {deleting && (
+        <ConfirmDialog title={`Delete "${deleting.title}"?`} confirmLabel="Delete chat" busyLabel="Deleting…" onCancel={() => setDeleting(null)}
+          onConfirm={async () => { await api.deleteTicket(profile.slug, deleting.id); if (deleting.id === openId) onClose(); setDeleting(null); }}>
+          <p>Removes it from Chats.{deleting.running ? ` ${agentName(deleting)} will be stopped.` : ""} The conversation stays in {agentName(deleting)}'s own history, and files it changed stay as they are.</p>
+        </ConfirmDialog>
+      )}
     </div>
   );
 }
