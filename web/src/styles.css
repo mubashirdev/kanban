@@ -2625,3 +2625,12 @@ body { letter-spacing: -0.011em; }
 .swipe-action.danger { background: var(--err); }
 .swipe-content { position: relative; background: var(--bg); transition: transform 0.2s ease; touch-action: pan-y; }
 .swipe-content.dragging { transition: none; }
+/* Phones: the terminal note is one quiet line, and it steps aside while you type. */
+.warn-short { display: none; }
+@media (max-width: 767px) {
+  .panel-main .chat > .composer-warn { margin-bottom: 2px; padding: 0 4px; background: none; font-size: 12px; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .warn-long { display: none; }
+  .warn-short { display: inline; }
+  :root[data-keyboard-open] .chat > .composer-warn { display: none; }
+}
+.panel-main .chat > .composer-warn .composer-warn-more { white-space: normal; }

@@ -778,7 +778,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
 
       {ticket.terminalOpen && !running && (
         <div className="composer-warn">
-          Also open in your terminal: type in one place at a time.{" "}
+          <span className="warn-long">Also open in your terminal: type in one place at a time.</span>
+          <span className="warn-short">Also open in your terminal.</span>{" "}
           <button className="link-btn small" aria-expanded={showWarnDetails} onClick={() => setShowWarnDetails((v) => !v)}>
             {showWarnDetails ? "Less" : "Why?"}
           </button>
