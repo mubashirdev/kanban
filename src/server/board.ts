@@ -431,6 +431,9 @@ export class Board {
     // A command gets its own turn after the current reply, so its result can be
     // acknowledged independently (built-ins do not always replay input).
     if (!msg.peer && isSlashCommand(msg.text)) return false;
+    // Access was switched during this turn: the message gets its own turn with the new access.
+    const t = this.store.getTicket(run.slug, run.id);
+    if (t?.standalone && run.chat && run.chat.mode !== chatFor(t, msg).mode) return false;
     const text = localizeImages(msg.peer || isSlashCommand(msg.text) ? msg.text : steerPrompt(msg.text), this.store.attachmentsDir);
     if (!run.handle?.send(text)) return false;
     run.inFlight.set(msg.id, text);
@@ -919,7 +922,6 @@ export class Board {
     if (patch.readAt !== undefined) clean.readAt = patch.readAt;
     if (patch.access !== undefined) {
       if (!current.standalone) throw new Error("Only sessions have an access setting");
-      if (this.isRunning(slug, id)) throw new Error("Stop the agent before changing what it may do");
       clean.access = patch.access;
     }
     // Turning a session into a board ticket; it keeps working in the repo folder with the same conversation.

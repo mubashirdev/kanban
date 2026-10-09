@@ -117,9 +117,9 @@ export function AccessPick({ slug, ticket, onClose }: { slug: string; ticket: Ti
   return (
     <div className="quick-pick" role="menu" aria-label="What the agent may do" ref={root}>
       {error && <p className="form-error">{error}</p>}
-      {ticket.running && <p className="quick-pick-status">Stop the agent to change this.</p>}
+      {ticket.running && <p className="quick-pick-status">Applies from your next message.</p>}
       {ACCESS_OPTIONS.map((o) => (
-        <button key={o.value} role="menuitemradio" aria-checked={o.value === current} className="quick-pick-item" disabled={!!ticket.running} onClick={() => choose(o.value)}>
+        <button key={o.value} role="menuitemradio" aria-checked={o.value === current} className="quick-pick-item" onClick={() => choose(o.value)}>
           <span className="quick-pick-label">{o.label}<span className="quick-pick-hint">{o.hint}</span></span>
           {o.value === current && <CheckIcon size={16} className="icon quick-pick-check" />}
         </button>

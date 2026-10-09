@@ -74,6 +74,26 @@ test("switching a session to edit gives the next run edit rights and says so", a
   expect(board.updateTicket("p", ticket.id, { access: "edit" })).rejects.toThrow("Only sessions");
 });
 
+test("switching access mid-run: the next message gets its own turn with the new access", async () => {
+  await setup();
+  process.env.FAKE_STEP_MS = "300";
+  try {
+    const t = await session();
+    await board.chat("p", t.id, "Look around");
+    await Bun.sleep(400);
+    await board.updateTicket("p", t.id, { access: "edit" });
+    await board.chat("p", t.id, "Now fix it");
+    await board.whenIdle();
+    // Not fed into the read-only turn: a second run answers it with edit rights.
+    const calls = lines(argsFile);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].prompt).toBe("Now fix it");
+    expect(calls[1].args).toContain("bypassPermissions");
+  } finally {
+    delete process.env.FAKE_STEP_MS;
+  }
+}, 15000);
+
 test("/clear starts a new conversation for both agents without running anything", async () => {
   await setup();
   const claude = await session();
