@@ -1,19 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#3d9bff"/>
-      <stop offset="1" stop-color="#005fd0"/>
+      <stop offset="0" stop-color="#3a3a3c"/>
+      <stop offset="1" stop-color="#121214"/>
     </linearGradient>
   </defs>
   <rect width="1024" height="1024" fill="url(#bg)"/>
-  <rect x="172" y="212" width="208" height="600" rx="54" fill="#fff" fill-opacity="0.16"/>
-  <rect x="192" y="232" width="168" height="134" rx="32" fill="#fff" fill-opacity="0.55"/>
-  <rect x="192" y="384" width="168" height="134" rx="32" fill="#fff" fill-opacity="0.55"/>
-  <rect x="192" y="536" width="168" height="134" rx="32" fill="#fff" fill-opacity="0.55"/>
-  <rect x="408" y="212" width="208" height="600" rx="54" fill="#fff" fill-opacity="0.16"/>
-  <rect x="428" y="232" width="168" height="134" rx="32" fill="#fff" fill-opacity="1.0"/>
-  <rect x="428" y="384" width="168" height="134" rx="32" fill="#fff" fill-opacity="0.85"/>
-  <rect x="644" y="212" width="208" height="600" rx="54" fill="#fff" fill-opacity="0.16"/>
-  <rect x="664" y="232" width="168" height="134" rx="32" fill="#fff" fill-opacity="0.9"/>
-  <path d="M512 245 Q524 287 566 299 Q524 311 512 353 Q500 311 458 299 Q500 287 512 245 Z" fill="#0a6be0"/>
+  <!-- A chat bubble (chats) holding three board columns (the kanban). -->
+  <path d="M332 232 H692 A140 140 0 0 1 832 372 V612 A140 140 0 0 1 692 752 H392 L262 832 L282 742 A140 140 0 0 1 192 612 V372 A140 140 0 0 1 332 232 Z" fill="#ffffff"/>
+  <rect x="302" y="342" width="116" height="300" rx="40" fill="#1c1c1e"/>
+  <rect x="454" y="342" width="116" height="210" rx="40" fill="#1c1c1e" fill-opacity="0.7"/>
+  <rect x="606" y="342" width="116" height="130" rx="40" fill="#1c1c1e" fill-opacity="0.4"/>
 </svg>
