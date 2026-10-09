@@ -2231,7 +2231,7 @@ body { letter-spacing: -0.011em; }
 .chat-list-empty { margin: 16px 4px; color: var(--muted); line-height: 1.5; }
 .chat-resume { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; margin-top: 4px; }
 .chat-pane { flex: 1; min-width: 0; display: flex; }
-.chat-pane .panel.embedded { position: static; flex: 1; width: auto !important; max-width: none; border-left: 0; box-shadow: none; animation: none; }
+.chat-pane .panel.embedded { position: static; flex: 1; min-width: 0; width: auto !important; max-width: none; border-left: 0; box-shadow: none; animation: none; }
 .chat-pane .panel.embedded .close-btn { display: none; }
 .chat-pane-new { flex: 1; max-width: 720px; margin: 0 auto; padding: 48px 32px; display: flex; flex-direction: column; gap: 16px; }
 .chat-pane-new h2 { margin: 0; font-size: 20px; }
