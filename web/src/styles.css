@@ -2649,3 +2649,11 @@ body { letter-spacing: -0.011em; }
   :root[data-keyboard-open] .chat > .composer-warn { display: none; }
 }
 .panel-main .chat > .composer-warn .composer-warn-more { white-space: normal; }
+/* Checkboxes and radios follow the grey theme instead of the browser's blue. */
+:root { accent-color: var(--accent); }
+/* Activity: title, then what changed and when on one line. */
+.activity-timeline .link-btn { min-height: 0; padding: 0; font-size: 14px; font-weight: 600; color: var(--text); }
+.activity-timeline p { font-size: 13.5px; color: var(--muted); }
+.modal .activity-timeline li { padding: 10px 20px; }
+.modal .activity-timeline p { margin: 2px 0 0; }
+.activity-timeline li > svg { margin-top: 2px; color: var(--muted); flex: none; }

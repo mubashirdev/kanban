@@ -404,8 +404,7 @@ export function WorkspaceActivity({ slug, tickets, onOpen }: { slug: string; tic
           <ClockIcon />
           <div>
             <button className="link-btn" onClick={() => onOpen(item.id)}>{item.title}</button>
-            <p>{item.changes.join(", ")}</p>
-            <time className="muted small" dateTime={item.at}>{timeAgo(item.at)}</time>
+            <p>{item.changes.join(", ")} <time className="muted" dateTime={item.at}>· {timeAgo(item.at)}</time></p>
           </div>
         </li>
       ))}
