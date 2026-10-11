@@ -105,6 +105,8 @@ kbd {
 }
 .topbar > * { flex-shrink: 0; }
 .topbar > .spacer { flex-shrink: 1; min-width: 0; }
+/* A notice like "Restart pending" gives way first, so the buttons on the right never get pushed off. */
+.topbar > .pill.warn { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .topbar .profile-select { flex-shrink: 1; min-width: 120px; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; letter-spacing: -0.01em; }
 .brand-icon { display: block; flex: none; width: 28px; height: 28px; object-fit: cover; border-radius: 7px; }
