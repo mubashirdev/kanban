@@ -11,8 +11,11 @@ const S = (p: Partial<SessionSummary>): SessionSummary => ({
   title: null, lastMessage: null, artifacts: [], updatedAt: "", openQuestions: 0, pendingProposal: null, pendingNewTickets: [], ...p,
 });
 
-test("running tickets never need the user", () => {
+test("running tickets only need the user when Claude asks for permission", () => {
   expect(attentionFor(T({ outcome: "failed" }), S({ openQuestions: 3 }), true)).toBeNull();
+  const ask = { id: "r1", tool: "Bash", detail: "ls", canAlways: false, at: "" };
+  expect(attentionFor(T({ permissionAsk: ask }), null, true)).toEqual({ kind: "approval", label: "Allow or deny" });
+  expect(attentionFor(T({ permissionAsk: { ...ask, tool: "ExitPlanMode" } }), null, true)!.label).toBe("Approve plan");
 });
 
 test("failures and blocks come first", () => {

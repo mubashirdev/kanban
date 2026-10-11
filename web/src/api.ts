@@ -105,7 +105,7 @@ export interface ClaudeModel { value: string; displayName: string; description: 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 export interface ClaudeCatalog { commands: ClaudeCommand[]; models: ClaudeModel[]; efforts: Effort[]; outputStyles: string[]; defaultModel: string | null }
 
-export type AttentionKind = "failed" | "blocked" | "questions" | "proposal" | "review" | "reply";
+export type AttentionKind = "failed" | "blocked" | "questions" | "proposal" | "review" | "reply" | "approval";
 
 export interface Profile {
   name: string;
@@ -173,6 +173,8 @@ export interface Ticket {
   runStartedAt?: string | null;
   /** Claude ended its turn and waits for these background tasks; it resumes when they finish. */
   waitingOn?: { id: string; description: string; startedAt: string }[] | null;
+  /** Claude waits for the user to allow or deny this (ExitPlanMode: approve the plan). */
+  permissionAsk?: PermissionAsk | null;
   runCount: number;
   error: string | null;
   /** Non-fatal heads-up about how the ticket runs (e.g. no worktree yet); dismissible. */
@@ -284,6 +286,18 @@ export interface Question {
 
 /** What a tool step did, once its result is in. */
 export interface ToolDetail { ok?: boolean; output?: string; ms?: number; diff?: string }
+
+/** Claude asks to use a tool and waits for the user's answer. */
+export interface PermissionAsk {
+  id: string;
+  tool: string;
+  /** What it wants to do in a line: its description, the command or the file. */
+  detail: string;
+  plan?: string;
+  /** Claude offered a rule so it stops asking for the same thing in this chat. */
+  canAlways: boolean;
+  at: string;
+}
 
 /** A helper agent Claude started: its task, its own steps (`Name: arg`) and, once done, what it reported. */
 export interface HelperRun {
@@ -670,6 +684,8 @@ export const api = {
   openFile: (slug: string, path: string) => req<{ ok: true }>("POST", `/api/profiles/${encodeURIComponent(slug)}/open-file`, { path }),
   // stopped:false means the run already ended (e.g. a second tap), which is what the user wanted.
   stop: (slug: string, id: string) => req<{ stopped: boolean }>("POST", `${t(slug, id)}/stop`),
+  answerPermission: (slug: string, id: string, askId: string, allow: boolean, always = false) =>
+    req<Ticket>("POST", `${t(slug, id)}/permission`, { askId, allow, always }),
   checkPr: (slug: string, id: string) => req<{ state: string | null }>("POST", `${t(slug, id)}/check-pr`),
   planningCommand: (slug: string, id: string) => req<{ command: string }>("POST", `${t(slug, id)}/planning-command`),
   /** Raw image bytes; the server saves them and returns the URL to put in markdown. */

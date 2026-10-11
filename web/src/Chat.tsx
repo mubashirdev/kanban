@@ -26,6 +26,7 @@ import { AgentSettings } from "./AgentSettings";
 import { AccessPick, chipLabel, QuickPick } from "./QuickPick";
 import { ToolGroup } from "./ToolGroup";
 import { HelperCard } from "./HelperCard";
+import { PermissionCard } from "./PermissionCard";
 import { CliUsageCard, UsagePill } from "./UsagePill";
 import { parseCliUsage } from "./usage";
 import { ClaudeSettings, type SettingKind } from "./ClaudeSettings";
@@ -723,11 +724,15 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             {liveView(live).preparing && <div className="chat-typing"><span className="spinner" /> {liveView(live).preparing}</div>}
           </div>
         )}
-        {running && !live && !!otherTasks.length && <WaitingCard tasks={otherTasks} />}
-        {running && !live && !otherTasks.length && waitingHelpers > 0 && (
+        {running && ticket.permissionAsk && (
+          <PermissionCard key={ticket.permissionAsk.id} slug={slug} id={ticket.id} ask={ticket.permissionAsk} agent={agentName}
+            readOnly={!!ticket.standalone && ticket.access !== "edit"} onError={onError} />
+        )}
+        {running && !live && !ticket.permissionAsk && !!otherTasks.length && <WaitingCard tasks={otherTasks} />}
+        {running && !live && !ticket.permissionAsk && !otherTasks.length && waitingHelpers > 0 && (
           <WorkingRow text={`Waiting for ${waitingHelpers === 1 ? "the helper" : `${waitingHelpers} helpers`} to finish`} />
         )}
-        {running && !live && !ticket.waitingOn?.length && (
+        {running && !live && !ticket.permissionAsk && !ticket.waitingOn?.length && (
           <WorkingRow text={ticket.lastActivity && ticket.lastActivity !== "Starting…" ? ticket.lastActivity : `${agentName} is working…`} since={ticket.runStartedAt} />
         )}
         {pending.filter((p) => p.steer && !queued.some((q) => q.text === p.text)).map((p, i) => (

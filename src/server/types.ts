@@ -32,6 +32,20 @@ export interface SetupDetection {
   setupFrom: string[];
 }
 
+/** Claude asks to use a tool and waits until the user allows or denies it in the chat. */
+export interface PermissionAsk {
+  /** Claude's control request id. */
+  id: string;
+  tool: string;
+  /** What it wants to do in a line: Claude's own description, the command or the file. */
+  detail: string;
+  /** ExitPlanMode: the plan Claude wants approved. */
+  plan?: string;
+  /** Claude offered a rule so it stops asking for the same thing ("Always allow" for this chat). */
+  canAlways: boolean;
+  at: string;
+}
+
 /** A tool Claude left running in the background (a long Bash call, a subagent). */
 export interface BackgroundTask {
   id: string;
@@ -91,6 +105,8 @@ export interface Ticket {
   runStartedAt?: string | null;
   /** Claude ended its turn and waits for these background tasks; it resumes when they finish. */
   waitingOn?: BackgroundTask[] | null;
+  /** Claude waits for the user to allow or deny this (the first of possibly several asks). */
+  permissionAsk?: PermissionAsk | null;
   runCount: number;
   error: string | null;
   /** Non-fatal heads-up about how the ticket runs (e.g. no worktree yet); the user can dismiss it. */

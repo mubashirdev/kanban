@@ -259,6 +259,11 @@ ${access === "read"
 ${QUESTIONS_FORMAT}`;
 }
 
+/** The user approved Claude's plan in a read-only chat, which also turned edit access on. */
+export function planApprovedPrompt(): string {
+  return context("You approved the plan and turned on edit access", "The user approved your plan and switched this chat to edit access. Access right now: can edit. Go ahead with the plan.");
+}
+
 export function steerPrompt(text: string): string {
   return `${text.trim()}
 

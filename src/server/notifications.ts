@@ -171,6 +171,7 @@ export class Notifications {
         ticket.outcome,
         ticket.runCount,
         ticket.lastRunAt,
+        ticket.permissionAsk?.id,
         attention?.kind,
         session?.lastMessage?.at,
         session?.openQuestions,
@@ -210,7 +211,8 @@ export class Notifications {
         setTimeout(() => {
           this.timers.delete(key);
           const ticket = this.store.getTicket(event.profile, id);
-          if (!ticket || isRunning(event.profile, id)) return;
+          // A running ticket only notifies when Claude stops to ask for permission.
+          if (!ticket || (isRunning(event.profile, id) && !ticket.permissionAsk)) return;
           const state = this.state(ticket, summary(event.profile, ticket)),
             before = this.seen.get(key);
           this.seen.set(key, state.fingerprint);
@@ -218,7 +220,9 @@ export class Notifications {
           if (state.fingerprint === before || !topic) return;
           // Only the agent's name: titles stay out of push payloads.
           const agent = ticket.agent === "codex" ? "Codex" : "Claude";
-          const body = ticket.standalone
+          const body = ticket.permissionAsk
+            ? `${agent} asks for your approval.`
+            : ticket.standalone
             ? topic === "failed"
               ? `${agent} hit an error in a session.`
               : `${agent} replied in a session.`

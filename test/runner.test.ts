@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { mcpConfig } from "../src/server/agents";
-import { buildArgs, startRun } from "../src/server/runner";
+import { buildArgs, describeAsk, permissionAnswer, startRun } from "../src/server/runner";
 import { tempDir } from "./helpers";
 
 const FAKE = join(import.meta.dir, "fixtures", "fake-claude.ts");
@@ -159,6 +159,38 @@ test("permission asks: Chrome tools are allowed, other tools denied, other reque
   expect(r.events.at(-1).result).toContain("Asks: mcp__claude-in-chrome__navigate=allow Bash=deny other=error");
   expect(seen.some((e) => e.type === "control_request")).toBe(false);
 }));
+
+test("permission asks handed to the user wait for their answer", withMode("asks", async () => {
+  const asked: string[] = [];
+  const h = startRun({
+    bin: FAKE, cwd: tempDir(), args: STREAM, input: "open example.com", onEvent: () => {},
+    onPermission: (requestId, request) => {
+      asked.push(request.tool_name);
+      // The user taps Allow a moment later.
+      setTimeout(() => h.answer!(permissionAnswer(requestId, request, true)), 50);
+      return true;
+    },
+  });
+  const r = await h.done;
+  expect(asked).toEqual(["Bash"]);
+  expect(r.events.at(-1).result).toContain("Asks: mcp__claude-in-chrome__navigate=allow Bash=allow other=error");
+}));
+
+test("approving a plan lets edits go ahead; always-allow rules only last for the chat", () => {
+  const plan = { tool_name: "ExitPlanMode", input: { plan: "1. Add the card" } };
+  expect(describeAsk("r1", plan)).toMatchObject({ id: "r1", tool: "ExitPlanMode", plan: "1. Add the card", canAlways: false });
+  expect((permissionAnswer("r1", plan, true) as any).response.response).toEqual({
+    behavior: "allow", updatedInput: plan.input, updatedPermissions: [{ type: "setMode", mode: "acceptEdits", destination: "session" }],
+  });
+  expect((permissionAnswer("r1", plan, false) as any).response.response.behavior).toBe("deny");
+  const bash = {
+    tool_name: "Bash", input: { command: "touch b.txt\nls" }, description: "Create b.txt",
+    permission_suggestions: [{ type: "addRules", rules: [{ toolName: "Bash", ruleContent: "touch b.txt" }], behavior: "allow", destination: "localSettings" }],
+  };
+  expect(describeAsk("r2", bash)).toMatchObject({ tool: "Bash", detail: "Create b.txt", canAlways: true });
+  expect((permissionAnswer("r2", bash, true, true) as any).response.response.updatedPermissions[0].destination).toBe("session");
+  expect((permissionAnswer("r2", bash, true) as any).response.response.updatedPermissions).toBeUndefined();
+});
 
 test("a background task keeps the run open until Claude picks its result up", withMode("background", async () => {
   const waits: (string[] | null)[] = [];

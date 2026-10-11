@@ -1016,6 +1016,13 @@ export function createServer(deps: ServerDeps) {
         throw new HttpError(400, (e as Error).message);
       }
     }
+    // POST .../permission { askId, allow, always? }: the user's answer to Claude's permission ask (never another ticket's run).
+    if (m === "POST" && action === "permission") {
+      if (runTicket(req, slug)) throw new HttpError(403, "only the user can answer permission asks");
+      const b = await body(req);
+      const t = board.answerPermission(slug, id, String(b.askId ?? ""), b.allow === true, b.always === true);
+      return json(view(profile, t));
+    }
     if (m === "POST" && action === "stop") {
       const planner = plannerFor(req, slug, store.getTicket(slug, id)!);
       const stopped = board.stop(slug, id);

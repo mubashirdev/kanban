@@ -16,17 +16,17 @@ import { forkSessionFile } from "./fork";
 import { saveMockups } from "./mockups";
 import { userWaitReason } from "./attention";
 import type { SessionSummary } from "./session";
-import { chatMessage, chatRules, sessionPrompt, firstRunPrompt, interruptedPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumePrompt, steerPrompt, type ChatMode, type PlanWake } from "./prompts";
+import { chatMessage, chatRules, planApprovedPrompt, sessionPrompt, firstRunPrompt, interruptedPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumePrompt, steerPrompt, type ChatMode, type PlanWake } from "./prompts";
 import {
   childrenOf, DEFAULT_MAX_CONCURRENT, findCycle, isComplete, normalizeNeeds, planActive, planProblem, planStep, planTable, resolveDeps, wakeupCap,
 } from "./plan";
 import { run as runCmd } from "./git";
 import { parseResult } from "./result";
 import { DraftTracker } from "./draft";
-import { buildArgs, startRun, type RunHandle } from "./runner";
+import { buildArgs, describeAsk, permissionAnswer, startRun, type RunHandle } from "./runner";
 import { mcpConfig, resolveCodexBin } from "./agents";
 import type { Store } from "./store";
-import type { Interrupted, Plan, Profile, QueuedMessage, Status, Ticket, TicketMode } from "./types";
+import type { Interrupted, PermissionAsk, Plan, Profile, QueuedMessage, Status, Ticket, TicketMode } from "./types";
 import { CLEANUP_TIMEOUT_MS, prepareWorktree, runShell, withSetup, type SetupResult } from "./worktree-setup";
 import { nowIso, slugify } from "./util";
 import { shellQuote } from "./util";
@@ -76,6 +76,8 @@ interface ActiveRun {
   promptMsgId?: string;
   /** Reply text streaming in right now; kept on the ticket if a restart cuts the run off. */
   draft?: DraftTracker;
+  /** Permission asks waiting for the user, by Claude's request id, oldest first. */
+  asks?: Map<string, { ask: PermissionAsk; request: any }>;
 }
 
 /** A finished assistant message with text in it (not just thinking or a tool call). */
@@ -487,7 +489,7 @@ export class Board {
         // Tell the UI the run is over (earlier updates were sent while it was still registered).
         const now = this.store.getTicket(slug, id);
         if (now && !this.shuttingDown) {
-          if (now.runStartedAt || now.interrupted || now.waitingOn) this.patch(slug, id, { runStartedAt: null, interrupted: null, waitingOn: null });
+          if (now.runStartedAt || now.interrupted || now.waitingOn || now.permissionAsk) this.patch(slug, id, { runStartedAt: null, interrupted: null, waitingOn: null, permissionAsk: null });
           else this.emitTicket(slug, now);
         }
         // When the user moved the card, updateTicket() writes the new status and dispatches itself.
@@ -670,6 +672,15 @@ export class Board {
           pendingActivity = null;
           this.patch(slug, id, { lastActivity: s });
         }
+      },
+      onPermission: (requestId, request, cancelled) => {
+        const asks = (run.asks ??= new Map());
+        if (cancelled) asks.delete(requestId);
+        // Planning interviews stay read-only; the board asks its own questions (ask_questions).
+        else if ((refine && !t.standalone) || request?.tool_name === "AskUserQuestion") return false;
+        else asks.set(requestId, { ask: describeAsk(requestId, request), request });
+        this.patch(slug, id, { permissionAsk: asks.values().next().value?.ask ?? null });
+        return true;
       },
       onWaiting: (tasks) => {
         if (run.stopRequested || this.shuttingDown) return;
@@ -1366,6 +1377,23 @@ export class Board {
     run.stopRequested = true;
     run.handle?.stop();
     this.setups.get(this.key(run.slug, run.id))?.abort.abort();
+  }
+
+  /** The user allowed or denied a permission ask; the next one waiting (if any) shows next. */
+  answerPermission(slug: string, id: string, askId: string, allow: boolean, always = false): Ticket {
+    const run = this.runs.get(this.key(slug, id));
+    const pending = run?.asks?.get(askId);
+    if (!run?.asks || !pending || !run.handle?.answer) throw new ConflictError("Claude is no longer waiting for this answer");
+    run.handle.answer(permissionAnswer(askId, pending.request, allow, always));
+    run.asks.delete(askId);
+    const next = { permissionAsk: run.asks.values().next().value?.ask ?? null };
+    // A read-only chat's instructions say "don't change files"; approving the plan means "go ahead", so edit access turns on.
+    const t = this.store.getTicket(slug, id);
+    if (allow && pending.request?.tool_name === "ExitPlanMode" && t?.standalone && t.access !== "edit") {
+      run.handle.send(planApprovedPrompt());
+      return this.patch(slug, id, { ...next, access: "edit" });
+    }
+    return this.patch(slug, id, next);
   }
 
   stop(slug: string, id: string): boolean {

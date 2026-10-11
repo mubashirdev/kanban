@@ -1,5 +1,5 @@
 import { isSlashCommand } from "./commands";
-import type { BackgroundTask } from "./types";
+import type { BackgroundTask, PermissionAsk } from "./types";
 
 export interface RunOutput {
   code: number;
@@ -15,6 +15,8 @@ export interface RunHandle {
    * in an interactive session. False once input is closed (the run is finishing).
    */
   send(text: string): boolean;
+  /** Answer a permission ask handed to onPermission (see permissionAnswer). */
+  answer?(response: unknown): void;
   readonly stopped: boolean;
 }
 
@@ -64,6 +66,30 @@ export function buildArgs(
 
 const CHROME_TOOL = "mcp__claude-in-chrome__";
 
+/** A permission ask as the chat shows it. */
+export function describeAsk(requestId: string, request: any): PermissionAsk {
+  const input = request?.input ?? {};
+  const detail = [request?.description, input.command, input.file_path, input.url].find((v) => typeof v === "string" && v.trim()) ?? "";
+  const plan = request?.tool_name === "ExitPlanMode" && typeof input.plan === "string" ? { plan: input.plan } : {};
+  return {
+    id: requestId, tool: String(request?.tool_name ?? ""), detail: detail.trim().split("\n")[0].slice(0, 300), ...plan,
+    canAlways: Array.isArray(request?.permission_suggestions) && request.permission_suggestions.length > 0, at: new Date().toISOString(),
+  };
+}
+
+/** The user's answer to a permission ask. ExitPlanMode = "approve this plan": edits then go ahead without asking again. */
+export function permissionAnswer(requestId: string, request: any, allow: boolean, always = false): unknown {
+  const plan = request?.tool_name === "ExitPlanMode";
+  // Claude's suggestions can point at settings files; "always" only lasts for this chat.
+  const rules = always && Array.isArray(request?.permission_suggestions)
+    ? request.permission_suggestions.map((u: any) => ({ ...u, destination: "session" })) : [];
+  const updatedPermissions = plan ? [{ type: "setMode", mode: "acceptEdits", destination: "session" }] : rules;
+  const response = allow
+    ? { behavior: "allow", updatedInput: request?.input ?? {}, ...(updatedPermissions.length ? { updatedPermissions } : {}) }
+    : { behavior: "deny", message: plan ? "The user wants to keep planning. Wait for their next message before going on." : "The user denied this." };
+  return { type: "control_response", response: { subtype: "success", request_id: requestId, response } };
+}
+
 /**
  * The board's answer to a control request from claude (stream-json). Permission asks for Claude in Chrome
  * tools are allowed; every other ask is denied, as it was before prompts reached the board (headless
@@ -104,6 +130,11 @@ export function startRun(opts: {
    * open so it can pick their results up); null once it is working or done again.
    */
   onWaiting?: (tasks: BackgroundTask[] | null) => void;
+  /**
+   * Claude asks to use a tool (not Claude in Chrome, which is always allowed). Return true to answer later with
+   * handle.answer; false denies it at once. Called with `cancelled` when Claude no longer needs the answer.
+   */
+  onPermission?: (requestId: string, request: any, cancelled?: boolean) => boolean;
   graceMs?: number;
 }): RunHandle {
   let stopped = false;
@@ -211,7 +242,12 @@ export function startRun(opts: {
         }
         // Permission asks and other requests to the host: answer them, they aren't part of the conversation.
         if (ev?.type === "control_request") {
-          writeLine(JSON.stringify(controlResponse(ev)) + "\n");
+          const ask = ev.request?.subtype === "can_use_tool" && !String(ev.request.tool_name).startsWith(CHROME_TOOL);
+          if (!(ask && opts.onPermission?.(String(ev.request_id), ev.request))) writeLine(JSON.stringify(controlResponse(ev)) + "\n");
+          return;
+        }
+        if (ev?.type === "control_cancel_request") {
+          opts.onPermission?.(String(ev.request_id), null, true);
           return;
         }
         // Partial-message deltas are only for the live view; don't keep thousands of them in memory.
@@ -260,6 +296,9 @@ export function startRun(opts: {
   return {
     done,
     send: (text) => !stopped && write(text),
+    answer: (response) => {
+      writeLine(JSON.stringify(response) + "\n");
+    },
     get stopped() {
       return stopped;
     },

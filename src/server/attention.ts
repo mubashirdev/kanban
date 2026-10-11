@@ -1,7 +1,7 @@
 import type { SessionSummary } from "./session";
 import type { Ticket } from "./types";
 
-export type AttentionKind = "failed" | "blocked" | "questions" | "proposal" | "review" | "reply";
+export type AttentionKind = "failed" | "blocked" | "questions" | "proposal" | "review" | "reply" | "approval";
 
 /** Why a ticket is waiting on the user (shown as a "Your turn" badge), or null if it isn't. */
 export interface Attention {
@@ -18,6 +18,8 @@ export function attentionFor(
   t: Ticket, s: SessionSummary | null, running: boolean, o: { createdTitles?: Set<string>; managed?: boolean; planComplete?: boolean } = {},
 ): Attention | null {
   if (t.plan?.state === "stuck" && t.status !== "done" && !o.planComplete) return { kind: "blocked", label: "Plan stuck" };
+  // Claude is paused mid-run until the user allows or denies something.
+  if (t.permissionAsk) return { kind: "approval", label: t.permissionAsk.tool === "ExitPlanMode" ? "Approve plan" : "Allow or deny" };
   if (running || t.status === "in_progress") return null;
   if (t.standalone) return sessionAttention(t, s);
   // A running plan's planner and children are handled unattended; the plan pings the user when stuck.
