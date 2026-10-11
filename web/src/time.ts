@@ -24,6 +24,13 @@ export function useNow(): number {
   return useSyncExternalStore(subscribeNow, () => now);
 }
 
+/** Time since `iso` as a running clock: "4:07", or "1:02:09" past an hour. */
+export function clock(iso: string, now: number): string {
+  const s = Math.max(0, Math.floor((now - new Date(iso).getTime()) / 1000));
+  const mm = String(Math.floor((s % 3600) / 60)), ss = String(s % 60).padStart(2, "0");
+  return s >= 3600 ? `${Math.floor(s / 3600)}:${mm.padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
+}
+
 /** Full local date and time, for tooltips next to relative times. */
 export function fullTime(iso: string): string {
   return new Date(iso).toLocaleString();

@@ -70,7 +70,7 @@ export async function startDaemon(): Promise<void> {
   const stopPoller = startPoller(board, store, config.prPollMinutes);
   // After recover(): a missed run's ticket must not be mistaken for an interrupted one.
   const stopScheduler = scheduler.start();
-  const stopWatcher = startSessionWatcher(store, bus, sessions);
+  const stopWatcher = startSessionWatcher(store, bus, sessions, (slug, id) => board.isRunning(slug, id));
   const stopTerminals = terminals.start();
   const stopMcp = mcp.start();
 

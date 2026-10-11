@@ -1,14 +1,26 @@
+import { useEffect, useState } from "react";
 import type { HelperRun } from "./api";
 import { CheckIcon, ChevronRightIcon, CloseIcon } from "./icons";
 import { ToolGroup } from "./ToolGroup";
+import { clock } from "./time";
 import { describeStep } from "./toolSteps";
 import { Markdown } from "./Transcript";
 
 const ENDED = { done: "Finished", failed: "Failed", stopped: "Stopped" } as const;
 
-/** A helper agent Claude started: its task and what it is doing now; tap to see its steps and its report.
+/** Running clock since the helper started. */
+function Elapsed({ since }: { since: string }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return <span className="helper-time">{clock(since, now)}</span>;
+}
+
+/** A helper agent Claude started: its task, what it is doing now and for how long; tap to see its steps and its report.
  *  `live` = the ticket's run is still going; a helper still "running" after the run ended was cut off. */
-export function HelperCard({ helper, live }: { helper: HelperRun; live: boolean }) {
+export function HelperCard({ helper, since, live }: { helper: HelperRun; since: string; live: boolean }) {
   const status = helper.status === "running" && !live ? "stopped" : helper.status;
   const count = helper.steps.length;
   const last = helper.steps.at(-1);
@@ -26,6 +38,7 @@ export function HelperCard({ helper, live }: { helper: HelperRun; live: boolean 
           </span>
           <span className="helper-now">{now}{count > 0 && ` · ${count} step${count > 1 ? "s" : ""}`}</span>
         </span>
+        {status === "running" && since && <Elapsed since={since} />}
         <ChevronRightIcon className="tool-chevron" size={14} />
       </summary>
       <div className="helper-body">

@@ -292,6 +292,8 @@ export interface HelperRun {
   status: "running" | "done" | "failed" | "stopped";
   steps: string[];
   result?: string;
+  /** Same as its background task id in Ticket.waitingOn. */
+  agentId?: string;
 }
 
 export interface SetupDetection {

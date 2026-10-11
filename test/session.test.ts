@@ -356,10 +356,10 @@ test("a helper agent shows its task, its own steps and its report", () => {
     user([{ type: "tool_result", tool_use_id: "h2", content: [{ type: "text", text: "All good." }, { type: "text", text: "agentId: a2\n<usage>1</usage>" }] }], "2026-10-11T01:00:03Z"),
     asst([{ type: "text", text: "Waiting for the helper." }], "2026-10-11T01:00:04Z"),
   ];
-  const logs = new Map([["h1", { steps: ["Read: /r/a.ts", "Grep: bug"], finished: false, text: "" }]]);
+  const logs = new Map([["h1", { agentId: "a1", steps: ["Read: /r/a.ts", "Grep: bug"], finished: false, text: "" }]]);
   const running = parseSession(raw.join("\n"), logs).entries.filter((e) => e.helper).map((e) => e.helper);
   expect(running).toEqual([
-    { description: "Find the bug", type: "Explore", status: "running", steps: ["Read: /r/a.ts", "Grep: bug"] },
+    { description: "Find the bug", type: "Explore", status: "running", steps: ["Read: /r/a.ts", "Grep: bug"], agentId: "a1" },
     { description: "Quick check", status: "done", steps: [], result: "All good." },
   ]);
   raw.push(user("<task-notification>\n<task-id>a1</task-id>\n<tool-use-id>h1</tool-use-id>\n<status>completed</status>\n<result>Found it in a.ts.</result>\n</task-notification>", "2026-10-11T01:00:05Z"));
@@ -380,8 +380,35 @@ test("the session cache reads helper transcripts and changes version while only 
   writeFileSync(log, asst([{ type: "tool_use", id: "s1", name: "Bash", input: { command: "ls" } }], "2026-10-11T01:00:01Z", { isSidechain: true }) + "\n");
   const cache = new SessionCache({ configDir });
   const before = cache.version(sid);
-  expect(cache.get(sid)!.entries[0].helper).toMatchObject({ status: "running", steps: ["Bash: ls"] });
+  expect(cache.get(sid)!.entries[0].helper).toMatchObject({ status: "running", steps: ["Bash: ls"], agentId: "a1" });
   appendFileSync(log, L({ type: "assistant", isSidechain: true, message: { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: "Done digging." }] } }) + "\n");
   expect(cache.version(sid)).not.toBe(before);
   expect(cache.get(sid)!.entries[0].helper).toMatchObject({ status: "done", result: "Done digging." });
+});
+
+test("pollSessions can check only running tickets and keeps the others' state", () => {
+  const configDir = tempDir();
+  const dir = join(configDir, "projects", "-f");
+  mkdirSync(dir, { recursive: true });
+  const store = new Store(tempDir());
+  store.saveProfile({ name: "P", slug: "p", path: tempDir(), baseBranch: "main", maxParallel: 1, createdAt: "" });
+  const ids = ["11111111-2222-3333-4444-555555555551", "11111111-2222-3333-4444-555555555552"];
+  const [busy, idle] = ids.map((sid) => {
+    writeFileSync(join(dir, `${sid}.jsonl`), user("first", "2026-10-11T01:00:00Z") + "\n");
+    const t = store.createTicket("p", { title: sid, body: "", status: "review" });
+    store.updateTicket("p", t.id, { sessionId: sid });
+    return t;
+  });
+  const bus = new Bus();
+  const seen: string[] = [];
+  bus.on((e) => { if (e.type === "session.updated") seen.push(e.id); });
+  const cache = new SessionCache({ configDir });
+  const state = new Map<string, string>();
+  pollSessions(store, bus, cache, state);
+  seen.length = 0;
+  for (const sid of ids) appendFileSync(join(dir, `${sid}.jsonl`), asst([{ type: "text", text: "more" }], "2026-10-11T01:00:01Z") + "\n");
+  pollSessions(store, bus, cache, state, (_slug, id) => id === busy.id);
+  expect(seen).toEqual([busy.id]);
+  pollSessions(store, bus, cache, state);
+  expect(seen).toEqual([busy.id, idle.id]);
 });

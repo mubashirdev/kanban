@@ -52,10 +52,13 @@ export interface HelperRun {
   /** Its own tool steps as `Name: arg`, like the chat's steps. */
   steps: string[];
   result?: string;
+  /** Claude's id for it, the same as its background task id (Ticket.waitingOn). */
+  agentId?: string;
 }
 
 /** What a helper's own transcript (<session>/subagents/agent-*.jsonl) shows. */
 export interface HelperLog {
+  agentId: string;
   steps: string[];
   /** Its last message ended its turn (no tool call pending). */
   finished: boolean;
@@ -433,14 +436,15 @@ export function readHelperLogs(sessionFile: string): Map<string, HelperLog> {
     try {
       const meta = JSON.parse(readFileSync(join(dir, name), "utf8"));
       const raw = readFileSync(join(dir, name.replace(/\.meta\.json$/, ".jsonl")), "utf8");
-      if (typeof meta?.toolUseId === "string") logs.set(meta.toolUseId, parseHelperLog(raw));
+      const agentId = name.slice("agent-".length, -".meta.json".length);
+      if (typeof meta?.toolUseId === "string") logs.set(meta.toolUseId, parseHelperLog(agentId, raw));
     } catch {}
   }
   return logs;
 }
 
-function parseHelperLog(raw: string): HelperLog {
-  const log: HelperLog = { steps: [], finished: false, text: "" };
+function parseHelperLog(agentId: string, raw: string): HelperLog {
+  const log: HelperLog = { agentId, steps: [], finished: false, text: "" };
   for (const line of raw.split("\n")) {
     let ev: any;
     try {
@@ -600,6 +604,7 @@ export function parseSession(raw: string, helperLogs = new Map<string, HelperLog
   for (const [id, helper] of helpers) {
     const log = helperLogs.get(id);
     if (!log) continue;
+    helper.agentId = log.agentId;
     helper.steps = log.steps;
     if (helper.status === "running" && log.finished) helper.status = "done";
     if (helper.status === "done" && !helper.result && log.text) helper.result = log.text;
@@ -703,12 +708,13 @@ export class SessionCache {
   }
 }
 
-/** One polling pass: emit session.updated for every ticket whose session file changed since last pass. */
-export function pollSessions(store: Store, bus: Bus, cache: SessionCache, state: Map<string, string>): void {
+/** One polling pass: emit session.updated for every ticket whose session file changed since last pass.
+ *  `only` limits the pass to some tickets (the running ones) and keeps the others' last state. */
+export function pollSessions(store: Store, bus: Bus, cache: SessionCache, state: Map<string, string>, only?: (slug: string, id: string) => boolean): void {
   const live = new Set<string>();
   for (const p of store.listProfiles()) {
     for (const t of store.listTickets(p.slug)) {
-      if (!t.sessionId) continue;
+      if (!t.sessionId || (only && !only(p.slug, t.id))) continue;
       const key = `${p.slug}/${t.id}`;
       live.add(key);
       const v = cache.version(t.sessionId);
@@ -718,14 +724,16 @@ export function pollSessions(store: Store, bus: Bus, cache: SessionCache, state:
       if (session) bus.emit({ type: "session.updated", profile: p.slug, id: t.id, session });
     }
   }
-  for (const k of state.keys()) if (!live.has(k)) state.delete(k);
+  if (!only) for (const k of state.keys()) if (!live.has(k)) state.delete(k);
 }
 
-export function startSessionWatcher(store: Store, bus: Bus, cache: SessionCache, intervalMs = 2000): () => void {
+/** Running tickets are checked every tick so helper agents' steps show as they happen; all tickets every 4th tick. */
+export function startSessionWatcher(store: Store, bus: Bus, cache: SessionCache, isRunning: (slug: string, id: string) => boolean, intervalMs = 500): () => void {
   const state = new Map<string, string>();
+  let tick = 0;
   const timer = setInterval(() => {
     try {
-      pollSessions(store, bus, cache, state);
+      pollSessions(store, bus, cache, state, tick++ % 4 ? isRunning : undefined);
     } catch (e) {
       console.error("session watcher", e);
     }

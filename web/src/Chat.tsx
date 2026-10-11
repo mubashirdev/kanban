@@ -12,7 +12,7 @@ import { SetupRow } from "./SetupRow";
 import { filesByReply } from "./fileCards";
 import { baseName, copyFile, downloadFile } from "./share";
 import { draftKey, formKey, takeFirstMessage } from "./drafts";
-import { fullTime, timeAgo, useNow } from "./time";
+import { clock, fullTime, timeAgo, useNow } from "./time";
 import { toast } from "./toast";
 import { Markdown } from "./Transcript";
 import { usePersistentState } from "./usePersistentState";
@@ -33,12 +33,6 @@ import { CommandOptions } from "./CommandOptions";
 import { prepareCommand } from "./commandSyntax";
 
 /** m:ss (h:mm:ss past an hour) since `iso`. */
-function clock(iso: string, now: number): string {
-  const s = Math.max(0, Math.floor((now - new Date(iso).getTime()) / 1000));
-  const mm = String(Math.floor((s % 3600) / 60)), ss = String(s % 60).padStart(2, "0");
-  return s >= 3600 ? `${Math.floor(s / 3600)}:${mm.padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
-}
-
 /** Claude ended its turn to wait for background tasks; the run stays open and it resumes when they finish. */
 /** What the agent is doing right now and for how long, like the desktop apps' "Working · 1m 12s". */
 function WorkingRow({ text, since }: { text: string; since?: string | null }) {
@@ -314,7 +308,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     refreshTimer.current = setTimeout(() => {
       refreshTimer.current = null;
       loadTail().catch(() => {});
-    }, 700);
+    }, 250);
   }), [slug, ticket.id, loadTail]);
 
   // A run just finished: pick up the final message even if no more events arrive.
@@ -552,7 +546,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           }
           const e = b.e;
           if (e.helper) {
-            const card = <HelperCard key={e.uuid} helper={e.helper} live={running} />;
+            const card = <HelperCard key={e.uuid} helper={e.helper} since={e.at} live={running} />;
             return old ? <div key={e.uuid} className="inherited">{card}</div> : card;
           }
           if (e.kind === "board") {
@@ -637,6 +631,10 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const bp = ticket.branchPoint ?? undefined;
   const branchedFrom = ticket.branchedFrom ? tickets.find((t) => t.id === ticket.branchedFrom) : undefined;
   const blocks = group(entries, bp?.at);
+  // Background helpers already show live on their cards; the waiting box lists only the other tasks.
+  const helperIds = new Set(entries.flatMap((e) => (e.helper?.agentId ? [e.helper.agentId] : [])));
+  const otherTasks = (ticket.waitingOn ?? []).filter((t) => !helperIds.has(t.id));
+  const waitingHelpers = (ticket.waitingOn?.length ?? 0) - otherTasks.length;
   // Divider before the first block after the branch point (after all of them while nothing new was said yet).
   const firstNew = bp ? blocks.findIndex((b) => !before(b.kind === "tools" ? b.items[0] : b.e, bp.at)) : -1;
   const dividerAt = !bp || page === null || page.start > 0 && firstNew === 0 ? -1 : firstNew < 0 ? blocks.length : firstNew;
@@ -725,7 +723,10 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             {liveView(live).preparing && <div className="chat-typing"><span className="spinner" /> {liveView(live).preparing}</div>}
           </div>
         )}
-        {running && !live && !!ticket.waitingOn?.length && <WaitingCard tasks={ticket.waitingOn} />}
+        {running && !live && !!otherTasks.length && <WaitingCard tasks={otherTasks} />}
+        {running && !live && !otherTasks.length && waitingHelpers > 0 && (
+          <WorkingRow text={`Waiting for ${waitingHelpers === 1 ? "the helper" : `${waitingHelpers} helpers`} to finish`} />
+        )}
         {running && !live && !ticket.waitingOn?.length && (
           <WorkingRow text={ticket.lastActivity && ticket.lastActivity !== "Starting…" ? ticket.lastActivity : `${agentName} is working…`} since={ticket.runStartedAt} />
         )}

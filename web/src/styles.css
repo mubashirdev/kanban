@@ -2638,6 +2638,7 @@ body { letter-spacing: -0.011em; }
 .helper-title { font-weight: 560; }
 .helper-type { margin-left: 8px; font-size: 12px; font-weight: 450; color: var(--muted); }
 .helper-now { font-size: 13px; color: var(--muted); }
+.helper-time { flex: none; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .helper-body { padding: 8px 12px 10px 40px; border-top: 0.5px solid var(--border); }
 .helper-body .tool-group { margin: 0 0 4px; }
 .helper-body > p { margin: 4px 0 0; }
