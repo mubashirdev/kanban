@@ -18,6 +18,7 @@ import { useShareNotices } from "./share";
 import { SessionPicker, sessionLabel } from "./SessionPicker";
 import { useSnippetPicker } from "./SnippetPicker";
 import { TicketMenu } from "./TicketMenu";
+import { toast } from "./toast";
 import { missingPctReason, UsagePanel, usageChipText, useTicketUsage } from "./UsagePanel";
 import { approxPct } from "./usage";
 import { Markdown } from "./Transcript";
@@ -430,6 +431,10 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             onPickSession={() => setPicking(true)}
             onUnlink={() => act(() => api.linkSession(slug, ticket.id, null))}
             onCheckPr={() => act(() => api.checkPr(slug, ticket.id))}
+            onToChats={() => act(async () => {
+              await api.updateTicket(slug, ticket.id, { standalone: true });
+              toast("Moved to Chats. It's read-only until you turn edits on.", { tone: "ok" });
+            })}
             onReportBug={() => setReportingBug(true)}
             onDelete={() => setConfirmDelete(true)} />
           <button className="icon-btn close-btn" onClick={onClose} aria-label="Close" title="Close (Esc)"><CloseIcon /></button>

@@ -267,6 +267,9 @@ test("the API creates sessions, lists Codex commands with skills and moves a ses
     const moved: any = await (await send(`${base}/${created.id}`, "PATCH", { standalone: false })).json();
     expect(moved.standalone).toBe(false);
     expect(moved.access).toBeUndefined();
+    // And back to Chats: same ticket, read-only, out of the board columns.
+    const back: any = await (await send(`${base}/${created.id}`, "PATCH", { standalone: true, status: "review" })).json();
+    expect(back).toMatchObject({ standalone: true, access: "read", status: "backlog" });
     expect((await send(base, "POST", { title: "Bad", status: "backlog", agent: "claude", codexSessionId: "11111111-1111-1111-1111-111111111111" })).status).toBe(400);
   } finally {
     server.stop(true);

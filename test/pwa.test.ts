@@ -11,12 +11,24 @@ test("PWA layout detects Safari's standalone flag before render and follows disp
   for (const [media, safari, expected] of [[false, false, false], [true, false, true], [false, true, true]]) {
     let active = false, changed: () => void = () => {};
     const mode = { matches: media, addEventListener: (_: string, fn: () => void) => { changed = fn; } };
-    runInNewContext(source, { matchMedia: () => mode, navigator: { standalone: safari }, document: {
-      documentElement: { toggleAttribute: (_: string, value: boolean) => { active = value; } },
+    runInNewContext(source, { matchMedia: () => mode, navigator: { standalone: safari }, localStorage: { getItem: () => null }, document: {
+      documentElement: { dataset: {}, toggleAttribute: (_: string, value: boolean) => { active = value; } },
     } });
     expect(active).toBe(expected);
     mode.matches = !media; changed();
     expect(active).toBe(!media || safari);
+  }
+});
+
+test("PWA shell sets the saved light or dark theme before render, else follows the device", () => {
+  const source = readFileSync(new URL("../web/public/pwa-shell.js", import.meta.url), "utf8");
+  for (const [saved, deviceDark, expected] of [[null, true, "dark"], [null, false, "light"], ["light", true, "light"], ["dark", false, "dark"]] as const) {
+    const root = { dataset: {} as Record<string, string>, toggleAttribute: () => {} };
+    runInNewContext(source, {
+      matchMedia: (q: string) => ({ matches: q.includes("dark") ? deviceDark : false, addEventListener: () => {} }),
+      navigator: {}, localStorage: { getItem: () => saved }, document: { documentElement: root },
+    });
+    expect(root.dataset.theme).toBe(expected);
   }
 });
 

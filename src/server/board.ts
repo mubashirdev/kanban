@@ -937,6 +937,12 @@ export class Board {
     }
     // Turning a session into a board ticket; it keeps working in the repo folder with the same conversation.
     if (patch.standalone === false && current.standalone) Object.assign(clean, { standalone: false, access: undefined, readAt: undefined });
+    // And back: a board ticket becomes a chat with the same conversation, read-only until the user turns edits on.
+    if (patch.standalone === true && !current.standalone) {
+      if (this.isRunning(slug, id)) throw new ConflictError("Stop the agent before moving this ticket to Chats");
+      if (current.parentId || current.plan) throw new Error("Tickets in a plan stay on the board");
+      Object.assign(clean, { standalone: true, access: "read", status: "backlog" });
+    }
     if (patch.body !== undefined) clean.body = patch.body;
     if (patch.order !== undefined) clean.order = patch.order;
     if (patch.mode !== undefined) clean.mode = patch.mode;
@@ -963,7 +969,8 @@ export class Board {
         if (cycle) throw new Error(`dependency cycle: ${cycle.join(" → ")}`);
       }
     }
-    let status = patch.status;
+    // A chat never sits in a board column, so a status sent along with the move is ignored.
+    let status = clean.standalone ? undefined : patch.status;
     // A reply waiting for a slot stays put when reordered; moved elsewhere, it stops waiting.
     if (current.slotWait && status === "in_progress") status = undefined;
     if (status === "in_progress" && !this.isRunning(slug, id)) status = "ready";

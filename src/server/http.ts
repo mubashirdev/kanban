@@ -784,6 +784,8 @@ export function createServer(deps: ServerDeps) {
         if (b.access === "read" || b.access === "edit") patch.access = b.access;
         if (typeof b.readAt === "string" && !Number.isNaN(Date.parse(b.readAt))) patch.readAt = b.readAt;
         if (b.standalone === false) patch.standalone = false;
+        // Only the user moves a ticket to Chats, never a planner's run.
+        if (b.standalone === true && !planner) patch.standalone = true;
         const deps = strings(b.dependsOn);
         if (deps) patch.dependsOn = deps;
         const needs = strings(b.needs);

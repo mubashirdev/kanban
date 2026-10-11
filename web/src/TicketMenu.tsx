@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { copy, type Ticket } from "./api";
-import { BranchIcon, BugIcon, CheckIcon, CloseIcon, CopyIcon, MoreIcon, RefreshIcon, TerminalIcon, TrashIcon } from "./icons";
+import { BranchIcon, BugIcon, ChatIcon, CheckIcon, CloseIcon, CopyIcon, MoreIcon, RefreshIcon, TerminalIcon, TrashIcon } from "./icons";
 import { useLayer } from "./layers";
 
 /**
  * "⋯" menu in the ticket panel header: the session (resume command, branch, ID, linked session),
  * then Report a bug and Delete. ↑↓ move, Esc closes only the menu.
  */
-export function TicketMenu({ ticket, working, live, linkedLabel, onBranch, onPickSession, onUnlink, onCheckPr, onReportBug, onDelete }: {
+export function TicketMenu({ ticket, working, live, linkedLabel, onBranch, onPickSession, onUnlink, onCheckPr, onToChats, onReportBug, onDelete }: {
   ticket: Ticket;
   working: boolean;
   /** The session is open in a terminal right now. */
@@ -19,6 +19,8 @@ export function TicketMenu({ ticket, working, live, linkedLabel, onBranch, onPic
   onPickSession: () => void;
   onUnlink: () => void;
   onCheckPr: () => void;
+  /** Turn the ticket into a chat (same conversation); plan tickets stay on the board. */
+  onToChats: () => void;
   onReportBug: () => void;
   onDelete: () => void;
 }) {
@@ -135,6 +137,14 @@ export function TicketMenu({ ticket, working, live, linkedLabel, onBranch, onPic
             <button role="menuitem" className="menu-item" onClick={pick(onCheckPr)}>
               <span className="menu-icon" aria-hidden><RefreshIcon size={14} /></span>
               <span className="menu-label">Check PR status now</span>
+            </button>
+          )}
+          {!ticket.parentId && !ticket.plan && (
+            <button role="menuitem" className="menu-item" disabled={working} title={working ? "Wait until the agent is done" : "Keeps the conversation; the chat starts read-only"}
+              onClick={pick(onToChats)}>
+              <span className="menu-icon" aria-hidden><ChatIcon size={14} /></span>
+              <span className="menu-label">Move to chats</span>
+              {working && <span className="menu-hint">Wait until the agent is done</span>}
             </button>
           )}
           <div className="menu-sep" role="separator" />
