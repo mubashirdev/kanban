@@ -132,9 +132,8 @@ export function TerminalView({ slug, kind = "shell", active, restartSignal, comm
     const onBlur = () => setKeyboard(false);
     input?.addEventListener("focus", onFocus);
     input?.addEventListener("blur", onBlur);
-    const dark = matchMedia("(prefers-color-scheme: dark)");
     const onScheme = () => (t.options.theme = themeFor(kind));
-    dark.addEventListener("change", onScheme);
+    window.addEventListener("themechange", onScheme);
     return () => {
       onData.dispose();
       onResize.dispose();
@@ -143,7 +142,7 @@ export function TerminalView({ slug, kind = "shell", active, restartSignal, comm
       cancelAnimationFrame(frame);
       input?.removeEventListener("focus", onFocus);
       input?.removeEventListener("blur", onBlur);
-      dark.removeEventListener("change", onScheme);
+      window.removeEventListener("themechange", onScheme);
       t.dispose();
     };
   }, []);

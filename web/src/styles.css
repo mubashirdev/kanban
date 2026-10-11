@@ -28,32 +28,31 @@
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0b0b0d;
-    --surface: #1c1c1e;
-    --surface-2: #2c2c2e;
-    --border: #38383a;
-    --text: #f5f5f7;
-    --muted: #98989f;
-    --accent: #f5f5f7;
-    --accent-soft: #2c2c2e;
-    --on-accent: #1c1c1e;
-    --ok: #30d158;
-    --ok-soft: #12301b;
-    --warn: #ff9f0a;
-    --warn-soft: #3a2a0c;
-    --err: #ff6961;
-    --err-soft: #3d1a18;
-    --info: #d1d1d6;
-    --info-soft: #2c2c2e;
-    --blue: #64a8ff;
-    --blue-soft: #10263f;
-    --card-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.08);
-    --card-lift: 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 8px 20px rgba(0, 0, 0, 0.5);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-    color-scheme: dark;
-  }
+/* data-theme is set from the Appearance choice (web/src/theme.ts), or the device setting when it is System. */
+:root[data-theme="dark"] {
+  --bg: #0b0b0d;
+  --surface: #1c1c1e;
+  --surface-2: #2c2c2e;
+  --border: #38383a;
+  --text: #f5f5f7;
+  --muted: #98989f;
+  --accent: #f5f5f7;
+  --accent-soft: #2c2c2e;
+  --on-accent: #1c1c1e;
+  --ok: #30d158;
+  --ok-soft: #12301b;
+  --warn: #ff9f0a;
+  --warn-soft: #3a2a0c;
+  --err: #ff6961;
+  --err-soft: #3d1a18;
+  --info: #d1d1d6;
+  --info-soft: #2c2c2e;
+  --blue: #64a8ff;
+  --blue-soft: #10263f;
+  --card-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  --card-lift: 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 8px 20px rgba(0, 0, 0, 0.5);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -939,6 +938,7 @@ textarea { resize: vertical; font-size: 13.5px; }
 }
 .column.claude-zone { background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface-2)); box-shadow: inset 0 3px 0 var(--accent); }
 .col-ready .column-title::before, .col-in_progress .column-title::before, .col-review .column-title::before { display: none; }
+.menu-setting { margin-left: auto; font-size: 13px; color: var(--muted); }
 .need-chip { font-size: 10.5px; font-weight: 700; color: var(--warn); background: var(--warn-soft); padding: 1px 7px; border-radius: 99px; }
 .column-drop-hint { border: 1.5px dashed color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 10px; padding: 14px 10px; text-align: center; font-size: 12px; color: var(--muted); }
 
@@ -2387,7 +2387,7 @@ body { letter-spacing: -0.011em; }
 /* Agent identity: Claude is a clay square with a starburst, Codex a graphite circle with a prompt. */
 .agent-mark.claude { background: #c96442; color: #fff; }
 .agent-mark.codex { background: #1c1c1e; color: #fff; }
-@media (prefers-color-scheme: dark) { .agent-mark.codex { background: #f5f5f7; color: #1c1c1e; } }
+:root[data-theme="dark"] .agent-mark.codex { background: #f5f5f7; color: #1c1c1e; }
 .card-title-row .agent-mark.small { width: 22px; height: 22px; margin-top: 1px; border-radius: 7px; }
 .card-title-row .agent-mark.small.codex { border-radius: 50%; }
 

@@ -16,6 +16,8 @@ export interface MenuItem {
   title?: string;
   /** Draw a divider after this item. */
   separator?: boolean;
+  /** Leave the menu open after a tap (a setting that cycles through values). */
+  keepOpen?: boolean;
 }
 
 /** "⋯" overflow menu at the end of the top bar for things you need now and then. ↑↓ move, Esc closes. */
@@ -62,7 +64,7 @@ export function HeaderMenu({ items, footer, alert }: { items: MenuItem[]; footer
             {items.map((it, i) => (
               <Fragment key={it.label}>
                 {it.groupStart && i > 0 && <div className="sheet-gap" />}
-                <button type="button" className="sheet-action menu-row" onClick={() => { setOpen(false); it.onSelect(); }}>
+                <button type="button" className="sheet-action menu-row" onClick={() => { if (!it.keepOpen) setOpen(false); it.onSelect(); }}>
                   <span className="menu-icon" aria-hidden>{it.icon}</span>
                   <span>{it.label}</span>
                   {it.badge}
@@ -78,7 +80,7 @@ export function HeaderMenu({ items, footer, alert }: { items: MenuItem[]; footer
           {items.map((it, i) => (
             <Fragment key={it.label}>
               {it.groupStart && i > 0 && <div className="menu-sep" role="separator" />}
-              <button role="menuitem" className="menu-item" title={it.title} onClick={() => { setOpen(false); it.onSelect(); }}>
+              <button role="menuitem" className="menu-item" title={it.title} onClick={() => { if (!it.keepOpen) setOpen(false); it.onSelect(); }}>
                 <span className="menu-icon" aria-hidden>{it.icon}</span>
                 <span className="menu-label">{it.label}</span>
                 {it.badge}

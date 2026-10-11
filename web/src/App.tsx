@@ -10,7 +10,7 @@ import { avatarColor, avatarLetter } from "./avatar";
 import { BugReportDialog } from "./BugReportDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
 import { HeaderMenu } from "./HeaderMenu";
-import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, ColumnsIcon, CopyIcon, DollarIcon, GearIcon, HistoryIcon, KeyboardIcon, PlusIcon, PlugIcon, RefreshIcon, SearchIcon, SlidersIcon, TerminalIcon } from "./icons";
+import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, ColumnsIcon, ContrastIcon, CopyIcon, DollarIcon, GearIcon, HistoryIcon, KeyboardIcon, PlusIcon, PlugIcon, RefreshIcon, SearchIcon, SlidersIcon, TerminalIcon } from "./icons";
 import { buzz } from "./haptics";
 import { Inbox } from "./Inbox";
 import { UsagePill } from "./UsagePill";
@@ -34,6 +34,7 @@ import { useViewport } from "./useViewport";
 import { InstallDialog, usePwa } from "./Pwa";
 
 import type { DockTab } from "./Dock";
+import { setThemeChoice, themeChoice, type ThemeChoice } from "./theme";
 
 // xterm.js and highlight.js only load once the panel is opened. After an upgrade the old chunk is gone:
 // reload once to get the new build instead of blanking the whole page.
@@ -148,6 +149,9 @@ function readLast(): string | null {
   }
 }
 
+const THEME_ORDER: ThemeChoice[] = ["system", "light", "dark"];
+const THEME_LABEL: Record<ThemeChoice, string> = { system: "System", light: "Light", dark: "Dark" };
+
 export function App() {
   useViewport();
   const pwa = usePwa();
@@ -190,6 +194,7 @@ export function App() {
   const [newSession, setNewSession] = useState(false);
   // Board: tickets in lanes. Chats: sessions as a messenger, off the board.
   const [mode, setMode] = usePersistentState<"board" | "chats">("esa.mode", () => "board", () => false, (v) => v === "board" || v === "chats");
+  const [theme, setTheme] = useState(themeChoice);
   const [layout, setLayout] = useState<"board" | "list">("board");
   const [metadataFilter, setMetadataFilter] = useState<WorkspaceFilter>(EMPTY_FILTER);
   const [filters, setFilters] = useState<Set<FilterId>>(new Set());
@@ -739,6 +744,15 @@ export function App() {
           ...(profile ? [{ label: "Activity", icon: <HistoryIcon />, onSelect: () => setActivityOpen(true) }] : []),
           { label: "Daily cost", icon: <DollarIcon />, onSelect: () => setDailyCostOpen(true) },
           { label: "Default models", groupStart: true, icon: <SlidersIcon />, onSelect: () => setDefaultModelsOpen(true) },
+          {
+            label: "Appearance", icon: <ContrastIcon />, keepOpen: true, title: "Tap to switch: System, Light, Dark",
+            badge: <span className="menu-setting">{THEME_LABEL[theme]}</span>,
+            onSelect: () => {
+              const next = THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length];
+              setThemeChoice(next);
+              setTheme(next);
+            },
+          },
           { label: "Notifications", icon: <BellIcon />, onSelect: () => setNotificationsOpen(true) },
           { label: "Keyboard shortcuts", hint: "?", icon: <KeyboardIcon />, onSelect: () => setShortcuts(true) },
           { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },

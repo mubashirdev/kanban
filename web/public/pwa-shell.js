@@ -5,3 +5,10 @@
   update();
   mode.addEventListener("change", update);
 })();
+
+// Light or dark before first paint: the saved choice (Menu > Appearance), else the device's setting. See web/src/theme.ts.
+(() => {
+  const saved = localStorage.getItem("esa.theme");
+  const dark = saved === "dark" || (saved !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+})();
