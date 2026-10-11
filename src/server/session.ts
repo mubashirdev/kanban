@@ -43,8 +43,28 @@ export interface ToolDetail {
   diff?: string;
 }
 
+/** A helper agent Claude started (Agent tool): its task, the steps it took and, once done, what it reported. */
+export interface HelperRun {
+  description: string;
+  /** Agent type, e.g. "Explore". */
+  type?: string;
+  status: "running" | "done" | "failed" | "stopped";
+  /** Its own tool steps as `Name: arg`, like the chat's steps. */
+  steps: string[];
+  result?: string;
+}
+
+/** What a helper's own transcript (<session>/subagents/agent-*.jsonl) shows. */
+export interface HelperLog {
+  steps: string[];
+  /** Its last message ended its turn (no tool call pending). */
+  finished: boolean;
+  text: string;
+}
+
 const OUTPUT_LIMIT = 4000;
 const DIFF_LIMIT = 20_000;
+const RESULT_LIMIT = 20_000;
 
 /** An edit as diff lines: lines both sides share at the start and end stay as context, so only the change is marked. */
 function editLines(oldText: unknown, newText: unknown): string[] {
@@ -103,6 +123,8 @@ export interface SessionEntry {
   peer?: { dir: "in" | "out"; ticketId: string | null };
   /** The board prepared a new worktree before this prompt (copied files, setup command): shown as a row before it. */
   setup?: SetupResult;
+  /** This step started a helper agent: shown as its own card with live progress. */
+  helper?: HelperRun;
 }
 
 /** Claude does not save every built-in's synthetic reply to its session file. */
@@ -359,6 +381,10 @@ const PROPOSAL_TOOL = /(?:^|__)propose_ticket$/;
 const TICKETS_TOOL = /(?:^|__)propose_tickets$/;
 const BRANCH_TOOL = /(?:^|__)propose_branch$/;
 const REPLY_HEAD = /^Reply from ticket (\S+) .*:\n\n/;
+const HELPER_TOOLS = new Set(["Agent", "Task"]);
+/** A background helper's tool result only says it started; its report comes later in a task notification. */
+const HELPER_LAUNCHED = /^Async agent launched/;
+const TASK_NOTE = /<tool-use-id>([^<]+)<\/tool-use-id>[\s\S]*?<status>(\w+)<\/status>(?:[\s\S]*?<result>([\s\S]*?)<\/result>)?/;
 
 /** The form or card a planning-chat tool call shows, or null for other tools (or input that can't be read). */
 function cardEntry(block: any): Pick<SessionEntry, "questions" | "proposal" | "newTickets" | "branch"> | null {
@@ -386,7 +412,69 @@ function toolLabel(block: any): string {
   return arg ? `${block.name}: ${arg}` : String(block.name);
 }
 
-export function parseSession(raw: string): ParsedSession {
+/** A helper's report: the first text block (later blocks hold its id and token usage). */
+function helperResult(content: unknown): string {
+  const first: any = Array.isArray(content) ? content[0] : content;
+  const text = typeof first === "string" ? first : first?.text;
+  return typeof text === "string" ? text.trim().slice(0, RESULT_LIMIT) : "";
+}
+
+/** Helpers' own transcripts next to a session file, by the id of the Agent tool call that started each. */
+export function readHelperLogs(sessionFile: string): Map<string, HelperLog> {
+  const logs = new Map<string, HelperLog>();
+  const dir = join(sessionFile.replace(/\.jsonl$/, ""), "subagents");
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return logs;
+  }
+  for (const name of names.filter((n) => n.endsWith(".meta.json"))) {
+    try {
+      const meta = JSON.parse(readFileSync(join(dir, name), "utf8"));
+      const raw = readFileSync(join(dir, name.replace(/\.meta\.json$/, ".jsonl")), "utf8");
+      if (typeof meta?.toolUseId === "string") logs.set(meta.toolUseId, parseHelperLog(raw));
+    } catch {}
+  }
+  return logs;
+}
+
+function parseHelperLog(raw: string): HelperLog {
+  const log: HelperLog = { steps: [], finished: false, text: "" };
+  for (const line of raw.split("\n")) {
+    let ev: any;
+    try {
+      ev = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const content = ev?.type === "assistant" ? ev.message?.content : null;
+    if (!Array.isArray(content)) continue;
+    for (const b of content) {
+      if (b?.type === "tool_use") log.steps.push(toolLabel(b));
+      if (b?.type === "text" && b.text?.trim()) log.text = b.text.trim().slice(0, RESULT_LIMIT);
+    }
+    log.finished = ev.message.stop_reason === "end_turn";
+  }
+  return log;
+}
+
+/** Changes whenever a helper writes to its transcript, so the chat refreshes while only helpers work. */
+function helpersVersion(sessionFile: string): string {
+  const dir = join(sessionFile.replace(/\.jsonl$/, ""), "subagents");
+  let size = 0;
+  let latest = 0;
+  try {
+    for (const name of readdirSync(dir)) {
+      const s = statSync(join(dir, name));
+      size += s.size;
+      latest = Math.max(latest, s.mtimeMs);
+    }
+  } catch {}
+  return size ? `:${size}:${latest}` : "";
+}
+
+export function parseSession(raw: string, helperLogs = new Map<string, HelperLog>()): ParsedSession {
   let customTitle: string | null = null;
   let aiTitle: string | null = null;
   const entries: SessionEntry[] = [];
@@ -400,6 +488,8 @@ export function parseSession(raw: string): ParsedSession {
   const failed = new Set<string>();
   /** Tool steps by tool_use id, so their result can be attached when it arrives. */
   const steps = new Map<string, { entry: SessionEntry; started: number }>();
+  /** Helper agents by the id of the Agent tool call that started them. */
+  const helpers = new Map<string, HelperRun>();
   const peerEntry = (u: NonNullable<ReturnType<typeof userText>>, uuid: string, at: string): SessionEntry => {
     if (u.from && u.question) askers.set(u.question, u.from);
     return {
@@ -433,6 +523,11 @@ export function parseSession(raw: string): ParsedSession {
       if (Array.isArray(content)) {
         for (const [i, b] of content.entries()) {
           if (b?.type === "tool_result" && b.is_error && cards.has(b.tool_use_id)) failed.add(b.tool_use_id);
+          const helper = b?.type === "tool_result" ? helpers.get(b.tool_use_id) : undefined;
+          if (helper && !HELPER_LAUNCHED.test(helperResult(b.content))) {
+            helper.status = b.is_error ? "failed" : "done";
+            helper.result = helperResult(b.content);
+          }
           const step = b?.type === "tool_result" ? steps.get(b.tool_use_id) : undefined;
           if (step) {
             const output = resultText(b.content).trim();
@@ -458,6 +553,14 @@ export function parseSession(raw: string): ParsedSession {
           }
         }
       }
+      // A background helper finished: Claude gets its report as a task notification.
+      for (const note of resultText(content).split("<task-notification>").slice(1)) {
+        const m = TASK_NOTE.exec(note);
+        const helper = m ? helpers.get(m[1]) : undefined;
+        if (!m || !helper) continue;
+        helper.status = m[2] === "completed" ? "done" : m[2] === "failed" ? "failed" : "stopped";
+        if (m[3]?.trim()) helper.result = m[3].trim().slice(0, RESULT_LIMIT);
+      }
       const u = userText(content);
       if (u && !ev.isMeta) entries.push(peerEntry(u, uuid, at));
       continue;
@@ -480,6 +583,11 @@ export function parseSession(raw: string): ParsedSession {
         // The tool_use id keeps the uuid stable, so form drafts and answered/applied state stick to it.
         cards.add(b.id);
         entries.push({ uuid: b.id, at, role: "assistant", kind: "text", text: "", ...card });
+      } else if (b?.type === "tool_use" && HELPER_TOOLS.has(b.name) && typeof b.id === "string") {
+        const type = typeof b.input?.subagent_type === "string" ? { type: b.input.subagent_type } : {};
+        const helper: HelperRun = { description: String(b.input?.description || "Helper agent"), ...type, status: "running", steps: [] };
+        helpers.set(b.id, helper);
+        entries.push({ uuid: id, at, role: "assistant", kind: "tool", text: toolLabel(b), helper });
       } else if (b?.type === "tool_use") {
         const diff = toolDiff(b);
         const entry: SessionEntry = { uuid: id, at, role: "assistant", kind: "tool", text: toolLabel(b), ...(diff ? { tool: { diff } } : {}) };
@@ -489,6 +597,13 @@ export function parseSession(raw: string): ParsedSession {
     });
   }
 
+  for (const [id, helper] of helpers) {
+    const log = helperLogs.get(id);
+    if (!log) continue;
+    helper.steps = log.steps;
+    if (helper.status === "running" && log.finished) helper.status = "done";
+    if (helper.status === "done" && !helper.result && log.text) helper.result = log.text;
+  }
   if (failed.size) entries.splice(0, entries.length, ...entries.filter((e) => !failed.has(e.uuid)));
   const last = entries.findLast((e) => e.kind === "text" && (e.text || e.questions || e.proposal || e.newTickets || e.branch));
   const lastText = !last ? "" : last.text
@@ -550,7 +665,7 @@ export class SessionCache {
     if (!f) return null;
     try {
       const s = statSync(f);
-      return `${s.size}:${s.mtimeMs}`;
+      return `${s.size}:${s.mtimeMs}${helpersVersion(f)}`;
     } catch {
       return null;
     }
@@ -568,7 +683,7 @@ export class SessionCache {
     } catch {
       return null;
     }
-    const parsed = parseSession(raw);
+    const parsed = parseSession(raw, readHelperLogs(f));
     this.items.set(sessionId, { file: f, key, parsed });
     return parsed;
   }

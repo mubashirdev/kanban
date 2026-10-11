@@ -285,6 +285,15 @@ export interface Question {
 /** What a tool step did, once its result is in. */
 export interface ToolDetail { ok?: boolean; output?: string; ms?: number; diff?: string }
 
+/** A helper agent Claude started: its task, its own steps (`Name: arg`) and, once done, what it reported. */
+export interface HelperRun {
+  description: string;
+  type?: string;
+  status: "running" | "done" | "failed" | "stopped";
+  steps: string[];
+  result?: string;
+}
+
 export interface SetupDetection {
   at: string;
   copyFiles: string[];
@@ -327,6 +336,8 @@ export interface SessionEntry {
   peer?: { dir: "in" | "out"; ticketId: string | null };
   /** Worktree setup that ran before this prompt (shown as a row before it). */
   setup?: SetupResult;
+  /** This step started a helper agent (shown as its own card with live progress). */
+  helper?: HelperRun;
 }
 
 export interface Comment {

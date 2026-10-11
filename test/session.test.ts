@@ -347,3 +347,41 @@ test("parseSession lists pages published by the publish_artifact MCP tool", () =
   ].join("\n");
   expect(parseSession(raw).artifacts).toEqual([{ url: "https://claude.ai/artifact/Plan123", label: "plan", at: "2026-10-06T01:00:02Z" }]);
 });
+
+test("a helper agent shows its task, its own steps and its report", () => {
+  const raw = [
+    asst([{ type: "tool_use", id: "h1", name: "Agent", input: { description: "Find the bug", subagent_type: "Explore", prompt: "look" } }], "2026-10-11T01:00:00Z"),
+    user([{ type: "tool_result", tool_use_id: "h1", content: [{ type: "text", text: "Async agent launched successfully.\nagentId: a1" }] }], "2026-10-11T01:00:01Z"),
+    asst([{ type: "tool_use", id: "h2", name: "Task", input: { description: "Quick check" } }], "2026-10-11T01:00:02Z"),
+    user([{ type: "tool_result", tool_use_id: "h2", content: [{ type: "text", text: "All good." }, { type: "text", text: "agentId: a2\n<usage>1</usage>" }] }], "2026-10-11T01:00:03Z"),
+    asst([{ type: "text", text: "Waiting for the helper." }], "2026-10-11T01:00:04Z"),
+  ];
+  const logs = new Map([["h1", { steps: ["Read: /r/a.ts", "Grep: bug"], finished: false, text: "" }]]);
+  const running = parseSession(raw.join("\n"), logs).entries.filter((e) => e.helper).map((e) => e.helper);
+  expect(running).toEqual([
+    { description: "Find the bug", type: "Explore", status: "running", steps: ["Read: /r/a.ts", "Grep: bug"] },
+    { description: "Quick check", status: "done", steps: [], result: "All good." },
+  ]);
+  raw.push(user("<task-notification>\n<task-id>a1</task-id>\n<tool-use-id>h1</tool-use-id>\n<status>completed</status>\n<result>Found it in a.ts.</result>\n</task-notification>", "2026-10-11T01:00:05Z"));
+  const parsed = parseSession(raw.join("\n"), logs);
+  expect(parsed.entries.find((e) => e.helper?.description === "Find the bug")!.helper).toMatchObject({ status: "done", result: "Found it in a.ts." });
+  // The notification is for Claude, not a chat bubble.
+  expect(parsed.entries.at(-1)!.text).toBe("Waiting for the helper.");
+});
+
+test("the session cache reads helper transcripts and changes version while only a helper works", () => {
+  const configDir = tempDir();
+  const dir = join(configDir, "projects", "-f");
+  const sid = "11111111-2222-3333-4444-555555555555";
+  mkdirSync(join(dir, sid, "subagents"), { recursive: true });
+  writeFileSync(join(dir, `${sid}.jsonl`), asst([{ type: "tool_use", id: "h1", name: "Agent", input: { description: "Dig" } }], "2026-10-11T01:00:00Z") + "\n");
+  writeFileSync(join(dir, sid, "subagents", "agent-a1.meta.json"), L({ agentType: "Explore", description: "Dig", toolUseId: "h1" }));
+  const log = join(dir, sid, "subagents", "agent-a1.jsonl");
+  writeFileSync(log, asst([{ type: "tool_use", id: "s1", name: "Bash", input: { command: "ls" } }], "2026-10-11T01:00:01Z", { isSidechain: true }) + "\n");
+  const cache = new SessionCache({ configDir });
+  const before = cache.version(sid);
+  expect(cache.get(sid)!.entries[0].helper).toMatchObject({ status: "running", steps: ["Bash: ls"] });
+  appendFileSync(log, L({ type: "assistant", isSidechain: true, message: { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: "Done digging." }] } }) + "\n");
+  expect(cache.version(sid)).not.toBe(before);
+  expect(cache.get(sid)!.entries[0].helper).toMatchObject({ status: "done", result: "Done digging." });
+});

@@ -25,6 +25,7 @@ import { useLayer } from "./layers";
 import { AgentSettings } from "./AgentSettings";
 import { AccessPick, chipLabel, QuickPick } from "./QuickPick";
 import { ToolGroup } from "./ToolGroup";
+import { HelperCard } from "./HelperCard";
 import { CliUsageCard, UsagePill } from "./UsagePill";
 import { parseCliUsage } from "./usage";
 import { ClaudeSettings, type SettingKind } from "./ClaudeSettings";
@@ -80,12 +81,12 @@ type Block = { kind: "entry"; e: SessionEntry; index: number } | { kind: "tools"
 /** Copied history of a branched ticket: entries from before the branch point (at = the branch time). */
 const before = (e: SessionEntry, at: string | undefined) => !!at && !!e.at && e.at < at;
 
-/** Tool calls in a row fold into one block; a branch point (splitAt) starts a new one. */
+/** Tool calls in a row fold into one block; a branch point (splitAt) starts a new one. A helper agent gets its own card. */
 function group(entries: SessionEntry[], splitAt?: string): Block[] {
   const out: Block[] = [];
   entries.forEach((e, index) => {
     const prev = out.at(-1);
-    if (e.kind === "tool") {
+    if (e.kind === "tool" && !e.helper) {
       if (prev?.kind === "tools" && before(prev.items[0], splitAt) === before(e, splitAt)) prev.items.push(e);
       else out.push({ kind: "tools", items: [e] });
     } else out.push({ kind: "entry", e, index });
@@ -485,7 +486,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
 
   // Only the first message of an agent's turn carries the name and time; the rest read as one reply.
   const continuesTurn = (i: number) => {
-    const prev = blocks.slice(0, i).findLast((b) => b.kind === "entry");
+    const prev = blocks.slice(0, i).findLast((b) => b.kind === "entry" && !b.e.helper);
     return prev?.kind === "entry" && prev.e.role === "assistant" && prev.e.kind === "text" && !prev.e.note && !prev.e.peer;
   };
 
@@ -550,6 +551,10 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             return old ? <div key={b.items[0].uuid} className="inherited">{tools}</div> : tools;
           }
           const e = b.e;
+          if (e.helper) {
+            const card = <HelperCard key={e.uuid} helper={e.helper} live={running} />;
+            return old ? <div key={e.uuid} className="inherited">{card}</div> : card;
+          }
           if (e.kind === "board") {
             return <div key={e.uuid} className={`chat-note${old ? " inherited" : ""}`}>{e.text}{e.at && <span title={fullTime(e.at)}> · {timeAgo(e.at)}</span>}</div>;
           }

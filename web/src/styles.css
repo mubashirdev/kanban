@@ -2621,6 +2621,24 @@ body { letter-spacing: -0.011em; }
 .tool-group .step-output > summary { min-height: 28px; font-size: 12px; }
 .tool-group { margin: -6px 0; }
 
+/* Helper agents: one card each with what it is doing now; opened, its steps and its report. */
+.helper-card { align-self: stretch; min-width: 0; max-width: 100%; border: 0.5px solid var(--border); border-radius: 12px; background: var(--surface); font-size: 14px; }
+.helper-card > summary { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 8px 12px; cursor: pointer; list-style: none; }
+.helper-card > summary::-webkit-details-marker { display: none; }
+.helper-card > summary .tool-chevron { color: var(--muted); }
+.helper-card[open] > summary .tool-chevron { transform: rotate(90deg); }
+.helper-card.done > summary .tool-lead { color: var(--ok); }
+.helper-card.failed > summary .tool-lead { color: var(--err); }
+.helper-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.helper-title, .helper-now { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.helper-title { font-weight: 560; }
+.helper-type { margin-left: 8px; font-size: 12px; font-weight: 450; color: var(--muted); }
+.helper-now { font-size: 13px; color: var(--muted); }
+.helper-body { padding: 8px 12px 10px 40px; border-top: 0.5px solid var(--border); }
+.helper-body .tool-group { margin: 0 0 4px; }
+.helper-body > p { margin: 4px 0 0; }
+@media (max-width: 767px) { .helper-body { padding-left: 12px; } }
+
 /* One reading column on wide screens: messages, the terminal note and the composer share the same width. */
 :root { --read-max: 860px; }
 .panel-main .composer.composer-card, .panel-main > .chat > .composer-warn, .panel-main .chat > .composer-warn {
