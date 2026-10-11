@@ -861,7 +861,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
               send(draft);
             }
           }} />
-        <div className="composer-bar">
+        {/* A tap on any button keeps the keyboard up: closing it first moves the row and the tap is lost. */}
+        <div className="composer-bar" onPointerDown={keepKeyboard} onMouseDown={keepKeyboard}>
           <div className="composer-more">
             <button type="button" className="icon-btn composer-plus" aria-label="More actions" aria-haspopup="menu" aria-expanded={moreOpen} disabled={stopping} onClick={() => setMoreOpen((v) => !v)}><PlusIcon size={20} /></button>
             {moreOpen && <ComposerMenu onClose={() => setMoreOpen(false)} items={[
@@ -897,8 +898,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           <span className="composer-spacer" />
           {micButton}
           {running && !draft.trim()
-            ? <button type="button" className="btn send-round stop-round" aria-label={stopping ? "Stopping" : `Stop ${agentName}`} disabled={stopping} onPointerDown={keepKeyboard} onMouseDown={keepKeyboard} onClick={stop}><span className="stop-square" aria-hidden /></button>
-            : <button type="button" className="btn primary send-round" aria-label={images.uploading ? "Uploading" : "Send"} disabled={!draft.trim() || stopping || images.uploading} onPointerDown={keepKeyboard} onMouseDown={keepKeyboard} onClick={() => send(draft)}>{images.uploading ? <span className="spinner" /> : <ArrowUpIcon size={18} />}</button>}
+            ? <button type="button" className="btn send-round stop-round" aria-label={stopping ? "Stopping" : `Stop ${agentName}`} disabled={stopping} onClick={stop}><span className="stop-square" aria-hidden /></button>
+            : <button type="button" className="btn primary send-round" aria-label={images.uploading ? "Uploading" : "Send"} disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? <span className="spinner" /> : <ArrowUpIcon size={18} />}</button>}
         </div>
       </div>
       {images.error && <div className="form-error composer-error">{images.error}</div>}
