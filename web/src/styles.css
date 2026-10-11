@@ -1496,6 +1496,8 @@ button.pill:hover { color: var(--text); }
   .qstep { min-width: 24px; min-height: 24px; border-radius: 50%; background-clip: content-box; padding: 8px; }
   .qstep.on { width: 32px; border-radius: 12px; }
   .card { cursor: pointer; }
+  /* iOS scrolls the screen up when the keyboard opens; pinned layers follow the visible area (iPads too, not just phones). */
+  :root[data-standalone] #root, .drawer-wrap, .overlay { top: var(--viewport-top, 0px); bottom: auto; height: var(--viewport-height, 100dvh); }
 }
 
 /* Single pane ticket workspace on tablets and phones. */
