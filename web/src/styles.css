@@ -5,9 +5,9 @@
   --border: #d4d4d9;
   --text: #1c1c1e;
   --muted: #636366;
-  /* Neutral grey like the Claude and Codex apps, with Claude's clay orange as the one warm touch for actions. */
-  --accent: #b4552f;
-  --accent-soft: #f6e3da;
+  /* Neutral, like the Claude and Codex apps: near-black actions on light grey. */
+  --accent: #1c1c1e;
+  --accent-soft: #e9e9ee;
   --on-accent: #ffffff;
   --ok: #248a3d;
   --ok-soft: #e1f3e6;
@@ -36,9 +36,9 @@
   --border: #38383a;
   --text: #f5f5f7;
   --muted: #98989f;
-  --accent: #c96442;
-  --accent-soft: #3a2820;
-  --on-accent: #ffffff;
+  --accent: #f5f5f7;
+  --accent-soft: #2c2c2e;
+  --on-accent: #1c1c1e;
   --ok: #30d158;
   --ok-soft: #12301b;
   --warn: #ff9f0a;
