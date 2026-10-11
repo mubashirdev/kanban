@@ -1,11 +1,11 @@
 :root {
-  --bg: #f5f4ef;
-  --surface: #fffefb;
-  --surface-2: #ebe9e1;
-  --border: #dcd9cf;
-  --text: #1f1e1b;
-  --muted: #6b6862;
-  /* Warm paper with a clay orange for actions, like the Claude app. */
+  --bg: #f2f2f7;
+  --surface: #ffffff;
+  --surface-2: #e9e9ee;
+  --border: #d4d4d9;
+  --text: #1c1c1e;
+  --muted: #636366;
+  /* Neutral grey like the Claude and Codex apps, with Claude's clay orange as the one warm touch for actions. */
   --accent: #b4552f;
   --accent-soft: #f6e3da;
   --on-accent: #ffffff;
@@ -15,8 +15,8 @@
   --warn-soft: #ffeed4;
   --err: #d70015;
   --err-soft: #ffe3e5;
-  --info: #3d3a35;
-  --info-soft: #ebe9e1;
+  --info: #3a3a3c;
+  --info-soft: #e9e9ee;
   /* Blue only where it means something: code colors and the Codex mark. */
   --blue: #0071e3;
   --blue-soft: #e3effd;
@@ -30,12 +30,12 @@
 
 /* data-theme is set from the Appearance choice (web/src/theme.ts), or the device setting when it is System. */
 :root[data-theme="dark"] {
-  --bg: #1a1918;
-  --surface: #262523;
-  --surface-2: #33312e;
-  --border: #403d39;
-  --text: #f3f1ea;
-  --muted: #a39f96;
+  --bg: #0b0b0d;
+  --surface: #1c1c1e;
+  --surface-2: #2c2c2e;
+  --border: #38383a;
+  --text: #f5f5f7;
+  --muted: #98989f;
   --accent: #c96442;
   --accent-soft: #3a2820;
   --on-accent: #ffffff;
@@ -45,8 +45,8 @@
   --warn-soft: #3a2a0c;
   --err: #ff6961;
   --err-soft: #3d1a18;
-  --info: #d6d2c8;
-  --info-soft: #33312e;
+  --info: #d1d1d6;
+  --info-soft: #2c2c2e;
   --blue: #64a8ff;
   --blue-soft: #10263f;
   --card-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.08);

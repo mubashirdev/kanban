@@ -2,7 +2,7 @@
 export type ThemeChoice = "system" | "light" | "dark";
 
 const KEY = "esa.theme";
-const BAR_COLOR = { light: "#f5f4ef", dark: "#1a1918" };
+const BAR_COLOR = { light: "#f2f2f7", dark: "#0b0b0d" };
 const deviceDark = matchMedia("(prefers-color-scheme: dark)");
 
 export function themeChoice(): ThemeChoice {
