@@ -20,7 +20,7 @@ import { useSlashCommands } from "./SlashCommands";
 import { useFileMentions } from "./FileMentions";
 import { useSnippetPicker } from "./SnippetPicker";
 import { useDictation, dictationSupported } from "./useDictation";
-import { useMediaQuery } from "./useMediaQuery";
+import { PHONE, useMediaQuery } from "./useMediaQuery";
 import { useLayer } from "./layers";
 import { AgentSettings } from "./AgentSettings";
 import { AccessPick, chipLabel, QuickPick } from "./QuickPick";
@@ -223,7 +223,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const running = !!ticket.running;
   const { stopping, stop } = useStop(slug, ticket, running, onError);
   const refine = ticket.standalone ? ticket.access !== "edit" : REFINE(ticket.status);
-  const phone = useMediaQuery("(max-width: 767px)");
+  const phone = useMediaQuery(PHONE);
   const [moreOpen, setMoreOpen] = useState(false);
   const [picking, setPicking] = useState<"model" | "effort" | null>(null);
   const dictation = useDictation((text) => setDraft((d) => (d && !/\s$/.test(d) ? `${d} ${text}` : d + text)), onError);

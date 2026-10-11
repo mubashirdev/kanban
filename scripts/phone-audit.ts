@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
-// Drives a throwaway board as a touch phone (320px and 390px) and fails on layout problems that only show up on real phones:
-// tiny tap targets, round buttons squashed into ovals, sideways overflow, unlabelled icon buttons and tiny text.
+// Drives a throwaway board as phones, iPads and a desktop, in light and dark, and fails on layout problems:
+// tap targets under 44px on touch screens, round buttons squashed into ovals, sideways overflow, controls cut off
+// at the screen edge, unlabelled icon buttons, tiny text and text that is hard to read on its background.
 // Needs Google Chrome installed. Usage: bun run audit:phone  (AUDIT_SHOTS=<existing folder> also saves a screenshot per screen)
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,6 +9,13 @@ import { join } from "node:path";
 import { chromium, type Page } from "playwright-core";
 
 const PORT = 7791;
+const DEVICES = [
+  { name: "phone-320", width: 320, height: 760, touch: true },
+  { name: "phone-390", width: 390, height: 844, touch: true },
+  { name: "ipad-portrait", width: 834, height: 1194, touch: true },
+  { name: "ipad-landscape", width: 1210, height: 834, touch: true },
+  { name: "desktop", width: 1440, height: 900, touch: false },
+];
 const BASE = `http://localhost:${PORT}`;
 const home = mkdtempSync(join(tmpdir(), "ck-audit-home-"));
 const repo = mkdtempSync(join(tmpdir(), "ck-audit-repo-"));
@@ -29,6 +37,8 @@ const line = (type: string, content: unknown, seconds = 0) => JSON.stringify({ t
 const tool = (id: string, name: string, input: unknown) => [{ type: "tool_use", id, name, input }];
 const result = (id: string, text: string, isError = false) => [{ type: "tool_result", tool_use_id: id, content: text, is_error: isError }];
 const reply = "## Fix\nSet `SameSite=None` on the cookie.\n\n```diff\n-const lax = true;\n+const lax = false; // a long line that scrolls sideways instead of widening the page\n```\n\n| Browser | Result |\n|---|---|\n| Safari | ok |\n\n> Needs HTTPS in development.";
+const commandAsk = { id: "ask1", tool: "Bash", detail: "rm -rf node_modules/.cache && bun test test/auth.test.ts --bail --coverage", canAlways: true };
+const planAsk = { id: "ask2", tool: "ExitPlanMode", detail: "", plan: "## Plan\n1. Set `SameSite=None` on the session cookie.\n2. Add a Safari test for the redirect.\n3. Run `bun test test`." };
 mkdirSync(join(home, "claude-cfg", "projects", "-audit"), { recursive: true });
 writeFileSync(join(home, "claude-cfg", "projects", "-audit", `${sessionId}.jsonl`), [
   line("user", "Fix the redirect loop"),
@@ -38,6 +48,9 @@ writeFileSync(join(home, "claude-cfg", "projects", "-audit", `${sessionId}.jsonl
   line("user", result("t2", "1 fail\n  expected /home, got /login (auth.test.ts:42)", true), 9),
   line("assistant", tool("t3", "Edit", { file_path: "/repo/src/redirect.ts", old_string: "const lax = true;", new_string: "const lax = false; // a long line that scrolls sideways instead of widening the page" }), 10),
   line("user", result("t3", "File updated"), 11),
+  line("assistant", [{ type: "tool_use", id: "h1", name: "Agent", input: { description: "Find every place that sets the session cookie", subagent_type: "Explore" } }], 11),
+  line("user", result("h1", "Two places: src/auth/cookie.ts:14 and src/redirect.ts:3."), 11),
+  line("assistant", [{ type: "tool_use", id: "h2", name: "Agent", input: { description: "Run the full auth test suite on Safari settings" } }], 11),
   line("assistant", [{ type: "text", text: reply }], 12),
 ].join("\n") + "\n");
 
@@ -60,9 +73,28 @@ try {
   const events = await api("/profiles/audit/tickets", { title: "Fix the redirect loop", body: "", agent: "claude", standalone: true, sessionId });
 
   // Runs in the page: returns a list of problems on whatever is on screen.
-  const findProblems = () => {
+  const findProblems = (minTarget: number) => {
     const problems: string[] = [];
     const label = (e: Element) => (e.getAttribute("aria-label") || e.textContent || "").trim().slice(0, 24) || String(e.className).slice(0, 24);
+    const rgb = (c: string) => (c.match(/[\d.]+/g) ?? []).map(Number);
+    const lum = ([r, g, b]: number[]) => [r, g, b].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; })
+      .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+    // Text color against the first solid background behind it; null when it can't tell (images, gradients, see-through).
+    const contrast = (e: Element) => {
+      const fg = getComputedStyle(e).color;
+      if (!fg.startsWith("rgb") || rgb(fg)[3] < 1 || Number(getComputedStyle(e).opacity) < 1) return null;
+      for (let a: Element | null = e; a; a = a.parentElement) {
+        const cs = getComputedStyle(a);
+        if (cs.backgroundImage !== "none") return null;
+        if (!cs.backgroundColor.startsWith("rgb")) return null;
+        const bg = rgb(cs.backgroundColor);
+        if (bg.length > 3 && bg[3] === 0) continue;
+        if (bg.length > 3 && bg[3] < 1) return null;
+        const [l1, l2] = [lum(rgb(fg)), lum(bg)].sort((x, y) => y - x);
+        return (l1 + 0.05) / (l2 + 0.05);
+      }
+      return null;
+    };
     const shown = (e: Element) => {
       const r = e.getBoundingClientRect(), cs = getComputedStyle(e);
       return r.width > 0 && r.height > 0 && cs.display !== "none" && cs.visibility !== "hidden" && r.bottom > 0 && r.top < innerHeight;
@@ -70,7 +102,7 @@ try {
     document.querySelectorAll("button, a[href], summary, textarea, select, input:not([type=hidden])").forEach((e) => {
       if (!shown(e) || (e.tagName === "TEXTAREA" && e.closest(".composer-card"))) return; // the whole card focuses it
       const r = e.getBoundingClientRect(), cs = getComputedStyle(e);
-      if (r.width < 32 || r.height < 32) problems.push(`tiny target ${Math.round(r.width)}x${Math.round(r.height)} "${label(e)}"`);
+      if (r.width < minTarget || r.height < minTarget) problems.push(`tiny target ${Math.round(r.width)}x${Math.round(r.height)} "${label(e)}" (${e.tagName.toLowerCase()}.${String(e.className).replace(/ +/g, ".")})`);
       if (cs.borderRadius.includes("50%") && Math.abs(r.width - r.height) > 2) problems.push(`not round ${Math.round(r.width)}x${Math.round(r.height)} "${label(e)}"`);
       const named = e.getAttribute("aria-label") || e.getAttribute("title") || (e.textContent || "").trim() || e.tagName !== "BUTTON";
       if (!named) problems.push(`unlabelled button ${String(e.className).slice(0, 30)}`);
@@ -78,6 +110,15 @@ try {
     document.querySelectorAll("body *").forEach((e) => {
       if (![...e.childNodes].some((n) => n.nodeType === 3 && n.textContent!.trim()) || !shown(e)) return;
       if (parseFloat(getComputedStyle(e).fontSize) < 11) problems.push(`tiny text ${getComputedStyle(e).fontSize} "${label(e)}"`);
+      const ratio = contrast(e);
+      if (ratio && ratio < 3) problems.push(`low contrast ${ratio.toFixed(1)} "${label(e)}"`);
+    });
+    // A control that runs past the screen edge, outside anything that scrolls sideways.
+    document.querySelectorAll("button, a[href], input, select").forEach((e) => {
+      const r = e.getBoundingClientRect();
+      if (!shown(e) || (r.left >= -1 && r.right <= innerWidth + 1)) return;
+      for (let a = e.parentElement; a; a = a.parentElement) if (/auto|scroll/.test(getComputedStyle(a).overflowX)) return;
+      problems.push(`cut off at the edge "${label(e)}"`);
     });
     if (document.documentElement.scrollWidth > innerWidth) problems.push(`sideways overflow ${document.documentElement.scrollWidth}>${innerWidth}`);
     return [...new Set(problems)];
@@ -85,22 +126,41 @@ try {
 
   const browser = await chromium.launch({ channel: "chrome" });
   const failures: string[] = [];
-  for (const width of [320, 390]) {
-    const context = await browser.newContext({ viewport: { width, height: 760 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+  for (const device of DEVICES) for (const theme of ["light", "dark"] as const) {
+    const { name, width, height, touch } = device;
+    const context = await browser.newContext({ viewport: { width, height }, hasTouch: touch, isMobile: touch, deviceScaleFactor: 2 });
+    await context.addInitScript((t) => localStorage.setItem("esa.theme", t), theme);
+    // The helper and permission cards only show while Claude is working: pretend these two runs are live.
+    await context.route(/\/api\/profiles\/audit\/tickets/, async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const res = await route.fetch();
+      const data = await res.json();
+      const live = (t: any) => {
+        if (t?.id === events.id) Object.assign(t, { running: true, runStartedAt: at(0), permissionAsk: commandAsk });
+        if (t?.id === ticket.id) Object.assign(t, { running: true, runStartedAt: at(0), permissionAsk: planAsk });
+      };
+      if (Array.isArray(data)) data.forEach(live);
+      else live(data);
+      await route.fulfill({ response: res, json: data });
+    });
     const page = await context.newPage();
+    const phone = width < 768 || (touch && width <= 900); // same as PHONE in web/src/useMediaQuery.ts
     const check = async (screen: string, setup: (p: Page) => Promise<void>) => {
       await setup(page);
-      await page.waitForTimeout(1200);
-      await page.evaluate(() => document.querySelectorAll("details.tool-group, details.step-output").forEach((d) => ((d as HTMLDetailsElement).open = true)));
-      if (process.env.AUDIT_SHOTS) await page.screenshot({ path: join(process.env.AUDIT_SHOTS, `${width}-${screen.replace(/\W+/g, "-")}.png`) });
-      for (const problem of await page.evaluate(findProblems)) failures.push(`${width}px ${screen}: ${problem}`);
+      await page.waitForTimeout(900);
+      await page.evaluate(() => document.querySelectorAll("details.tool-group, details.step-output, details.helper-card").forEach((d) => ((d as HTMLDetailsElement).open = true)));
+      if (process.env.AUDIT_SHOTS) await page.screenshot({ path: join(process.env.AUDIT_SHOTS, `${name}-${theme}-${screen.replace(/\W+/g, "-")}.png`) });
+      for (const problem of await page.evaluate(findProblems, touch ? 44 : 20)) failures.push(`${name} ${theme} ${screen}: ${problem}`);
     };
+    const newButton = (p: Page) => (phone ? p.locator(".fab") : p.locator(".new-ticket-btn")).click();
+    const showChats = (p: Page) => (phone ? p.locator(".tabbar button").nth(1) : p.locator(".mode-switch button").nth(1)).click();
     await page.goto(`${BASE}/#/audit`);
     await page.evaluate(() => sessionStorage.setItem("ck-inbox-landed", "1"));
     await page.reload();
-    await page.waitForSelector(".tabbar");
-    for (const lane of ["backlog", "planning", "review"]) await check(`board ${lane}`, (p) => p.locator(`button[data-column="${lane}"]`).click());
-    await check("new ticket dialog", (p) => p.locator(".fab").click());
+    await page.waitForSelector(".topbar");
+    if (phone) for (const lane of ["backlog", "planning", "review"]) await check(`board ${lane}`, (p) => p.locator(`button[data-column="${lane}"]`).click());
+    else await check("board", async () => {});
+    await check("new ticket dialog", newButton);
     await page.keyboard.press("Escape");
     await check("header menu", (p) => p.locator('button[aria-label="More"]').click());
     await page.keyboard.press("Escape");
@@ -115,14 +175,15 @@ try {
     await page.keyboard.press("Escape");
     await check("notification sheet", async (p) => { if (await p.locator(".inbox-pill").count()) await p.locator(".inbox-pill").click(); });
     await page.keyboard.press("Escape");
-    await check("long-press card sheet", async (p) => {
-      await p.locator('button[data-column="backlog"]').click();
-      await p.locator(".sortable-card").first().dispatchEvent("pointerdown", { clientX: 60, clientY: 300, pointerType: "touch", isPrimary: true, bubbles: true });
+    if (touch) await check("long-press card sheet", async (p) => {
+      if (phone) await p.locator('button[data-column="backlog"]').click();
+      const box = (await p.locator(".sortable-card").first().boundingBox())!;
+      await p.locator(".sortable-card").first().dispatchEvent("pointerdown", { clientX: box.x + 20, clientY: box.y + 20, pointerType: "touch", isPrimary: true, bubbles: true });
       await p.waitForTimeout(700);
     });
     await page.keyboard.press("Escape");
-    await check("chats list", (p) => p.locator(".tabbar button").nth(1).click());
-    await check("new chat dialog", (p) => p.locator(".fab").click());
+    await check("chats list", showChats);
+    await check("new chat dialog", newButton);
     await page.keyboard.press("Escape");
     await check("session chat", (p) => p.goto(`${BASE}/#/audit/${session.id}`).then(() => undefined));
     await check("fork dialog", async (p) => {
@@ -130,17 +191,19 @@ try {
       await p.getByText("Fork chat…").click();
     });
     await page.keyboard.press("Escape");
-    await check("ticket chat", (p) => p.goto(`${BASE}/#/audit/${ticket.id}`).then(() => undefined));
-    await check("chat events", async (p) => { await p.goto(`${BASE}/#/audit/${events.id}`); await p.locator(".tool-group summary").first().click(); });
+    await check("ticket chat with plan", (p) => p.goto(`${BASE}/#/audit/${ticket.id}`).then(() => undefined));
+    await check("chat events", (p) => p.goto(`${BASE}/#/audit/${events.id}`).then(() => undefined));
     await check("chat code block", (p) => p.locator(".code-block").first().scrollIntoViewIfNeeded());
+    await check("helper cards", (p) => p.locator(".helper-card").first().scrollIntoViewIfNeeded());
+    await check("permission card", (p) => p.locator(".ask-card").first().scrollIntoViewIfNeeded());
     await context.close();
   }
   await browser.close();
 
   if (failures.length) {
-    console.error(`Phone audit found ${failures.length} problem${failures.length === 1 ? "" : "s"}:\n- ${failures.join("\n- ")}`);
+    console.error(`Layout audit found ${failures.length} problem${failures.length === 1 ? "" : "s"}:\n- ${failures.join("\n- ")}`);
     process.exitCode = 1;
-  } else console.log("Phone audit passed: 2 widths x 14 screens, no layout problems.");
+  } else console.log(`Layout audit passed: ${DEVICES.length} sizes x light and dark, no layout problems.`);
 } finally {
   server.kill();
 }

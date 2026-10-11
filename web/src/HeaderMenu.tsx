@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { MoreIcon } from "./icons";
 import { useLayer } from "./layers";
 import { Modal } from "./Modal";
-import { useMediaQuery } from "./useMediaQuery";
+import { PHONE, useMediaQuery } from "./useMediaQuery";
 
 export interface MenuItem {
   label: string;
@@ -23,7 +23,7 @@ export interface MenuItem {
 /** "⋯" overflow menu at the end of the top bar for things you need now and then. ↑↓ move, Esc closes. */
 export function HeaderMenu({ items, footer, alert }: { items: MenuItem[]; footer?: string | null; alert?: boolean }) {
   const [open, setOpen] = useState(false);
-  const phone = useMediaQuery("(max-width: 767px)");
+  const phone = useMediaQuery(PHONE);
   const root = useRef<HTMLDivElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);

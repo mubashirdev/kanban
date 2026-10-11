@@ -3,12 +3,12 @@ import type { InboxItem } from "./api";
 import { BellIcon } from "./icons";
 import { useLayer } from "./layers";
 import { Modal } from "./Modal";
-import { useMediaQuery } from "./useMediaQuery";
+import { PHONE, useMediaQuery } from "./useMediaQuery";
 
 /** Top-bar "N need you" across every board; the list jumps straight to a ticket. ↑↓ move, Esc closes. */
 export function Inbox({ items, onPick, landOnInbox = false, openRequest }: { items: InboxItem[]; onPick: (i: InboxItem) => void; landOnInbox?: boolean; openRequest?: number }) {
   const [open, setOpen] = useState(false);
-  const phone = useMediaQuery("(max-width: 767px)");
+  const phone = useMediaQuery(PHONE);
   // Phones open straight onto what is waiting for you, once per browser session.
   useEffect(() => {
     if (!landOnInbox || !items.length) return;

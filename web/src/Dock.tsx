@@ -6,7 +6,7 @@ import { CloseIcon, RefreshIcon } from "./icons";
 import { TerminalView } from "./TerminalView";
 import { toast } from "./toast";
 import { useFocusTrap, useLayer } from "./layers";
-import { useMediaQuery } from "./useMediaQuery";
+import { PHONE, useMediaQuery } from "./useMediaQuery";
 
 export type DockTab = "terminal" | "files" | "claude";
 const TAB_KEY = "ckanban.dock.tab";
@@ -49,7 +49,7 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
   onTabChange?: (tab: DockTab) => void;
   onOpenTicket?: (id: string) => void;
 }) {
-  const compact = useMediaQuery("(max-width: 767px), (max-height: 500px)");
+  const compact = useMediaQuery(`${PHONE}, (max-height: 500px)`);
   const dockRef = useRef<HTMLElement>(null);
   useFocusTrap(dockRef, true, compact);
   useLayer(onClose, { active: compact, skipInInputs: true });

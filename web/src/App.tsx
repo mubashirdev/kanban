@@ -29,7 +29,7 @@ import { CommandBar, type CommandAction } from "./CommandBar";
 import { boardDigit, cardDir, stepBoard, stepCard, type CardPos } from "./keynav";
 import { TicketDrawer } from "./TicketDrawer";
 import { toast, Toaster } from "./toast";
-import { useMediaQuery } from "./useMediaQuery";
+import { PHONE, useMediaQuery } from "./useMediaQuery";
 import { useViewport } from "./useViewport";
 import { InstallDialog, usePwa } from "./Pwa";
 
@@ -155,7 +155,7 @@ const THEME_LABEL: Record<ThemeChoice, string> = { system: "System", light: "Lig
 export function App() {
   useViewport();
   const pwa = usePwa();
-  const compact = useMediaQuery("(max-width: 767px)");
+  const compact = useMediaQuery(PHONE);
   const narrow = useMediaQuery("(max-width: 900px)");
   const [usageRequest, setUsageRequest] = useState(0);
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
@@ -675,7 +675,7 @@ export function App() {
         )}
         {profile && compact && (
           // Phones: the repo's avatar opens the repo picker (its name sits on the second row).
-          <button type="button" className="repo-avatar" aria-label={`Switch repo, now ${profile.name}`} style={{ background: avatarColor(profile.slug) }}
+          <button type="button" className="repo-avatar" aria-label={`Switch repo, now ${profile.name}`} style={{ backgroundColor: avatarColor(profile.slug) }}
             onClick={() => document.querySelector<HTMLButtonElement>(".topbar .profile-select .select-trigger")?.click()}>
             {avatarLetter(profile.name)}
           </button>
