@@ -3,7 +3,7 @@ import { api, subscribe, type ClaudeCommand, type DefaultModels, type Effort, ty
 import { autoGrow } from "./autoGrow";
 import { branchTicket } from "./branch";
 import { BranchCard } from "./BranchCard";
-import { ArrowDownIcon, ArrowUpIcon, BoltIcon, BranchIcon, CloseIcon, FileCodeIcon, FileTextIcon, ImageIcon, MicIcon, PlusIcon, ShieldAlertIcon, ShieldIcon, SlashIcon, SlidersIcon } from "./icons";
+import { ArrowDownIcon, ArrowUpIcon, BranchIcon, CloseIcon, FileCodeIcon, FileTextIcon, ImageIcon, MicIcon, PlusIcon, ShieldAlertIcon, ShieldIcon, SlashIcon, SlidersIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
 import { NewTicketsCard } from "./NewTicketsCard";
 import { ProposalCard } from "./ProposalCard";
@@ -843,8 +843,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           {quickReplies.map((reply) => <button key={reply} type="button" className="chip" onClick={() => send(reply)}>{reply}</button>)}
         </div>
       )}
-      {/* One card on phone and desktop, like the Codex app: the text on top, then +, the access shield,
-          and on the right model, effort, dictation and one round button (Stop while the agent works). */}
+      {/* One card on phone and desktop, like the Claude app: the text on top, then +, the access shield and the
+          model pill, and on the right dictation and one round button (Stop while the agent works). */}
       <div className="composer composer-card" onClick={(e) => { if (!(e.target as HTMLElement).closest("button, textarea, .quick-pick")) composer.current?.focus(); }}>
         {commands.popup}
         {mentions.popup}
@@ -880,21 +880,24 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
               {accessOpen && <AccessPick slug={slug} ticket={ticket} onClose={() => setAccessOpen(false)} />}
             </span>
           )}
+          {/* "Opus 5.5 High" like the Claude app: tap the model or the effort to change it. */}
+          <span className="model-pill">
+            {(["model", "effort"] as const).map((kind) => (
+              <span key={kind} className="status-pick">
+                <button type="button" className={`model-pill-part ${kind}`} aria-haspopup="menu" aria-expanded={picking === kind} disabled={stopping}
+                  aria-label={kind === "model" ? `Model: ${modelText}` : `Reasoning effort: ${effortText}`}
+                  onClick={() => { commands.close(); setPicking(picking === kind ? null : kind); }}>
+                  {kind === "model" ? modelText : effortText}
+                </button>
+                {picking === kind && <QuickPick slug={slug} ticket={ticket} kind={kind} onClose={() => setPicking(null)}
+                  onMore={() => setSettingsTab(codex || kind === "model" ? "model" : "effort")} />}
+              </span>
+            ))}
+          </span>
           <span className="composer-spacer" />
-          {(["model", "effort"] as const).map((kind) => (
-            <span key={kind} className="status-pick">
-              <button type="button" className="icon-btn composer-icon-btn" aria-haspopup="menu" aria-expanded={picking === kind} disabled={stopping}
-                aria-label={kind === "model" ? `Model: ${modelText}` : `Reasoning effort: ${effortText}`} title={kind === "model" ? modelText : `Effort: ${effortText}`}
-                onClick={() => { commands.close(); setPicking(picking === kind ? null : kind); }}>
-                {kind === "model" ? <BoltIcon size={20} /> : <EffortGauge level={effortValue} />}
-              </button>
-              {picking === kind && <QuickPick slug={slug} ticket={ticket} kind={kind} onClose={() => setPicking(null)}
-                onMore={() => setSettingsTab(codex || kind === "model" ? "model" : "effort")} />}
-            </span>
-          ))}
           {micButton}
           {running && !draft.trim()
-            ? <button type="button" className="btn danger send-round" aria-label={stopping ? "Stopping" : `Stop ${agentName}`} disabled={stopping} onPointerDown={keepKeyboard} onMouseDown={keepKeyboard} onClick={stop}><span className="stop-square" aria-hidden /></button>
+            ? <button type="button" className="btn send-round stop-round" aria-label={stopping ? "Stopping" : `Stop ${agentName}`} disabled={stopping} onPointerDown={keepKeyboard} onMouseDown={keepKeyboard} onClick={stop}><span className="stop-square" aria-hidden /></button>
             : <button type="button" className="btn primary send-round" aria-label={images.uploading ? "Uploading" : "Send"} disabled={!draft.trim() || stopping || images.uploading} onPointerDown={keepKeyboard} onMouseDown={keepKeyboard} onClick={() => send(draft)}>{images.uploading ? <span className="spinner" /> : <ArrowUpIcon size={18} />}</button>}
         </div>
       </div>
@@ -937,24 +940,5 @@ function ComposerMenu({ items, onClose }: { items: { label: string; icon: JSX.El
         </button>
       ))}
     </div>
-  );
-}
-
-/** Effort as a dial, like Codex: the arc fills further for more reasoning; grey when it follows the default. */
-const EFFORT_SHARE: Record<string, number> = { low: 0.25, medium: 0.5, high: 0.75, xhigh: 0.88, max: 1, ultra: 1 };
-function EffortGauge({ level }: { level: string | null }) {
-  const share = level ? EFFORT_SHARE[level] ?? 0.5 : 0.5;
-  // A 270° dial open at the bottom; the needle points along the filled part.
-  const r = 8, length = 2 * Math.PI * r * 0.75;
-  const angle = (135 + 270 * share) * (Math.PI / 180);
-  return (
-    <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden className="effort-gauge">
-      <circle cx="11" cy="11" r={r} fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2" strokeLinecap="round"
-        strokeDasharray={`${length} 100`} transform="rotate(135 11 11)" />
-      <circle cx="11" cy="11" r={r} fill="none" stroke={level ? "var(--accent)" : "currentColor"} strokeWidth="2" strokeLinecap="round"
-        strokeDasharray={`${length * share} 100`} transform="rotate(135 11 11)" />
-      <line x1="11" y1="11" x2={11 + Math.cos(angle) * 4.5} y2={11 + Math.sin(angle) * 4.5} stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <circle cx="11" cy="11" r="1.6" fill="currentColor" />
-    </svg>
   );
 }
