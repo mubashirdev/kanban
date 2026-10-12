@@ -372,6 +372,8 @@ export interface Config {
   codexModel?: string | null;
   claudeEffort?: import("./commands").Effort | null;
   codexEffort?: Ticket["codexEffort"];
+  /** Done tickets and merged folder copies send their screenshots, recordings and traces to the Trash (see cleanup.ts). */
+  cleanup?: boolean;
 }
 
 export interface OutputFile {

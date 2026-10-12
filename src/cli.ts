@@ -9,6 +9,7 @@ import { runArtifactJob } from "./server/artifact";
 import { LABEL, PLIST_PATH, plistXml } from "./server/launchd";
 import { RESTART_MAX_WAIT_MS } from "./server/board";
 import { startDaemon } from "./server/main";
+import { cleanFromHook, sweepAll } from "./server/cleanup";
 import { AgentError } from "./server/agents";
 import { defaultRoot, Store } from "./server/store";
 import { latestRelease } from "./server/update";
@@ -32,6 +33,8 @@ Usage:
   ckanban artifact read <url> [--out <file>]
                        Save an artifact's page source to a local file
 ${TICKET_USAGE}
+  ckanban clean        Move old screenshots, recordings, traces and merged folder copies to the Trash
+                       --dry-run: only list them. --hook: a Claude Code or Codex SessionEnd hook (reads its JSON)
   ckanban --version    Print the version
 `;
 
@@ -219,6 +222,20 @@ async function artifact(args: string[]) {
   process.exit(1);
 }
 
+async function clean(args: string[]) {
+  if (args.includes("--hook")) {
+    // A hook must never get in the way of the chat ending.
+    try {
+      await cleanFromHook(JSON.parse(await Bun.stdin.text()));
+    } catch {}
+    return;
+  }
+  const dryRun = args.includes("--dry-run");
+  const { files, copies } = await sweepAll(new Store(defaultRoot()), { dryRun });
+  for (const f of [...files, ...copies]) console.log(f);
+  console.log(`${dryRun ? "Would move" : "Moved"} ${files.length} files and ${copies.length} folder copies to the Trash.`);
+}
+
 const cmd = process.argv[2];
 switch (cmd) {
   case "dev":
@@ -253,6 +270,9 @@ switch (cmd) {
   case "mcp":
     if (process.argv.length === 3) await serveStdio();
     else await board(() => mcpCommand(process.argv.slice(3)));
+    break;
+  case "clean":
+    await clean(process.argv.slice(3));
     break;
   case "--version":
   case "-v":

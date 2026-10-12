@@ -25,6 +25,7 @@ import { WEB_ASSETS } from "./web-assets.gen";
 import { isPrivateIPv4 } from "./lan";
 import { ClaudeCommands } from "./commands";
 import { detectMissing } from "./worktree-setup";
+import { startCleanupSweeper } from "./cleanup";
 
 export async function startDaemon(): Promise<void> {
   // Board runs and other children inherit this; an older launchd plist starts the daemon with no locale.
@@ -86,6 +87,7 @@ export async function startDaemon(): Promise<void> {
   huddles.recover();
   huddles.startWatchdog();
   void board.sweepWorktrees();
+  const stopCleanup = startCleanupSweeper(store);
   void detectMissing(store, (profile) => bus.emit({ type: "profile.updated", slug: profile.slug, profile }));
   const stopPoller = startPoller(board, store, config.prPollMinutes);
   // After recover(): a missed run's ticket must not be mistaken for an interrupted one.
@@ -102,6 +104,7 @@ export async function startDaemon(): Promise<void> {
     console.log("ckanban shutting down");
     stopNotifications();
     stopPoller();
+    stopCleanup();
     stopScheduler();
     stopLimits();
     stopWatcher();

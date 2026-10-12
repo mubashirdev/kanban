@@ -1,4 +1,6 @@
+import { cleanTicket } from "./cleanup";
 import { codexArgs, startCodexRun } from "./codex-runner";
+import { codexRolloutFile } from "./codex-session";
 import { ticketMetadata, type TicketMetadata } from "./ticket-metadata";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
@@ -1454,6 +1456,7 @@ export class Board {
     let t = this.patch(slug, id, clean);
 
     if (clean.status === "done") t = await this.cleanupWorktree(slug, t);
+    if (clean.status === "done" && this.store.config().cleanup) this.trashLeftovers(slug, t);
     if (clean.status === "planning") this.autoRefine(slug, id);
     if (active || clean.status === "ready" || (clean.order !== undefined && t.status === "ready")) this.dispatch(slug);
     this.advancePlans(slug);
@@ -1749,6 +1752,18 @@ export class Board {
     this.patch(slug, planner.id, { plan: { ...plan, state: "stuck", awaiting: null, reason } });
     // The stuck planner now needs the user (attention.ts): the Notifier tells them.
     this.store.addComment(slug, planner.id, "ai", `Plan stuck: ${reason}. Fix what's needed, then press Resume plan.`);
+  }
+
+  /** A done ticket's screenshots, recordings and traces go to the Trash: its Outputs' and the ones its chats and huddle agents made. */
+  private trashLeftovers(slug: string, t: Ticket) {
+    const profile = this.store.getProfile(slug);
+    if (!profile) return;
+    const agents = this.store.listHuddles(slug).filter((h) => h.hostTicket === t.id).flatMap((h) => h.participants)
+      .filter((p) => p.kind === "agent" && p.sessionId).map((p) => (p.agent === "codex" ? codexRolloutFile(p.sessionId!) : claudeSessionFile(p.sessionId!)));
+    const transcripts = [t.sessionId && claudeSessionFile(t.sessionId), t.codexSessionId && codexRolloutFile(t.codexSessionId), ...agents].filter((f): f is string => !!f);
+    cleanTicket(this.store.outputsDir(slug, t.id), transcripts, t.workdir ?? profile.path)
+      .then((moved) => moved.length && console.log(`${slug}/${t.id} done: moved ${moved.length} screenshots and recordings to the Trash`))
+      .catch((e) => console.error(`${slug}/${t.id}: cleanup failed: ${(e as Error).message}`));
   }
 
   private async cleanupWorktree(slug: string, t: Ticket): Promise<Ticket> {

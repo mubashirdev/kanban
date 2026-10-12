@@ -517,7 +517,14 @@ export interface McpAddInput {
 /** An outside agent that can use the board through `ckanban mcp`. */
 export interface DayUsage { date: string; claudeRuns: number; codexRuns: number; costUsd: number; seconds: number }
 
-export interface DefaultModels { claudeModel: string | null; codexModel: string | null; claudeEffort: string | null; codexEffort: string | null }
+export interface DefaultModels {
+  claudeModel: string | null;
+  codexModel: string | null;
+  claudeEffort: string | null;
+  codexEffort: string | null;
+  /** Done tickets send their screenshots, recordings and traces to the Trash (with a daily sweep of leftovers). */
+  cleanup?: boolean;
+}
 
 export interface AgentStatus {
   id: "claude" | "codex";

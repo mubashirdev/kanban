@@ -601,6 +601,35 @@ test("moving to done removes clean worktree", async () => {
   expect(store.getTicket("p", t.id)!.worktree).toBeNull();
 });
 
+test("with cleanup on, a ticket moved to done sends its Outputs screenshots to the Trash and keeps its reports", async () => {
+  await setup({ git: false });
+  const oldHome = process.env.HOME;
+  process.env.HOME = tempDir("ck-home-");
+  mkdirSync(join(process.env.HOME, ".Trash"));
+  try {
+    const make = async () => {
+      const t = await board.createTicket("p", { title: "x", body: "", status: "backlog" });
+      const out = store.outputsDir("p", t.id);
+      mkdirSync(out, { recursive: true });
+      writeFileSync(join(out, "home.png"), "x");
+      writeFileSync(join(out, "report.md"), "x");
+      return { id: t.id, out };
+    };
+    const off = await make();
+    await board.updateTicket("p", off.id, { status: "done" });
+    store.saveConfig({ cleanup: true });
+    const on = await make();
+    await board.updateTicket("p", on.id, { status: "done" });
+    for (let i = 0; i < 100 && existsSync(join(on.out, "home.png")); i++) await Bun.sleep(20);
+    expect(existsSync(join(on.out, "home.png"))).toBe(false);
+    expect(existsSync(join(on.out, "report.md"))).toBe(true);
+    expect(existsSync(join(process.env.HOME, ".Trash", "home.png"))).toBe(true);
+    expect(existsSync(join(off.out, "home.png"))).toBe(true);
+  } finally {
+    process.env.HOME = oldHome;
+  }
+});
+
 async function doneAndBack(id: string) {
   await board.updateTicket("p", id, { status: "done" });
   expect(store.getTicket("p", id)!.worktree).toBeNull();

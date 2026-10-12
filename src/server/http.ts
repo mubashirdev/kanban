@@ -542,10 +542,14 @@ export function createServer(deps: ServerDeps) {
           if (b[key] !== null && !EFFORTS.includes(b[key])) throw new HttpError(400, `Invalid ${key}`);
           patch[key] = b[key] || null;
         }
+        if (b.cleanup !== undefined) {
+          if (typeof b.cleanup !== "boolean") throw new HttpError(400, "cleanup must be true or false");
+          patch.cleanup = b.cleanup;
+        }
         store.saveConfig(patch);
       }
-      const { claudeModel = null, codexModel = null, claudeEffort = null, codexEffort = null } = store.config();
-      return json({ claudeModel, codexModel, claudeEffort, codexEffort });
+      const { claudeModel = null, codexModel = null, claudeEffort = null, codexEffort = null, cleanup = false } = store.config();
+      return json({ claudeModel, codexModel, claudeEffort, codexEffort, cleanup });
     }
 
     // Connections panel: is `ckanban mcp` registered with Claude Code / Codex, and (un)register it.
