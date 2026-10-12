@@ -6,7 +6,7 @@ import { callTool, type ToolContext } from "../src/mcp-server";
 import { Board } from "../src/server/board";
 import { Bus, type BusEvent } from "../src/server/events";
 import { createServer } from "../src/server/http";
-import { fallbackSummary, findingTitle, HUDDLE_IDLE_MS, Huddles, LEGACY_SUMMARY_FILE, POST_MAX, summaryFile, teammateSpend } from "../src/server/huddle";
+import { fallbackSummary, findingTitle, HUDDLE_IDLE_MS, Huddles, LEGACY_SUMMARY_FILE, POST_MAX, summaryFile, teammateSpend, turnCost } from "../src/server/huddle";
 import { BUILTIN_PRESETS, deletePreset, mergePresets, presetSourceText, savePreset } from "../src/server/huddle-presets";
 import { huddleUsage } from "../src/server/huddle-usage";
 import { cleanLessons, LESSON_MAX, noteRole, parseNotes, serializeNotes } from "../src/server/huddle-notes";
@@ -830,6 +830,17 @@ test("propose_teammate: a ticket chat gets a card, a huddle agent's waits under 
   // Not the user's or @main's to propose into the huddle.
   expect((await postJson(`/huddles/${h.id}/teammates`, input)).status).toBe(400);
 }, 20000);
+
+test("a long chat run's earlier turns don't count toward a huddle: only what each turn adds", () => {
+  const totals = new Map<string, number>();
+  // The chat ran for a day before the huddle: its run already reports $50.
+  expect(turnCost(totals, "p/t1", 50)).toBe(50);
+  // The huddle reply turn adds 0.25; that is all the huddle is charged.
+  expect(turnCost(totals, "p/t1", 50.25)).toBeCloseTo(0.25);
+  // A new run starts counting from zero again.
+  expect(turnCost(totals, "p/t1", 0.1)).toBeCloseTo(0.1);
+  expect(turnCost(totals, "p/t2", 3)).toBe(3);
+});
 
 test("budget brake: @main's huddle replies count, the leads are warned at 80%, everything stops at 100%; resume adds budget", async () => {
   const t = await host();

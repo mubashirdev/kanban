@@ -129,6 +129,16 @@ export function teammateSpend(huddles: Huddle[], ticketId: string): { costUsd: n
   return { costUsd: out.reduce((a, h) => a + h.costUsd, 0), huddles: out };
 }
 
+/**
+ * What one turn of a ticket run added: its result line reports the run's total so far, so this is the difference
+ * from the run's last result (a lower total means a new run). `totals` keeps each run's last total.
+ */
+export function turnCost(totals: Map<string, number>, key: string, total: number): number {
+  const before = totals.get(key) ?? 0;
+  totals.set(key, total);
+  return total >= before ? total - before : total;
+}
+
 /** A participant's cost after a result line reporting its session's running total. */
 function costAfter(p: HuddleParticipant | undefined, total: number): Pick<HuddleParticipant, "costUsd" | "sessionCostUsd"> {
   const prev = p?.sessionCostUsd ?? 0;
@@ -266,6 +276,8 @@ export class Huddles {
   private summaryOwed = new Set<string>();
   /** Ticket sessions by "<slug>/<ticket>": the huddle participant that last woke them (its peer runs' cost is that huddle's). */
   private mainWoken = new Map<string, { hid: string; handle: string }>();
+  /** Each ticket run's last reported total cost, so a huddle reply counts only what its own turn added. */
+  private runTotals = new Map<string, number>();
   /** A ticket session's latest conversation size ("slug/id" -> tokens), and when it was last written to its huddles. */
   private ticketCtx = new Map<string, { tokens: number; savedAt: number; saved: number }>();
   private shuttingDown = false;
@@ -332,12 +344,15 @@ export class Huddles {
   /** A ticket session's result line: a huddle reply run's cost counts toward the huddle that woke it. */
   private mainResult(slug: string, ticketId: string, ev: any) {
     if (ev?.type !== "result" || this.shuttingDown) return;
-    const woken = this.mainWoken.get(`${slug}/${ticketId}`);
+    // A long chat run may have spent a lot before the huddle started: only this turn's part counts.
+    const key = `${slug}/${ticketId}`;
+    const added = turnCost(this.runTotals, key, Number(ev.total_cost_usd) || 0);
+    const woken = this.mainWoken.get(key);
     if (!woken || !this.board.isPeerRun(slug, ticketId)) return;
     const h = this.load(slug, woken.hid);
     const p = h?.participants.find((x) => x.handle === woken.handle && x.ticketId === ticketId);
     if (!h || !p || h.status === "closed") return;
-    this.updateP(slug, h.id, p.handle, { ...costAfter(p, Number(ev.total_cost_usd) || 0), idleAt: nowIso() });
+    this.updateP(slug, h.id, p.handle, { costUsd: (p.costUsd ?? 0) + added, idleAt: nowIso() });
     this.checkBudget(slug, h.id);
   }
 
