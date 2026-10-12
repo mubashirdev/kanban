@@ -119,8 +119,9 @@ body.show-hints .sortable-card:not(:focus) .key-hint.card-keys { display: none; 
 }
 .topbar > * { flex-shrink: 0; }
 .topbar > .spacer { flex-shrink: 1; min-width: 0; }
-/* A notice like "Restart pending" gives way first, so the buttons on the right never get pushed off. */
-.topbar > .pill.warn { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Status text gives way before buttons: the running, usage and "Restart pending" pills shrink with "…" (full text in their tooltip). */
+.topbar > .pill, .topbar > .usage { flex-shrink: 1; min-width: 0; }
+.topbar > .pill, .topbar > .usage, .topbar > .usage .usage-pill { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .topbar .profile-select { flex-shrink: 1; min-width: 120px; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; letter-spacing: -0.01em; }
 .brand-icon { display: block; flex: none; width: 28px; height: 28px; object-fit: cover; border-radius: 7px; }
@@ -333,6 +334,7 @@ button.badge.huddle.quiet { background: var(--ok-soft); color: var(--ok); }
 .star-toggle:hover { border-color: var(--border); color: var(--text); }
 .star-toggle.on { color: #e0a100; }
 .star-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (pointer: coarse) { .star-toggle { width: 44px; height: 44px; } }
 .title-row { display: flex; align-items: center; gap: 6px; }
 .title-row input { flex: 1; min-width: 0; }
 .form label.board-switch { flex-direction: row; align-items: flex-start; gap: 8px; font-weight: 560; }
@@ -1835,7 +1837,8 @@ button.pill:hover { color: var(--text); }
   .qpreview { padding: 8px; }
   .qopt-row { flex-wrap: wrap; }
   .qfoot .qhint { display: none; }
-  .toaster { bottom: max(12px, env(safe-area-inset-bottom)); width: 100%; padding: 0 12px; }
+  /* At the top on phones: at the bottom a toast covers the message box's buttons. */
+  .toaster { top: max(12px, env(safe-area-inset-top)); bottom: auto; width: 100%; padding: 0 12px; }
   .toast { max-width: 100%; }
 
   /* Full screen tools: tree and file preview become separate navigable panes. */
@@ -2236,11 +2239,13 @@ button.pill:hover { color: var(--text); }
   .column-hint { display: none; }
   .board { padding-top: 8px; }
 
-  .panel-head, .session-head { display: flex; align-items: center; gap: 2px; padding: 4px 6px; }
+  .panel-head, .session-head { display: flex; flex-wrap: nowrap; align-items: center; gap: 2px; padding: 4px 6px; }
   .panel-head .back-btn { display: inline-grid; place-items: center; order: 0; flex: none; }
   .panel-head .agent-mark { order: 1; width: 26px; height: 26px; }
   .panel-head .title-input { order: 2; flex: 1; min-width: 0; width: auto; font-size: 16px; font-weight: 600; padding: 4px 4px; text-overflow: ellipsis; }
-  .panel-head > .your-turn, .panel-head > .badge { order: 3; flex: none; max-width: 40%; }
+  /* Badges shrink before the title does; the title always keeps room to read and tap. */
+  .panel-head > .your-turn, .panel-head > .badge { order: 3; flex: 0 1 auto; min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .panel-head .title-input { min-width: 96px; }
   .panel-head > .your-turn .yt-label { display: none; }
   .panel-head .segmented { order: 3; }
   .panel-head .sidebar-toggle { order: 4; flex: none; border: 0; }
@@ -2933,18 +2938,21 @@ body { letter-spacing: -0.011em; }
 .composer-card .composer-bar { gap: 8px; }
 .composer-card .composer-plus, .composer-card .composer-mic:not(.listening), .composer-card .access-shield { background-color: var(--surface-2); color: var(--text); }
 .composer-card .send-round.stop-round { background-color: var(--surface-2); color: var(--text); }
-.model-pill { display: inline-flex; align-items: center; flex: 0 1 auto; min-width: 0; height: 38px; padding: 0 14px; gap: 6px; border-radius: 999px; background: var(--surface-2); }
+.model-pill { display: inline-flex; align-items: center; flex: 0 1 auto; min-width: 0; height: 38px; padding: 0; border-radius: 999px; background: var(--surface-2); }
 .model-pill .status-pick { display: flex; min-width: 0; height: 100%; }
 .model-pill .status-pick:last-child { flex: none; }
 .model-pill-part { height: 100%; padding: 0; border: 0; background: none; font: inherit; font-size: 15px; color: var(--text); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .model-pill-part.effort { color: var(--muted); }
+/* The pill's side padding belongs to its parts, so a tap anywhere on the pill picks model or effort. */
+.model-pill-part.model { padding: 0 3px 0 14px; }
+.model-pill-part.effort { padding: 0 14px 0 3px; }
 .model-pill-part:disabled { opacity: 0.5; cursor: default; }
 /* Touch: 44px to tap but a 36px circle to see, like the Claude app; a transparent border holds the gap. */
 @media (pointer: coarse) {
   .composer-card .composer-bar { gap: 0; }
   .composer-card .composer-plus, .composer-card .composer-mic, .composer-card .access-shield, .composer-card .send-round,
   .model-pill { border: 4px solid transparent; background-clip: padding-box; }
-  .model-pill { height: 44px; padding: 0 14px; }
+  .model-pill { height: 44px; }
   .model-pill-part { font-size: 14px; }
   .composer.composer-card { padding: 14px 6px 6px; gap: 6px; }
   .composer-card textarea { padding: 0 12px; font-size: 17px; }
@@ -3479,3 +3487,6 @@ button.hd-mode:disabled { cursor: default; }
   .tt-row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "desc" "meta" "actions"; gap: 4px; }
   .tt-actions { flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 }
+
+/* Very narrow phones (320px): the header badge would be cut to a few letters; the title gets the room. */
+@media (max-width: 359px) { .panel-head > .badge { display: none; } }
