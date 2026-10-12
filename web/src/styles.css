@@ -3463,3 +3463,19 @@ button.hd-mode:disabled { cursor: default; }
 .form label.ws-card.on { border-color: var(--accent); background: var(--accent-soft); }
 .form label.ws-card.off { cursor: not-allowed; opacity: .6; }
 .vh-ok { background: var(--ok-soft); color: var(--ok); border-radius: 8px; padding: 8px 12px; margin-top: 8px; font-size: 13px; }
+
+/* Team tab on phones: tabs and filter on their own rows, the list or one teammate full width, notes stacked. */
+@media (max-width: 720px) {
+  .team-bar { flex-wrap: wrap; padding: 8px 12px; }
+  .team-bar .segmented { flex: 1 1 100%; overflow-x: auto; scrollbar-width: none; }
+  .team-bar .segmented button { flex: 1 0 auto; }
+  .team-filter { flex: 1 1 0; width: auto; min-width: 0; }
+  .team-err { max-width: 100%; flex-basis: 100%; order: 9; }
+  .team-body.phone-list .tm-detail, .team-body.phone-detail .tm-list { display: none; }
+  .team-body.phone-list .tm-list { width: 100%; max-width: none; min-width: 0; border-right: 0; }
+  .tm-back { display: inline-flex; align-items: center; gap: 4px; margin: 8px 12px 0; min-height: 44px; }
+  .tm-pane, .team-notes { padding-inline: 14px; }
+  .hn-cols { grid-template-columns: 1fr; }
+  .tt-row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "main" "desc" "meta" "actions"; gap: 4px; }
+  .tt-actions { flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+}

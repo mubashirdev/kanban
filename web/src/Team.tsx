@@ -7,6 +7,8 @@ import { fullTime, timeAgo } from "./time";
 import { plural, resetTitle, scopeChip, usageText } from "./teamText";
 import type { TeammateEditRequest } from "./teammateText";
 import { costText } from "./usage";
+import { usePhone } from "./usePhone";
+import { ChevronLeftIcon } from "./icons";
 
 const MODELS = ["opus", "sonnet", "haiku"];
 const ALL_ROLES = "_all";
@@ -84,6 +86,8 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
   const [newTemplate, setNewTemplate] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const fail = (e: unknown) => setErr((e as Error).message);
+  // Phones show the list or one teammate, not both: a tapped (or requested) teammate opens full width.
+  const phone = usePhone();
 
   useEffect(() => {
     try {
@@ -136,6 +140,8 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
     }
   };
 
+  const detailOpen = !!editing || selected !== null;
+  const back = () => { setSelected(null); setEditing(null); setErr(null); };
   const startHint = openTicket ? `Starts on the open ticket “${openTicket.title}”.` : "No ticket open: a new one is created in Planning.";
 
   return (
@@ -159,7 +165,7 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
       </div>
 
       {view === "teammates" && (
-        <div className="team-body">
+        <div className={`team-body${phone ? (detailOpen ? " phone-detail" : " phone-list") : ""}`}>
           <div className="tm-list" role="listbox" aria-label="Teammates">
             {presets === null && <div className="muted small tm-empty">Loading…</div>}
             {presets && !shown.length && <div className="muted small tm-empty">{q ? `No teammate matches “${filter.trim()}”.` : "No teammates yet."}</div>}
@@ -170,7 +176,8 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
                   const chip = scopeChip(p);
                   const u = usage?.teammates[p.name];
                   const n = p.name === MAIN ? 0 : noteCount(p.name);
-                  const on = cur?.name === p.name && !editing?.isNew;
+                  // On a phone the list has no "current" teammate: it opens on tap.
+                  const on = (phone ? selected === p.name : cur?.name === p.name) && !editing?.isNew;
                   return (
                     <div key={p.name} role="option" aria-selected={on} tabIndex={0} className={`tm-row${on ? " sel" : ""}`}
                       onClick={() => { setSelected(p.name); setEditing(null); setErr(null); }}
@@ -191,6 +198,7 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
             ))}
           </div>
           <div className="tm-detail">
+            {phone && <button type="button" className="link-btn tm-back" onClick={back}><ChevronLeftIcon size={16} /> Teammates</button>}
             {editing ? (
               <TeammateEditor key={editing.isNew ? "new" : editing.draft.name} slug={slug} boardName={boardName} {...editing}
                 current={presets?.find((p) => p.name === editing.draft.name) ?? null}
