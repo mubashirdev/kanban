@@ -34,10 +34,11 @@
 // leads are warned at 80%) and at maxMessages; routing pauses after AGENT_ONLY_MAX messages without the user; two
 // participants answering each other PING_PONG times in a row stop waking each other and their lead is tagged.
 import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { summarizeEvent } from "./activity";
-import { mcpConfig } from "./agents";
+import { mcpArgv, mcpConfig, resolveCodexBin } from "./agents";
 import { claudeSessionExists, type Board } from "./board";
+import { codexArgs, startCodexRun } from "./codex-runner";
 import type { Bus } from "./events";
 import { addWorktree, branchExists, hasCommits, removeWorktree, run as git, worktreeDir } from "./git";
 import {
@@ -229,6 +230,7 @@ export interface Caller {
 
 export interface HuddleOptions {
   claudeBin: string;
+  codexBin?: string;
   /** How long a monitor-mode session stays open between turns (default 30 min). */
   idleMs?: number;
   sessionExists?: (sessionId: string) => boolean;
@@ -1123,7 +1125,8 @@ export class Huddles {
         handle, role: e.role?.trim() || preset?.role || base, preset: e.preset?.trim() ?? null,
         prompt: [preset?.prompt, e.prompt?.trim()].filter(Boolean).join("\n\n") || `Help with the ticket as ${e.role}.`,
         ...(e.focus?.trim() ? { focus: e.focus.trim() } : {}),
-        model: e.model?.trim() || preset?.model || null, mode, lead,
+        // A preset's model is a Claude model: a Codex agent takes only the entry's.
+        model: e.model?.trim() || (e.agent === "codex" ? null : preset?.model) || null, mode, lead, ...(e.agent === "codex" ? { agent: "codex" as const } : {}),
         // Only an agent in its own worktree may edit: the shared worktree is the coordinator's.
         canEdit: grant && workspace === "own" && (e.canEdit ?? preset?.canEdit ?? true), workspace, sessionId: null, status: "idle", kind: "agent", cursor: 0, joinedAt: nowIso(), token: newId() + newId(),
       });
@@ -1745,11 +1748,12 @@ export class Huddles {
     h = this.get(slug, hid);
     p = h.participants.find((x) => x.handle === handle)!;
     const profile = this.store.getProfile(slug)!;
+    const outputDir = this.store.huddleOutputsDir(slug, h.hostTicket, handle);
+    const system = huddleAgentSystemPrompt(h, p, host as Ticket, outputDir, dir, profile.baseBranch, this.lessonsFor(slug, p.preset));
+    if (p.agent === "codex") return this.executeCodex(slug, hid, p, run, input, dir, outputDir, system);
     const sessionId = p.sessionId ?? crypto.randomUUID();
     const resume = !!p.sessionStarted && this.sessionExists(sessionId);
     if (!p.sessionId) this.updateP(slug, hid, handle, { sessionId });
-    const outputDir = this.store.huddleOutputsDir(slug, h.hostTicket, handle);
-    const system = huddleAgentSystemPrompt(h, p, host as Ticket, outputDir, dir, profile.baseBranch, this.lessonsFor(slug, p.preset));
     const args = [
       ...buildArgs(sessionId, resume, p.model ?? profile.model, "bypassPermissions", mcpConfig(), system),
       ...(p.canEdit ? [] : ["--disallowedTools", NO_EDIT_TOOLS]),
@@ -1813,6 +1817,49 @@ export class Huddles {
     }
     const cur = this.get(slug, hid).participants.find((x) => x.handle === handle);
     this.updateP(slug, hid, handle, { sessionStarted: started, status: settled(cur) ? cur!.status : "idle", idleAt: nowIso() });
+  }
+
+  /**
+   * A Codex agent's run. Codex takes one prompt per process, so each wake is a new run that resumes its thread
+   * (deliverNow queues what comes in meanwhile). It reports no cost: its runs don't count toward the budget.
+   */
+  private async executeCodex(slug: string, hid: string, p: HuddleParticipant, run: AgentRun, input: string, dir: string, outputDir: string, system: string): Promise<void> {
+    const handle = p.handle;
+    const writableRoots = [outputDir];
+    // A worktree's commits land in the main repo's .git, so the sandbox must be allowed to write there.
+    if (p.canEdit) {
+      const common = await git(["git", "rev-parse", "--git-common-dir"], dir);
+      if (common.code === 0 && common.stdout.trim()) writableRoots.push(resolve(dir, common.stdout.trim()));
+    }
+    const config = this.store.config();
+    let lastWrite = 0;
+    run.handle = startCodexRun({
+      bin: this.opts.codexBin ?? resolveCodexBin(), cwd: dir, input,
+      args: codexArgs({ sessionId: p.sessionId, refine: !p.canEdit, model: p.model ?? config.codexModel, effort: config.codexEffort, writableRoots, instructions: system, mcp: mcpArgv() }),
+      env: { CKANBAN_OUTPUT_DIR: outputDir, CKANBAN_TICKET: `${slug}/${this.get(slug, hid).hostTicket}`, [HUDDLE_AGENT_ENV]: `${hid}/${handle}/${p.token}` },
+      onEvent: (ev) => {
+        if (this.shuttingDown) return;
+        if (ev.type === "codex.thread") return this.updateP(slug, hid, handle, { sessionId: ev.sessionId, sessionStarted: true });
+        if (ev.type === "result") return;
+        const s = summarizeEvent(ev);
+        const now = Date.now();
+        if (s && now - lastWrite >= ACTIVITY_THROTTLE_MS) {
+          lastWrite = now;
+          this.updateP(slug, hid, handle, { lastActivity: s });
+        }
+      },
+    });
+    const out = await run.handle.done;
+    if (this.shuttingDown || !this.load(slug, hid)) return;
+    if (run.stopRequested || run.handle.stopped) return this.updateP(slug, hid, handle, { status: "stopped" });
+    if (out.code !== 0) {
+      const error = out.stderr.trim().split("\n").slice(-3).join("\n") || `codex exited with code ${out.code}`;
+      this.updateP(slug, hid, handle, { status: "failed", error });
+      this.system(slug, hid, `@${handle}'s run failed: ${error}`);
+      return;
+    }
+    const cur = this.get(slug, hid).participants.find((x) => x.handle === handle);
+    this.updateP(slug, hid, handle, { status: settled(cur) ? cur!.status : "idle", idleAt: nowIso() });
   }
 
   /**

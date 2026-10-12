@@ -7,6 +7,8 @@ export function codexArgs(options: {
   writableRoots?: string[];
   /** Extra developer instructions for this turn (Codex has no --append-system-prompt). */
   instructions?: string;
+  /** The ckanban MCP server's command line: the board's tools, with the run's identity env passed through. */
+  mcp?: string[];
 }) {
   const args = ["exec"];
   if (options.sessionId) args.push("resume", options.sessionId);
@@ -30,12 +32,25 @@ export function codexArgs(options: {
   }
   // JSON string syntax is valid TOML for a basic string.
   if (options.instructions) args.push("-c", `developer_instructions=${JSON.stringify(options.instructions)}`);
+  if (options.mcp) {
+    const [command, ...rest] = options.mcp;
+    args.push(
+      "-c", `mcp_servers.ckanban.command=${JSON.stringify(command)}`,
+      "-c", `mcp_servers.ckanban.args=${JSON.stringify(rest)}`,
+      "-c", `mcp_servers.ckanban.env_vars=${JSON.stringify(MCP_ENV)}`,
+      // Runs never prompt (approval_policy never), so Codex would refuse every board tool that changes something.
+      "-c", 'mcp_servers.ckanban.default_tools_approval_mode="approve"'
+    );
+  }
   if (options.model) args.push("--model", options.model);
   if (options.effort)
     args.push("-c", `model_reasoning_effort="${options.effort}"`);
   args.push("-");
   return args;
 }
+/** What tells the ckanban MCP server which run (and huddle agent) is calling. Codex doesn't pass env to MCP servers by itself. */
+const MCP_ENV = ["CKANBAN_TICKET", "CKANBAN_OUTPUT_DIR", "CKANBAN_HUDDLE_AGENT", "CKANBAN_HOME", "CKANBAN_PORT"];
+
 /** Codex reports API errors as a JSON string inside the message; show just the human part. */
 export function readableError(message: string): string {
   let text = message;
@@ -127,6 +142,20 @@ export function startCodexRun(options: {
                 ],
               },
             });
+          if (event.type === "item.started" && event.item?.type === "mcp_tool_call")
+            emit({
+              type: "assistant",
+              message: {
+                content: [
+                  {
+                    type: "tool_use",
+                    id: event.item.id,
+                    name: `mcp__${event.item.server}__${event.item.tool}`,
+                    input: event.item.arguments ?? {},
+                  },
+                ],
+              },
+            });
           if (event.type === "item.completed") {
             const item = event.item;
             if (item?.type === "agent_message") {
@@ -148,6 +177,20 @@ export function startCodexRun(options: {
                       tool_use_id: item.id,
                       content: item.aggregated_output ?? "",
                       is_error: item.exit_code !== 0,
+                    },
+                  ],
+                },
+              });
+            else if (item?.type === "mcp_tool_call")
+              emit({
+                type: "user",
+                message: {
+                  content: [
+                    {
+                      type: "tool_result",
+                      tool_use_id: item.id,
+                      content: item.result?.content?.map((c: any) => c.text ?? "").join("\n") ?? item.error?.message ?? "",
+                      is_error: item.status === "failed",
                     },
                   ],
                 },

@@ -625,6 +625,8 @@ export interface RosterEntry {
   canEdit?: boolean;
   handle?: string;
   prompt?: string;
+  /** Run it with Codex instead of Claude. */
+  agent?: "claude" | "codex";
 }
 
 export type HuddleMode = "tagged" | "monitor";
@@ -636,6 +638,8 @@ export interface HuddleParticipant {
   preset: string | null;
   focus?: string;
   model: string | null;
+  /** Codex agents only (default claude). */
+  agent?: "claude" | "codex";
   mode: HuddleMode;
   lead: boolean;
   canEdit: boolean;

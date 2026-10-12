@@ -5,6 +5,21 @@ import { Select } from "./Select";
 import { applyTemplate, DEFAULT_MAX, draftError, draftSize, dollars, handleBase, rosterDraft, rowHandle, rowKey as key, type Draft } from "./huddleText";
 
 const MODELS = ["opus", "sonnet", "haiku"];
+/** Model menu values for a Codex agent: "codex:" (its default model) or "codex:<model>". */
+const CODEX = "codex:";
+
+/** The Codex models to offer (empty while loading or without Codex). */
+function useCodexModels() {
+  const [models, setModels] = useState<{ value: string; displayName: string }[]>([]);
+  useEffect(() => {
+    let live = true;
+    api.codexModels().then((m) => live && setModels(m), () => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+  return models;
+}
 const MAX_COUNT = 8;
 
 export type RosterRow = RosterEntry & { key: string };
@@ -111,6 +126,7 @@ export function RosterEditor({ presets, draft, setDraft, tickets, hostId, max = 
     setDraft({ ...draft, rows: [...draft.rows, row] });
   };
   const invitable = tickets.filter((t) => t.id !== hostId && !draft.invites.includes(t.id));
+  const codexModels = useCodexModels();
   return (
     <div className="roster">
       <table className="roster-table">
@@ -163,10 +179,12 @@ export function RosterEditor({ presets, draft, setDraft, tickets, hostId, max = 
                     onChange={(v) => setRow(r.key, { mode: v })} />
                 </td>
                 <td>
-                  <Select ariaLabel="Model" className="roster-select" value={r.model ?? ""}
-                    onChange={(v) => setRow(r.key, { model: v || null })}
+                  <Select ariaLabel="Model" className="roster-select" value={r.agent === "codex" ? `${CODEX}${r.model ?? ""}` : r.model ?? ""}
+                    onChange={(v) => setRow(r.key, v.startsWith(CODEX) ? { agent: "codex", model: v.slice(CODEX.length) || null } : { agent: undefined, model: v || null })}
                     options={[{ value: "", label: p?.model ?? "default" }, ...MODELS.filter((m) => m !== p?.model).map((m) => ({ value: m, label: m })),
-                      ...(r.model && !MODELS.includes(r.model) ? [{ value: r.model, label: r.model }] : [])]} />
+                      ...(r.agent !== "codex" && r.model && !MODELS.includes(r.model) ? [{ value: r.model, label: r.model }] : []),
+                      { value: CODEX, label: "Codex", hint: "default model" },
+                      ...codexModels.map((m) => ({ value: `${CODEX}${m.value}`, label: `Codex ${m.displayName}`, hint: m.value }))]} />
                 </td>
                 <td>
                   <input className="roster-focus" value={r.focus ?? ""} placeholder="What to look at" disabled={disabled} aria-label="Focus"

@@ -643,7 +643,8 @@ const ROSTER_ENTRY = {
     role: { type: "string", description: "Free-text role when no preset fits, e.g. \"Accessibility tester\" (give its prompt too). With a preset: overrides its label." },
     count: { type: "integer", minimum: 1, maximum: 8, description: "How many of this role (handles get -1, -2, ...). Default 1." },
     focus: { type: "string", description: "What exactly this participant should look at." },
-    model: { type: "string", description: "Model, e.g. sonnet. Default: the board's." },
+    agent: { type: "string", enum: ["claude", "codex"], description: "Who runs it: claude (default) or codex, for a second opinion from another model. Only when the user asks for Codex." },
+    model: { type: "string", description: "Model, e.g. sonnet (with agent codex: a Codex model id). Default: the board's." },
     mode: { type: "string", enum: ["tagged", "monitor"], description: "tagged: sleeps until @mentioned. monitor: gets every new message. Default: the preset's; monitor when this entry sets lead true (leads watch every message and wake on any tag)." },
     workspace: {
       type: "string", enum: ["shared", "own"],

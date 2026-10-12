@@ -18,7 +18,10 @@ export const SERVER_NAME = "ckanban";
  * Inline `--mcp-config` JSON with the board's MCP server (`ckanban mcp`), so a session has the board tools without
  * registering ckanban with Claude Code first. Claude Code lets it replace a user-scope `ckanban` of the same name.
  */
-export function mcpConfig(serverArgv: string[] = [...helperArgv(), "mcp"]): string {
+/** The command line that starts this ckanban's MCP server. */
+export const mcpArgv = () => [...helperArgv(), "mcp"];
+
+export function mcpConfig(serverArgv: string[] = mcpArgv()): string {
   const [command, ...args] = serverArgv;
   return JSON.stringify({ mcpServers: { [SERVER_NAME]: { command, args } } });
 }
@@ -161,7 +164,7 @@ export class AgentRegistry {
     this.codexBin = opts.codexBin ?? resolveCodexBin();
     this.claudeConfig = opts.claudeConfig ?? join(process.env.CLAUDE_CONFIG_DIR ?? homedir(), ".claude.json");
     this.codexConfig = opts.codexConfig ?? join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "config.toml");
-    this.serverArgv = opts.serverArgv ?? [...helperArgv(), "mcp"];
+    this.serverArgv = opts.serverArgv ?? mcpArgv();
   }
 
   private claudeEntry(): string[] | null {

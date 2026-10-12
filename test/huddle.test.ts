@@ -19,6 +19,7 @@ import type { Huddle, Profile, Ticket } from "../src/server/types";
 import { makeRepo, tempDir } from "./helpers";
 
 const FAKE = join(import.meta.dir, "fixtures", "fake-claude.ts");
+const FAKE_CODEX = join(import.meta.dir, "fixtures", "fake-codex.ts");
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const p = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
@@ -43,7 +44,7 @@ async function setup(idleMs = 300, maxParallel = 3) {
   events = [];
   bus.on((e) => events.push(e));
   board = new Board(store, bus, { claudeBin: FAKE, isSessionLive: async () => false });
-  huddles = new Huddles(store, board, bus, { claudeBin: FAKE, idleMs });
+  huddles = new Huddles(store, board, bus, { claudeBin: FAKE, codexBin: FAKE_CODEX, idleMs });
   server = createServer({ store, bus, board, huddles, port: 0, webDir: tempDir("ck-web-") });
   client = new BoardClient(server.port);
   const p: Profile = { name: "P", slug: "p", path: await makeRepo(), baseBranch: "main", maxParallel, model: null, createdAt: new Date().toISOString() };
@@ -118,6 +119,7 @@ test("parseMentions and roster checks", () => {
   expect(rosterError([{ preset: "qa", count: 3 }, { preset: "reviewer" }])).toBeNull();
   const names = BUILTIN_PRESETS.map((p) => p.name);
   expect(rosterError([{ preset: "nope" }], 8, names)).toContain("unknown preset");
+  expect(rosterError([{ preset: "qa", agent: "gpt" }])).toContain("agent must be claude or codex");
   // Without the board's names only the shape is checked (the daemon checks names).
   expect(rosterError([{ preset: "nope" }])).toBeNull();
   expect(rosterError([{ preset: "main" }], 8, names)).toContain("coordinator");
@@ -155,6 +157,35 @@ test("creating a huddle: @you and @main join, agents start on their job with sta
   const res = await fetch(`${client.url}/api/profiles/p/huddles/${h.id}`);
   expect(JSON.stringify(await res.json())).not.toContain(participant(h, "qa-1").token!);
 }, 20000);
+
+test("a Codex teammate runs on Codex with the board's tools, resumes its thread when woken and isn't charged", async () => {
+  const log = join(tempDir("ck-codex-"), "codex.jsonl");
+  process.env.FAKE_CODEX_LOG = log;
+  try {
+    const t = await host();
+    const h = huddles.create("p", t.id, [{ preset: "reviewer", agent: "codex" }, { preset: "qa" }]);
+    await idle();
+    const runs = () => readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(runs()).toHaveLength(1);
+    const args = runs()[0].args.join(" ");
+    expect(args).toContain('sandbox_mode="read-only"');
+    expect(args).toContain('mcp_servers.ckanban.env_vars=["CKANBAN_TICKET","CKANBAN_OUTPUT_DIR","CKANBAN_HUDDLE_AGENT","CKANBAN_HOME","CKANBAN_PORT"]');
+    expect(args).toContain("developer_instructions=");
+    expect(heardBy("reviewer")).toEqual([]);
+    expect(heardBy("qa").length).toBe(1);
+    const p = participant(h, "reviewer");
+    expect(p).toMatchObject({ agent: "codex", model: null, status: "idle", sessionId: "12345678-1234-1234-1234-123456789abc" });
+    expect(p.costUsd ?? 0).toBe(0);
+
+    huddles.post("p", h.id, you(h), "@reviewer please check auth.ts");
+    await idle();
+    expect(runs()).toHaveLength(2);
+    expect(runs()[1].args.slice(0, 3)).toEqual(["exec", "resume", "12345678-1234-1234-1234-123456789abc"]);
+    expect(runs()[1].prompt).toContain("@you: @reviewer please check auth.ts");
+  } finally {
+    delete process.env.FAKE_CODEX_LOG;
+  }
+});
 
 test("routing: tagged sleeps, a mention wakes it, monitors get everything, the sender gets nothing, @all wakes everyone", async () => {
   const t = await host();

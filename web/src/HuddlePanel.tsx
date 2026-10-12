@@ -974,11 +974,13 @@ function Roster({ slug, huddle: h, onError, viewing, onView }: {
                 {contextText(p.contextTokens)}
               </span>
             )}
-            <span className="hd-p-cost" title={human ? undefined : `What @${p.handle} spent in this huddle${p.liveCostUsd
+            {p.agent === "codex" ? (
+              <span className="hd-p-cost" title={`@${p.handle} runs on Codex. Codex doesn't report a cost, so it isn't counted in the budget.`}>Codex</span>
+            ) : <span className="hd-p-cost" title={human ? undefined : `What @${p.handle} spent in this huddle${p.liveCostUsd
               ? `, with ≈${money(p.liveCostUsd)} for the turn it is in now. That part is a live estimate: every step re-reads the whole conversation, so it climbs while @${p.handle} works and settles when the turn ends`
               : ""}`}>
               {human ? "" : money((p.costUsd ?? 0) + (p.liveCostUsd ?? 0))}
-            </span>
+            </span>}
           </div>
         );
       })}

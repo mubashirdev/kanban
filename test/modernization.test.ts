@@ -296,6 +296,7 @@ test("push covers new tickets and planning questions, avoids old events, busy ru
 
 test("Codex runner maps JSON events, preserves read-only planning and reports failure", async () => {
   expect(codexArgs({ refine: true })).toContain('sandbox_mode="read-only"');
+  expect(codexArgs({ refine: true, mcp: ["/bin/ck", "mcp"] })).toEqual(expect.arrayContaining(['mcp_servers.ckanban.command="/bin/ck"', 'mcp_servers.ckanban.args=["mcp"]', 'mcp_servers.ckanban.default_tools_approval_mode="approve"']));
   expect(
     codexArgs({ refine: false, sessionId: "thread", effort: "high" })
   ).toContain("resume");

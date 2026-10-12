@@ -28,7 +28,7 @@ import { DraftTracker } from "./draft";
 import { buildArgs, DEFAULT_STALL_MINUTES, describeAsk, permissionAnswer, startRun, type RunHandle } from "./runner";
 import { RETRY_DELAY_MS, RETRY_TEXT, transientError } from "./retry";
 import { commandText, rememberInit, useBundledFile } from "./slash";
-import { mcpConfig, resolveCodexBin } from "./agents";
+import { mcpArgv, mcpConfig, resolveCodexBin } from "./agents";
 import type { OwnedSession } from "./shell";
 import type { Store } from "./store";
 import { autoHuddlesOn, runCapFor, workspaceOf, type Interrupted, type LimitHit, type PermissionAsk, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode } from "./types";
@@ -790,7 +790,7 @@ export class Board {
       bin: codex ? this.opts.codexBin ?? resolveCodexBin() : this.opts.claudeBin,
       cwd: session.dir,
       args: codex
-        ? codexArgs({ sessionId: t.codexSessionId, refine, model: t.codexModel ?? this.store.config().codexModel, effort: t.codexEffort ?? this.store.config().codexEffort, writableRoots, instructions: systemPrompt })
+        ? codexArgs({ sessionId: t.codexSessionId, refine, model: t.codexModel ?? this.store.config().codexModel, effort: t.codexEffort ?? this.store.config().codexEffort, writableRoots, instructions: systemPrompt, mcp: mcpArgv() })
         : buildArgs(session.sessionId, session.existed, (t.model === "default" ? null : t.model) ?? profile.model ?? this.store.config().claudeModel, refine ? "plan" : "bypassPermissions", mcpConfig(), systemPrompt, t.effort ?? this.store.config().claudeEffort, t.outputStyle, forkFrom, cap),
       input: prompt,
       planning: refine,

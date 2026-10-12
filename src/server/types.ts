@@ -452,7 +452,9 @@ export interface HuddleParticipant {
   branch?: string | null;
   /** Read-only snapshot: the host branch and the commit it shows (see huddle.ts snapshot()). */
   snapshot?: { branch: string | null; sha: string } | null;
-  /** Its own Claude session (agents only; a ticket-main uses its ticket's session). */
+  /** Which CLI runs this agent (default claude). Codex reports no cost, so its runs don't count toward the budget. */
+  agent?: "claude" | "codex";
+  /** Its own session (agents only; a ticket-main uses its ticket's session): Claude's session id, or Codex's thread id. */
   sessionId: string | null;
   sessionStarted?: boolean;
   status: HuddleParticipantStatus;

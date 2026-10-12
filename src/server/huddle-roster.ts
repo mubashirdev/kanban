@@ -40,6 +40,8 @@ export interface RosterEntry {
   handle?: string;
   /** Extra instructions on top of the preset's. */
   prompt?: string;
+  /** Run it with Codex instead of Claude (model is then a Codex model). */
+  agent?: "claude" | "codex";
 }
 
 const isText = (v: unknown): v is string => typeof v === "string" && !!v.trim();
@@ -64,6 +66,7 @@ export function rosterEntryError(e: any, at = "", presets?: string[]): string | 
   if (e.count !== undefined && (!Number.isInteger(e.count) || e.count < 1 || e.count > MAX_COUNT)) return `${at}count must be a whole number from 1 to ${MAX_COUNT}`;
   if (e.mode !== undefined && e.mode !== "tagged" && e.mode !== "monitor") return `${at}mode must be tagged or monitor`;
   if (e.workspace !== undefined && e.workspace !== "shared" && e.workspace !== "own") return `${at}workspace must be shared or own`;
+  if (e.agent !== undefined && e.agent !== "claude" && e.agent !== "codex") return `${at}agent must be claude or codex`;
   for (const k of ["focus", "model", "handle", "prompt"]) {
     if (e[k] !== undefined && e[k] !== null && typeof e[k] !== "string") return `${at}${k} must be text`;
   }
