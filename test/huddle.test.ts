@@ -6,7 +6,7 @@ import { callTool, type ToolContext } from "../src/mcp-server";
 import { Board } from "../src/server/board";
 import { Bus, type BusEvent } from "../src/server/events";
 import { createServer } from "../src/server/http";
-import { fallbackSummary, findingTitle, HUDDLE_IDLE_MS, Huddles, LEGACY_SUMMARY_FILE, POST_MAX, summaryFile, teammateSpend, turnCost } from "../src/server/huddle";
+import { fallbackSummary, findingTitle, HUDDLE_IDLE_MS, Huddles, LEGACY_SUMMARY_FILE, POST_MAX, summaryFile, teammateSpend, turnCost, huddleCost } from "../src/server/huddle";
 import { BUILTIN_PRESETS, deletePreset, mergePresets, presetSourceText, savePreset } from "../src/server/huddle-presets";
 import { huddleUsage } from "../src/server/huddle-usage";
 import { cleanLessons, LESSON_MAX, noteRole, parseNotes, serializeNotes } from "../src/server/huddle-notes";
@@ -859,13 +859,14 @@ test("budget brake: @main's huddle replies count, the leads are warned at 80%, e
   expect(heardBy(store.getTicket("p", t.id)!.sessionId!).join("\n")).toContain("(83%)");
   expect(log.at(-1)).toContain("budget and stopped");
   expect(messages(h).at(-1)!.mentions).toEqual(["you"]);
-  // Spent: plain Resume is refused, Resume with more budget works.
+  // Spent: plain Resume is refused, Resume with more budget works: $10 more on top of what it already spent.
   expect(() => huddles.resume("p", h.id)).toThrow("add budget");
+  const spentBefore = huddleCost(store.getHuddle("p", h.id)!);
   const res = await fetch(`${client.url}/api/profiles/p/huddles/${h.id}/resume`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ addBudgetUsd: 10 }) });
   expect(res.status).toBe(200);
   const resumed = store.getHuddle("p", h.id)!;
   expect(resumed).toMatchObject({ status: "live", stopReason: null });
-  expect(resumed.maxCostUsd).toBeCloseTo(10.012);
+  expect(resumed.maxCostUsd).toBeCloseTo(spentBefore + 10);
   expect(messages(h).at(-1)!.text).toContain("$10.00 more budget");
 }, 30000);
 

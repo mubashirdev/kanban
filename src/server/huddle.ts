@@ -1908,8 +1908,9 @@ export class Huddles {
     const h = this.get(slug, hid);
     this.assertOpen(h);
     if (!Number.isFinite(addBudgetUsd) || addBudgetUsd < 0) throw new HuddleError(400, "addBudgetUsd must be a positive amount");
-    const max = (h.maxCostUsd ?? DEFAULT_MAX_COST_USD) + addBudgetUsd;
     const spent = huddleCost(h);
+    // "+$10" means $10 more to spend from here: a huddle that went past its budget gets it on top of what it spent.
+    const max = (addBudgetUsd ? Math.max(h.maxCostUsd ?? DEFAULT_MAX_COST_USD, spent) : h.maxCostUsd ?? DEFAULT_MAX_COST_USD) + addBudgetUsd;
     if (spent >= max) throw new HuddleError(409, `the huddle spent ${money(spent)} of its ${money(max)} budget: add budget to resume it`);
     this.update(slug, hid, (x) => {
       x.status = "live";
