@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { api, type HuddleNote, type HuddleNotes, type HuddlePreset, type HuddleTemplate, type Level, type TeamUsage } from "./api";
 import { avatarColor, avatarLetter } from "./avatar";
 import { Select } from "./Select";
-import { TeamTemplates } from "./HuddleTemplates";
+import { TeamTemplates, templateEditing, type TemplateEditing } from "./HuddleTemplates";
 import { fullTime, timeAgo } from "./time";
 import { plural, resetTitle, scopeChip, usageText } from "./teamText";
 import type { TeammateEditRequest } from "./teammateText";
 import { costText } from "./usage";
 import { usePhone } from "./usePhone";
 import { ChevronLeftIcon } from "./icons";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 const MODELS = ["opus", "sonnet", "haiku"];
 const ALL_ROLES = "_all";
@@ -18,6 +19,9 @@ const VIEW_KEY = "ckanban.team.view";
 type View = "teammates" | "templates" | "notes";
 type Draft = Pick<HuddlePreset, "name" | "role" | "prompt" | "model" | "mode" | "lead" | "canEdit" | "workspace">;
 const EMPTY: Draft = { name: "", role: "", prompt: "", model: null, mode: "tagged", lead: false, canEdit: false, workspace: "shared" };
+type Editing = { draft: Draft; isNew: boolean; scope: Level; card?: TeammateEditRequest["card"] };
+/** A new teammate's draft has no handle yet. */
+const draftKey = (e: Editing) => (e.isNew ? "" : e.draft.name);
 
 /** What Start huddle opens: a roster with one teammate, or a template. */
 export type HuddleSeed = { preset: string } | { template: string };
@@ -81,9 +85,12 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
   const [notes, setNotes] = useState<{ notes: HuddleNotes; cap: number } | null>(null);
   const [usage, setUsage] = useState<{ teammates: UsageMap; templates: UsageMap } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [editing, setEditing] = useState<{ draft: Draft; isNew: boolean; scope: Level; card?: TeammateEditRequest["card"] } | null>(null);
-  /** Templates view: open the new-template editor; n changes per request. */
-  const [newTemplate, setNewTemplate] = useState(0);
+  const [editing, setEditing] = useState<Editing | null>(null);
+  /** Unsaved teammate edits: Back or picking another teammate keeps them until Save or Cancel. */
+  const [drafts, setDrafts] = useState<Record<string, Editing>>({});
+  const [confirmDelete, setConfirmDelete] = useState<HuddlePreset | null>(null);
+  /** The open template editor, kept here so its draft survives switching views. */
+  const [tplEditing, setTplEditing] = useState<TemplateEditing | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const fail = (e: unknown) => setErr((e as Error).message);
   // Phones show the list or one teammate, not both: a tapped (or requested) teammate opens full width.
@@ -108,7 +115,17 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
   const newTeammate = () => {
     setErr(null);
     setView("teammates");
-    setEditing({ draft: { ...EMPTY }, isNew: true, scope: "global" });
+    setEditing(drafts[""] ?? { draft: { ...EMPTY }, isNew: true, scope: "global" });
+  };
+  const keepDraft = (e: Editing) => {
+    setEditing(e);
+    setDrafts((d) => ({ ...d, [draftKey(e)]: e }));
+  };
+  const dropDraft = (e: Editing) => setDrafts(({ [draftKey(e)]: _, ...rest }) => rest);
+  const openTeammate = (name: string) => {
+    setSelected(name);
+    setEditing(drafts[name] ?? null);
+    setErr(null);
   };
   useEffect(() => {
     if (!request) return;
@@ -116,7 +133,11 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
     if (request.action === "new") return newTeammate();
     setView("teammates");
     setFilter("");
-    if (request.action === "edit") return setEditing({ draft: { ...request.draft }, isNew: request.isNew, scope: request.scope, card: request.card });
+    if (request.action === "edit") {
+      const e = { draft: { ...request.draft }, isNew: request.isNew, scope: request.scope, card: request.card };
+      dropDraft(e);
+      return setEditing(e);
+    }
     setEditing(null);
     setSelected(request.name);
     loadPresets();
@@ -148,7 +169,7 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
     <div className="team">
       <div className="team-bar">
         <div className="segmented" role="tablist" aria-label="Team">
-          {([["teammates", "Teammates", presets?.length], ["templates", "Templates", templates?.length], ["notes", "Notes for all", noteCount(ALL_ROLES)]] as const).map(([id, label, n]) => (
+          {([["teammates", "Teammates", presets?.length], ["templates", "Templates", templates?.length], ["notes", phone ? "Notes" : "Notes for all", noteCount(ALL_ROLES)]] as const).map(([id, label, n]) => (
             <button key={id} role="tab" aria-selected={view === id} className={view === id ? "on" : undefined} onClick={() => { setView(id); setErr(null); }}>
               {label}{n !== undefined ? ` · ${n}` : ""}
             </button>
@@ -161,7 +182,7 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
         <span className="spacer" />
         {err && <span className="team-err" role="alert" title={err}>{err}</span>}
         {view === "teammates" && <button className="btn small ghost" onClick={newTeammate}>+ New teammate</button>}
-        {view === "templates" && <button className="btn small ghost" onClick={() => setNewTemplate(Date.now())}>+ New template</button>}
+        {view === "templates" && !tplEditing && <button className="btn small ghost" onClick={() => { setErr(null); setTplEditing(templateEditing(null)); }}>+ New template</button>}
       </div>
 
       {view === "teammates" && (
@@ -180,13 +201,14 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
                   const on = (phone ? selected === p.name : cur?.name === p.name) && !editing?.isNew;
                   return (
                     <div key={p.name} role="option" aria-selected={on} tabIndex={0} className={`tm-row${on ? " sel" : ""}`}
-                      onClick={() => { setSelected(p.name); setEditing(null); setErr(null); }}
-                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelected(p.name); setEditing(null); } }}>
+                      onClick={() => openTeammate(p.name)}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openTeammate(p.name); } }}>
                       <TeammateAvatar name={p.name} />
                       <span className="tm-names">
                         <span className="tm-name mono">{p.name}</span>
                         <span className="tm-role">{p.role}</span>
                         {chip && <span className={`tm-chip ${chip.tone}`}>{chip.text}</span>}
+                        {drafts[p.name] && <span className="tm-chip warn">unsaved</span>}
                       </span>
                       <span className="tm-stats" title={u?.lastUsed ? `Last used ${fullTime(u.lastUsed)} · counted on every board` : "Counted on every board"}>
                         {usage ? usageText(u) : ""}{n ? ` · ${plural(n, "note")}` : ""}
@@ -202,8 +224,10 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
             {editing ? (
               <TeammateEditor key={editing.isNew ? "new" : editing.draft.name} slug={slug} boardName={boardName} {...editing}
                 current={presets?.find((p) => p.name === editing.draft.name) ?? null}
-                onCancel={() => setEditing(null)}
+                onChange={(draft, scope) => keepDraft({ ...editing, draft, scope })}
+                onCancel={() => { dropDraft(editing); setEditing(null); }}
                 onSaved={(p, scope) => {
+                  dropDraft(editing);
                   // Saved from a proposal's Edit first: the chat card says so.
                   if (editing.card) api.answerTeammateCard(slug, editing.card.ticketId, editing.card.uuid, { state: "saved", name: p.name, scope }).catch(fail);
                   setEditing(null);
@@ -212,15 +236,8 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
                 }} />
             ) : cur ? (
               <TeammateDetail key={cur.name} slug={slug} p={cur} usage={usage?.teammates[cur.name]} notes={notes} startHint={startHint}
-                onEdit={() => { setErr(null); setEditing({ draft: draftOf(cur), isNew: false, scope: cur.source === "board" ? "board" : "global" }); }}
-                onDelete={async () => {
-                  setErr(null);
-                  try {
-                    setPresets((await api.deleteHuddlePreset(slug, cur.name, cur.source === "global" ? "global" : "board")).presets);
-                  } catch (e) {
-                    fail(e);
-                  }
-                }}
+                onEdit={() => { setErr(null); setEditing(drafts[cur.name] ?? { draft: draftOf(cur), isNew: false, scope: cur.source === "board" ? "board" : "global" }); }}
+                onDelete={() => { setErr(null); setConfirmDelete(cur); }}
                 onStart={() => onStartHuddle({ preset: cur.name })}
                 onSaveNotes={(scope, list) => saveNotes(cur.name, scope, list)}
                 onOpenHuddle={onOpenHuddle} />
@@ -231,10 +248,23 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
         </div>
       )}
 
+      {confirmDelete && (
+        <ConfirmDialog title={`${confirmDelete.base ? "Reset" : "Delete"} @${confirmDelete.name}?`} confirmLabel={confirmDelete.base ? "Reset" : "Delete"}
+          busyLabel={confirmDelete.base ? "Resetting…" : "Deleting…"} onCancel={() => setConfirmDelete(null)}
+          onConfirm={async () => {
+            const p = confirmDelete;
+            setPresets((await api.deleteHuddlePreset(slug, p.name, p.source === "global" ? "global" : "board")).presets);
+            setConfirmDelete(null);
+          }}>
+          {confirmDelete.base ? `${resetTitle(confirmDelete)}: your changes to @${confirmDelete.name} are removed.`
+            : `@${confirmDelete.name} is removed from ${confirmDelete.source === "board" ? "this board" : "all boards"}. This can't be undone.`}
+        </ConfirmDialog>
+      )}
+
       {view === "templates" && (
         <div className="team-body single">
           <TeamTemplates slug={slug} templates={shownTemplates} loading={templates === null} filtered={!!q} presets={presets} usage={usage?.templates ?? null}
-            startHint={startHint} newRequest={newTemplate} onChanged={loadTemplates} onError={setErr}
+            startHint={startHint} editing={tplEditing} setEditing={setTplEditing} onChanged={loadTemplates} onError={setErr}
             onStart={(name) => onStartHuddle({ template: name })} />
         </div>
       )}
@@ -331,7 +361,7 @@ function TeammateDetail({ slug, p, usage, notes, startHint, onEdit, onDelete, on
 }
 
 /** Add a teammate or change one; saved for all boards (default) or this board only. */
-function TeammateEditor({ slug, boardName, draft: initial, isNew, scope: initialScope, current, onCancel, onSaved }: {
+function TeammateEditor({ slug, boardName, draft: initial, isNew, scope: initialScope, current, onChange, onCancel, onSaved }: {
   slug: string;
   boardName: string;
   draft: Draft;
@@ -339,6 +369,8 @@ function TeammateEditor({ slug, boardName, draft: initial, isNew, scope: initial
   scope: Level;
   /** The teammate as it is now (null: a new one). */
   current: HuddlePreset | null;
+  /** Every edit, so the draft outlives this editor (Back, switching views). */
+  onChange: (draft: Draft, scope: Level) => void;
   onCancel: () => void;
   onSaved: (p: HuddlePreset, scope: Level) => void;
 }) {
@@ -346,7 +378,15 @@ function TeammateEditor({ slug, boardName, draft: initial, isNew, scope: initial
   const [scope, setScope] = useState<Level>(initialScope);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const set = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }));
+  const set = (patch: Partial<Draft>) => {
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    onChange(next, scope);
+  };
+  const pickScope = (v: Level) => {
+    setScope(v);
+    onChange(draft, v);
+  };
   const main = draft.name === MAIN;
   const save = async () => {
     setBusy(true);
@@ -418,7 +458,7 @@ function TeammateEditor({ slug, boardName, draft: initial, isNew, scope: initial
         <span className="small">Use on</span>
         <div className="segmented" role="radiogroup" aria-label="Use on">
           {([["global", "All boards"], ["board", "This board"]] as const).map(([v, label]) => (
-            <button key={v} type="button" role="radio" aria-checked={scope === v} className={scope === v ? "on" : undefined} onClick={() => setScope(v)}>{label}</button>
+            <button key={v} type="button" role="radio" aria-checked={scope === v} className={scope === v ? "on" : undefined} onClick={() => pickScope(v)}>{label}</button>
           ))}
         </div>
         <span className="muted small">{scopeNote}</span>

@@ -28,8 +28,6 @@ const KNOWN: RegExp[] = [
   /^ticket (huddle|changes|outputs): cut off at the edge "(Session and ticket actio|Show details|Usage)"/,
   // t_20261012_bqag huddle badge on cards
   /^(board.*|new ticket dialog|header menu|daily usage sheet|search dialog|notification sheet|long-press card sheet): tiny target \S+ "🗣 Huddle /,
-  // t_20261012_sy3i Team tab
-  /^(team list|teammate detail|teammate editor|team templates|template editor): cut off at the edge "(Team|Hide terminal and files )"/,
   // t_20261012_ll9q Huddle tab
   /^ticket huddle: tiny target \S+ "(Edit|@main mode|@reviewer mode|Chat|People2|Findings1|Huddle actions|)" /,
   /^ticket huddle: tiny text \S+ "[MRY]"/,

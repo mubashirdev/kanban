@@ -1,8 +1,9 @@
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { useState, type Dispatch, type KeyboardEvent, type SetStateAction } from "react";
 import { api, type HuddlePreset, type HuddleTemplate, type Level, type TeamUsage } from "./api";
 import { RosterEditor, rosterDraft, templateRules, type RosterDraft } from "./HuddleRoster";
 import { DEFAULT_BUDGET } from "./huddleText";
 import { resetTitle, scopeChip, usageText } from "./teamText";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 type Draft = { name: string; label: string; description: string; rounds: string; budget: string; report: string; roster: RosterDraft };
 
@@ -17,11 +18,17 @@ const toDraft = (t: HuddleTemplate | null): Draft => ({
   roster: rosterDraft(t?.roster ?? [{ preset: "reviewer" }]),
 });
 
+export type TemplateEditing = { draft: Draft; isNew: boolean; scope: Level; current: HuddleTemplate | null };
+/** Start editing a template (null: a new one). */
+export const templateEditing = (t: HuddleTemplate | null): TemplateEditing =>
+  ({ draft: toDraft(t), isNew: !t, scope: t?.source === "board" ? "board" : "global", current: t });
+
 /**
  * The Team tab's Templates view: whole huddles to start from (a roster plus rounds, budget and report format), each with
  * Start huddle. Saved for all boards (default) or this board only, like teammates. Saves right away.
+ * The Team tab holds the open editor, so a draft survives switching to Teammates and back.
  */
-export function TeamTemplates({ slug, templates, loading, filtered, presets, usage, startHint, newRequest, onChanged, onError, onStart }: {
+export function TeamTemplates({ slug, templates, loading, filtered, presets, usage, startHint, editing, setEditing, onChanged, onError, onStart }: {
   slug: string;
   /** The templates to list (filtered). */
   templates: HuddleTemplate[];
@@ -30,22 +37,19 @@ export function TeamTemplates({ slug, templates, loading, filtered, presets, usa
   presets: HuddlePreset[] | null;
   usage: Record<string, TeamUsage> | null;
   startHint: string;
-  /** Changes when "+ New template" is pressed. */
-  newRequest: number;
+  editing: TemplateEditing | null;
+  setEditing: Dispatch<SetStateAction<TemplateEditing | null>>;
   onChanged: () => void;
   onError: (m: string | null) => void;
   onStart: (name: string) => void;
 }) {
-  const [editing, setEditing] = useState<{ draft: Draft; isNew: boolean; scope: Level; current: HuddleTemplate | null } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState<HuddleTemplate | null>(null);
 
-  const edit = (t: HuddleTemplate | null) => {
+  const edit = (t: HuddleTemplate) => {
     onError(null);
-    setEditing({ draft: toDraft(t), isNew: !t, scope: t?.source === "board" ? "board" : "global", current: t });
+    setEditing(templateEditing(t));
   };
-  useEffect(() => {
-    if (newRequest) edit(null);
-  }, [newRequest]);
 
   const save = async () => {
     if (!editing) return;
@@ -69,16 +73,13 @@ export function TeamTemplates({ slug, templates, loading, filtered, presets, usa
   };
 
   const remove = async (t: HuddleTemplate) => {
-    setBusy(true);
+    await api.deleteHuddleTemplate(slug, t.name, t.source === "global" ? "global" : "board");
+    setConfirmRemove(null);
+    onChanged();
+  };
+  const askRemove = (t: HuddleTemplate) => {
     onError(null);
-    try {
-      await api.deleteHuddleTemplate(slug, t.name, t.source === "global" ? "global" : "board");
-      onChanged();
-    } catch (e) {
-      onError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    setConfirmRemove(t);
   };
 
   if (editing) {
@@ -161,13 +162,20 @@ export function TeamTemplates({ slug, templates, loading, filtered, presets, usa
             <div className="tt-actions">
               <button className="btn small primary" onClick={() => onStart(t.name)} title={startHint} disabled={busy}>Start huddle…</button>
               <button className="btn small" onClick={() => edit(t)} disabled={busy}>{changed ? "Edit" : "Copy to customise"}</button>
-              {changed && t.base && <button className="btn small ghost" onClick={() => remove(t)} disabled={busy} title={resetTitle(t)}>Reset</button>}
-              {changed && !t.base && <button className="btn small ghost danger" onClick={() => remove(t)} disabled={busy}>Delete</button>}
+              {changed && t.base && <button className="btn small ghost" onClick={() => askRemove(t)} disabled={busy} title={resetTitle(t)}>Reset</button>}
+              {changed && !t.base && <button className="btn small ghost danger" onClick={() => askRemove(t)} disabled={busy}>Delete</button>}
             </div>
           </div>
         );
       })}
       <div className="tm-hint tt-foot">Start huddle… {startHint}</div>
+      {confirmRemove && (
+        <ConfirmDialog title={`${confirmRemove.base ? "Reset" : "Delete"} ${confirmRemove.label}?`} confirmLabel={confirmRemove.base ? "Reset" : "Delete"}
+          busyLabel={confirmRemove.base ? "Resetting…" : "Deleting…"} onCancel={() => setConfirmRemove(null)} onConfirm={() => remove(confirmRemove)}>
+          {confirmRemove.base ? `${resetTitle(confirmRemove)}: your changes to this template are removed.`
+            : `The template is removed from ${confirmRemove.source === "board" ? "this board" : "all boards"}. This can't be undone.`}
+        </ConfirmDialog>
+      )}
     </div>
   );
 }

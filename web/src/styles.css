@@ -1197,6 +1197,8 @@ textarea.drop-target { border-color: var(--accent); box-shadow: 0 0 0 3px var(--
 .dock-resize:hover, .dock-resize:focus-visible { background: linear-gradient(transparent 3px, var(--accent) 3px, var(--accent) 5px, transparent 5px); outline: none; }
 .dock-head { display: grid; grid-template-columns: auto minmax(0, 1fr) 32px; align-items: center; gap: 8px; padding-right: 8px; flex: none; border-bottom: 1px solid var(--border); }
 .dock-head .tabs { border-bottom: 0; padding: 0 8px; }
+/* Touch: the Hide button is 44px wide, so its column is too. */
+@media (pointer: coarse) { .dock-head { grid-template-columns: auto minmax(0, 1fr) 44px; } }
 .dock-context { min-width: 0; display: flex; align-items: center; gap: 12px; }
 .dock-location { flex: 1; min-width: 0; overflow: hidden; }
 .dock-profile { display: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1845,8 +1847,9 @@ button.pill:hover { color: var(--text); }
   .dock { position: fixed; inset: var(--viewport-top, 0px) 0 auto; height: var(--viewport-height, 100dvh) !important; z-index: 30; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); border-top: 0; }
   .dock-resize, .dock-path { display: none; }
   .dock-head { grid-template-columns: minmax(0, 1fr) 44px; gap: 4px; padding: 8px; }
-  .dock-head .tabs { padding: 0; flex: 1 1 auto; }
-  .dock-head .tabs button { padding: 8px 10px; }
+  /* Narrow phones: the tabs scroll sideways instead of running under the Hide button. */
+  .dock-head .tabs { padding: 0; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .dock-head .tabs button { padding: 8px 10px; flex: none; white-space: nowrap; }
   .dock-head > .icon-btn { grid-column: 2; grid-row: 1; width: 44px; height: 44px; }
   .dock-context { grid-column: 1 / -1; grid-row: 2; min-height: 44px; gap: 8px; }
   .dock-profile { display: block; font-size: 12px; color: var(--muted); }
@@ -3481,6 +3484,7 @@ button.hd-mode:disabled { cursor: default; }
   .team-bar .segmented { flex: 1 1 100%; overflow-x: auto; scrollbar-width: none; }
   .team-bar .segmented button { flex: 1 0 auto; }
   .team-filter { flex: 1 1 0; width: auto; min-width: 0; }
+  .team-bar > .spacer { display: none; }
   .team-err { max-width: 100%; flex-basis: 100%; order: 9; }
   .team-body.phone-list .tm-detail, .team-body.phone-detail .tm-list { display: none; }
   .team-body.phone-list .tm-list { width: 100%; max-width: none; min-width: 0; border-right: 0; }
