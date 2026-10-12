@@ -10,6 +10,9 @@ import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, History
 import { useLayer } from "./layers";
 import { Modal } from "./Modal";
 import { ReviewPanel } from "./ReviewPanel";
+import { HuddlePanel } from "./HuddlePanel";
+import { members, useHuddle } from "./huddle";
+import type { HuddleSeed, TeamRequest } from "./Team";
 import { sessionLabel } from "./SessionPicker";
 import { timeAgo } from "./time";
 import { useNow } from "./useNow";
@@ -109,9 +112,11 @@ function SwipeRow({ actions, children }: { actions: SwipeAction[]; children: Rea
  * Chats mode: sessions as a messenger. Phones show the thread list (a thread opens full screen);
  * wide screens show the list on the left and the open chat, or a new-chat box, on the right.
  */
-export function ChatsView({ profile, sessions, tickets, openId, wide, onOpen, onClose, onOpenTicket }: {
+export function ChatsView({ profile, sessions, tickets, openId, wide, onOpen, onClose, onOpenTicket, sessionHuddle }: {
   profile: Profile; sessions: Ticket[]; tickets: Ticket[]; openId: string | null; wide: boolean;
   onOpen: (id: string) => void; onClose: () => void; onOpenTicket: (id: string) => void;
+  /** The open chat's Huddle tab requests (see SessionView). */
+  sessionHuddle?: Pick<Parameters<typeof SessionView>[0], "tabRequest" | "huddleSeed" | "onOpenTeam">;
 }) {
   useNow();
   const [query, setQuery] = useState("");
@@ -156,7 +161,7 @@ export function ChatsView({ profile, sessions, tickets, openId, wide, onOpen, on
       {wide && (
         <div className="chat-pane">
           {open ? (
-            <SessionView key={open.id} profile={profile} ticket={open} tickets={tickets} onClose={onClose} onOpenTicket={onOpenTicket} embedded />
+            <SessionView key={open.id} profile={profile} ticket={open} tickets={tickets} onClose={onClose} onOpenTicket={onOpenTicket} embedded {...sessionHuddle} />
           ) : (
             <div className="chat-pane-new">
               <h2>New chat in {profile.name}</h2>
@@ -321,14 +326,29 @@ function ResumeDialog({ profile, onClose, onResumed }: { profile: Profile; onClo
   );
 }
 
-/** One session, full screen on a phone: the chat, and the changes it made. */
-export function SessionView({ profile, ticket, tickets, onClose, onOpenTicket, embedded = false }: {
+/** One session, full screen on a phone: the chat, the changes it made, and its huddle (helper sessions working with it). */
+export function SessionView({ profile, ticket, tickets, onClose, onOpenTicket, embedded = false, tabRequest = null, huddleSeed = null, onOpenTeam }: {
   profile: Profile; ticket: Ticket; tickets: Ticket[]; onClose: () => void; onOpenTicket: (id: string) => void;
   /** Shown in the right pane of Chats on wide screens instead of as a sliding panel. */
   embedded?: boolean;
+  /** Show the Huddle tab (a huddle badge or the dock's Huddles list); `n` changes for each request. */
+  tabRequest?: { tab: "huddle"; n: number; huddleId?: string } | null;
+  /** The Team tab's Start huddle: fill this roster in on the Huddle tab; `n` changes for each request. */
+  huddleSeed?: { seed: HuddleSeed; n: number } | null;
+  onOpenTeam?: (r: TeamRequest) => void;
 }) {
   const slug = profile.slug;
-  const [tab, setTab] = useState<"chat" | "changes">("chat");
+  const [tab, setTab] = useState<"chat" | "changes" | "huddle">(tabRequest || huddleSeed ? "huddle" : "chat");
+  // The huddle round picked in the Huddle tab (null: the current one).
+  const [huddlePick, setHuddlePick] = useState<string | null>(tabRequest?.huddleId ?? null);
+  useEffect(() => {
+    if (!tabRequest) return;
+    setTab("huddle");
+    setHuddlePick(tabRequest.huddleId ?? null);
+  }, [tabRequest?.n]);
+  useEffect(() => { if (huddleSeed) setTab("huddle"); }, [huddleSeed?.n]);
+  const huddleState = useHuddle(slug, ticket.id, huddlePick);
+  const huddle = huddleState.latest;
   const [title, setTitle] = useState(ticket.title);
   const [menu, setMenu] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -371,10 +391,19 @@ export function SessionView({ profile, ticket, tickets, onClose, onOpenTicket, e
                 Chat {ticket.running && <span className="dot" />}
               </button>
               <button role="tab" aria-selected={tab === "changes"} className={tab === "changes" ? "active" : ""} onClick={() => setTab("changes")}>Changes</button>
+              <button role="tab" aria-selected={tab === "huddle"} className={tab === "huddle" ? "active" : ""} onClick={() => setTab("huddle")}>
+                Huddle{huddle && huddle.status !== "closed" && <span className={`tab-count${huddle.status === "live" ? " ok" : ""}`}>{members(huddle).length}</span>}
+                {huddle && huddle.status !== "closed" && !!huddle.forYou && <span className="for-you-pill" title="Messages that tag you">{huddle.forYou}</span>}
+                {huddle?.status === "live" && huddle.participants.some((p) => p.status === "working") && <span className="dot" />}
+              </button>
             </nav>
             {tab === "changes"
               ? <div className="panel-scroll"><ReviewPanel slug={slug} ticket={ticket} onError={onError} onOutputs={() => setTab("chat")} /></div>
-              : <Chat slug={slug} ticket={ticket} tickets={tickets} onOpenTicket={onOpenTicket} onError={onError} />}
+              : tab === "huddle"
+              ? <HuddlePanel slug={slug} ticket={ticket} tickets={tickets} state={huddleState} onError={onError} seed={huddleSeed} onSelect={setHuddlePick}
+                  onOpenOutput={() => setTab("chat")} onOpenChat={() => setTab("chat")} onOpenTicket={onOpenTicket} onOpenTeam={onOpenTeam} />
+              : <Chat slug={slug} ticket={ticket} tickets={tickets} onOpenTicket={onOpenTicket} onError={onError}
+                  huddle={huddle} onOpenHuddle={() => setTab("huddle")} onOpenTeam={onOpenTeam} />}
           </div>
         </div>
         {forking && <ForkDialog slug={slug} ticket={ticket} onClose={() => setForking(false)} onForked={onOpenTicket} />}

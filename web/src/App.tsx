@@ -350,6 +350,13 @@ export function App() {
   // The Team tab's Start huddle: the drawer's ticket (or a new one) opens on its Huddle tab with this roster filled in.
   const [huddleSeed, setHuddleSeed] = useState<{ id: string; seed: HuddleSeed; n: number } | null>(null);
 
+  // An open chat's Huddle tab requests, like the drawer's (a huddle badge, the dock's Huddles list, Team's Start huddle).
+  const sessionHuddle = {
+    tabRequest: huddleTab && huddleTab.id === openId ? { tab: "huddle" as const, n: huddleTab.n, huddleId: huddleTab.huddleId } : null,
+    huddleSeed: huddleSeed && huddleSeed.id === openId ? { seed: huddleSeed.seed, n: huddleSeed.n } : null,
+    onOpenTeam: (r: TeamRequest) => { closeTicket(); openDockOn("team", r); },
+  };
+
   const closeTicket = useCallback(() => {
     if (pushedOpen.current && pushedFrom.current === slug) history.back();
     else {
@@ -939,7 +946,7 @@ export function App() {
           </button>
         </div>
       ) : mode === "chats" ? (
-        <ChatsView profile={profile} sessions={sessions} tickets={tickets} openId={openId} wide={wideChats}
+        <ChatsView profile={profile} sessions={sessions} tickets={tickets} openId={openId} wide={wideChats} sessionHuddle={sessionHuddle}
           onOpen={(id) => openTicket(id)} onClose={closeTicket} onOpenTicket={(id) => openTicket(id)} />
       ) : (
         <>
@@ -1050,7 +1057,7 @@ export function App() {
           <PlusIcon size={26} />
         </button>
       )}
-      {open && profile && open.standalone && !wideChats && <SessionView key={open.id} profile={profile} ticket={open} tickets={tickets} onClose={closeTicket} onOpenTicket={openTicket} />}
+      {open && profile && open.standalone && !wideChats && <SessionView key={open.id} profile={profile} ticket={open} tickets={tickets} onClose={closeTicket} onOpenTicket={openTicket} {...sessionHuddle} />}
       {snippetsOpen && profile && <SnippetsDialog profile={profile} onClose={() => setSnippetsOpen(false)} />}
       {open && profile && !open.standalone && <TicketDrawer key={open.id} profile={profile} ticket={open} tickets={tickets} onOpenTicket={openTicket} onClose={closeTicket}
         nav={{ prev: prevId, next: nextId, go: stepTicket }} slideIn={!stepped.current}
