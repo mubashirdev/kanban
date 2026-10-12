@@ -25,14 +25,10 @@ const BASE = `http://localhost:${PORT}`;
 const KNOWN: RegExp[] = [
   // t_20261012_bqag huddle badge on cards
   /^(board.*|new ticket dialog|header menu|daily usage sheet|search dialog|activity sheet|report a bug|notification sheet|long-press card sheet): tiny target \S+ "🗣 Huddle /,
-  // t_20261012_ll9q Huddle tab
-  /^ticket huddle: tiny target \S+ "(Edit|@main mode|@reviewer mode|Chat|People2|Findings1|Huddle actions|)" /,
-  /^ticket huddle: tiny text \S+ "[MRY]"/,
-  /^ticket huddle: low contrast \S+ "[MY]"/,
   // No ticket yet: Changes tab controls and file letters, the "Your turn" pill next to an open ticket
   /^ticket changes: tiny target \S+ "(|Comment on line \d+|Msettings.ts|Atoggle.ts|▾src)" /,
   /^ticket changes: tiny text \S+ "[MA]"/,
-  /^ticket (huddle|changes|outputs): tiny text \S+ "Your turn"/,
+  /^ticket (huddle( composer| people| findings)?|changes|outputs): tiny text \S+ "Your turn"/,
 ];
 const home = mkdtempSync(join(tmpdir(), "ck-audit-home-"));
 const repo = mkdtempSync(join(tmpdir(), "ck-audit-repo-"));
@@ -100,7 +96,7 @@ function seedPolish(id: string) {
   const hid = "h_audit";
   mkdirSync(join(board, "huddles"), { recursive: true });
   writeFileSync(join(board, "huddles", `${hid}.json`), JSON.stringify({
-    id: hid, hostTicket: id, status: "stopped", stopReason: null, maxParticipants: 6, invited: [], seq: 4, maxCostUsd: 20, posts: 4,
+    id: hid, hostTicket: id, status: "stopped", stopReason: null, maxParticipants: 6, invited: [], seq: 5, maxCostUsd: 20, posts: 4,
     participants: [person("main", "Coordinator", "ticket-main", { ticketId: id }), person("reviewer", "Code reviewer", "agent", { preset: "reviewer" }), person("you", "You", "human")],
     findings: [{ id: "f1", text: "Settings toggle has low contrast in dark mode (settings.ts:1)", by: "reviewer", status: "open", resolvedBy: null, at: at(3) }],
     brief: { text: "Goal: review the settings page before it ships.", by: "main", at: at(0) },
@@ -112,6 +108,9 @@ function seedPolish(id: string) {
     message(2, "reviewer", "Looking now. The long line in settings.ts scrolls fine; checking the dark theme next.", []),
     message(3, "reviewer", "[MUST] settings.ts:1 - the toggle has low contrast in dark mode - use the accent color. @main", ["main"], "finding"),
     message(4, "main", "Thanks, fixing it. @you anything else before I land it?", ["you"]),
+    JSON.stringify({ id: "m5", seq: 5, ts: at(5), from: "system", kind: "system", mentions: [], source: "none",
+      text: "@main added @qa (QA tester: Try src/settings.ts and src/toggle.ts on a phone. Check the dark theme, the long lines, " +
+        "the keyboard focus order and what a screen reader says for the toggle. Report each problem as a finding with the file and line.)." }),
   ].join("\n") + "\n");
 }
 const server = Bun.spawn(["bun", join(import.meta.dir, "../src/cli.ts"), "start"], {
@@ -290,8 +289,17 @@ try {
       await p.goto(`${BASE}/#/audit/${polish.id}`);
       await ticketTab("Huddle")(p);
     });
+    await check("ticket huddle composer", (p) => p.getByLabel("Message the huddle").focus());
+    if (width <= 720) { // the huddle's phone layout (usePhone in web/src/usePhone.ts)
+      await check("ticket huddle people", ticketTab("People"));
+      await check("ticket huddle findings", ticketTab("Findings"));
+    }
     await check("ticket changes", ticketTab("Changes"));
     await check("ticket outputs", ticketTab("Outputs"));
+    await check("huddle start", async (p) => {
+      await p.goto(`${BASE}/#/audit/${ticket.id}`);
+      await ticketTab("Huddle")(p);
+    });
     await check("team list", async (p) => {
       await p.goto(`${BASE}/#/audit`);
       await p.waitForSelector(".topbar");

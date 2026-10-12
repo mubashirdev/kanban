@@ -10,7 +10,8 @@ import {
 } from "./huddle";
 import { DEFAULT_MAX, draftError, RosterEditor, rosterDraft, startFromDraft, TemplatePicker, usePresets, useTemplates, type RosterDraft } from "./HuddleRoster";
 import { applyTemplate, BRIEF_MAX, DEFAULT_BUDGET, POST_MAX } from "./huddleText";
-import { CloseIcon, MoreIcon } from "./icons";
+import { ArrowUpIcon, CloseIcon, MoreIcon } from "./icons";
+import { autoGrow } from "./autoGrow";
 import { KeyHint } from "./KeyHint";
 import { useLayer } from "./layers";
 import { Select } from "./Select";
@@ -45,7 +46,7 @@ const STOP_AGENTS_TIP = "Stops huddle agents only. The ticket's own run keeps go
 const BUDGET_STEP = 10;
 
 function Avatar({ handle, small }: { handle: string; small?: boolean }) {
-  return <span className={`hd-av${small ? " small" : ""}`} style={{ background: handleColor(handle) }} aria-hidden>{handleInitials(handle)}</span>;
+  return <span className={`hd-av${small ? " small" : ""}${handle === "main" || handle === "you" ? " themed" : ""}`} style={{ background: handleColor(handle) }} aria-hidden>{handleInitials(handle)}</span>;
 }
 
 /** The Huddle tab: the ticket's huddle (feed, roster, findings, composer), or a roster editor to start one. */
@@ -283,6 +284,8 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
     actions.push({ label: "Close huddle", onSelect: () => setConfirm("close") });
   }
   const current = state.list[0];
+  const phoneState = brake ? "Paused" : quiet ? "All quiet" : STATE_LABEL[h.status].replace(/^\W+/, "");
+  const phoneSummary = `${phoneState} · ${h.seq} msg${h.seq === 1 ? "" : "s"} · ${money(spent)} of ${dollars(max)}`;
   const roundItems: MenuItem[] = [
     ...state.list.map((x) => ({
       label: roundLabel(state.list, x), onSelect: () => onSelect(x.id === current?.id ? null : x.id),
@@ -295,12 +298,17 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
     <div className="huddle">
       {phone ? (
         <div className="huddle-bar">
-          {stateLabel}
-          <span>· {h.seq} msg{h.seq === 1 ? "" : "s"}</span>
-          {budget}
-          <span className="spacer" />
-          {forYou > 0 && pane === "chat" && <button className="link-btn hd-jump" onClick={jump}>↓ for you</button>}
-          <button className="btn ghost hd-more" onClick={() => setSheet("actions")} aria-label="Huddle actions" aria-haspopup="menu">
+          <div className="hd-seg" role="tablist" aria-label="Huddle view">
+            {([["chat", "Chat", forYou], ["people", "People", count], ["findings", "Findings", openFindings]] as const).map(([k, label, n]) => (
+              <button key={k} role="tab" aria-selected={pane === k} className={pane === k ? "on" : undefined} onClick={() => setPane(k)}>
+                {label}{k === "chat" ? n > 0 && <span className="for-you-pill">{n}</span> : <span className="hd-seg-n">{n}</span>}
+              </button>
+            ))}
+          </div>
+          {/* The state and spend ride on the ⋯ button; its sheet spells them out. */}
+          <button className="btn ghost hd-more" onClick={() => setSheet("actions")} aria-label={`Huddle actions: ${phoneSummary}`} aria-haspopup="menu">
+            <span className={`hd-state-dot ${brake ? "brake" : quiet ? "quiet" : h.status}`} aria-hidden />
+            <span className={overBudget ? "hd-over" : undefined}>{money(spent)}</span>
             <MoreIcon size={18} />{pending.length > 0 && <span className="pn-dot" />}
           </button>
         </div>
@@ -353,7 +361,7 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
       </div>
       )}
       {sheet === "actions" && <MoreSheet label="Huddle actions" items={actions} onClose={() => setSheet(null)}
-        footer={closed && h.closedAt ? `Closed ${clock(h.closedAt)} · read-only` : `Started ${clock(h.createdAt)}`} />}
+        footer={`${phoneSummary} · ${closed && h.closedAt ? `closed ${clock(h.closedAt)}, read-only` : `started ${clock(h.createdAt)}`}`} />}
       {sheet === "invite" && <MoreSheet label="Invite a ticket" onClose={() => setSheet(null)}
         items={invitable.map((t) => ({ label: t.title, badge: <span className="muted small">{t.id}</span>, onSelect: () => run(api.inviteToHuddle(slug, h.id, t.id)) }))} />}
       {sheet === "rounds" && <MoreSheet label="Huddles of this ticket" items={roundItems} onClose={() => setSheet(null)}
@@ -390,17 +398,9 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
         </div>
       )}
       {adding && !closed && <AddAgent key={seed?.n} slug={slug} huddle={h} preset={addSeed ?? undefined} onDone={() => setAdding(false)} onError={onError} />}
-      {phone && (
-        <div className="hd-seg" role="tablist" aria-label="Huddle view">
-          {([["chat", "Chat", forYou], ["people", "People", count], ["findings", "Findings", openFindings]] as const).map(([k, label, n]) => (
-            <button key={k} role="tab" aria-selected={pane === k} className={pane === k ? "on" : undefined} onClick={() => setPane(k)}>
-              {label}{k === "chat" ? n > 0 && <span className="for-you-pill">{n}</span> : <span className="hd-seg-n">{n}</span>}
-            </button>
-          ))}
-        </div>
-      )}
       <div className="huddle-body">
         {(!phone || pane === "chat") && <div className="huddle-feed">
+          {phone && forYou > 0 && <button className="btn small hd-jump-float" onClick={jump}>↓ for you</button>}
           <Feed huddle={h} state={state} handles={handles} scroller={log} onSeen={(seq) => run(api.huddleSeen(slug, h.id, seq))} />
           <Composer slug={slug} ticket={ticket} huddle={h} onError={onError} prefill={prefill} onPrefilled={() => setPrefill(null)} onOpenOutput={onOpenOutput} />
         </div>}
@@ -695,9 +695,7 @@ function Feed({ huddle: h, state, handles, scroller, onSeen }: {
 
 /** forYou: it tags the user since their last post, action or view of the latest message (highlighted, and a stop for "next for you"). */
 function Message({ m, p, handles, forYou }: { m: HuddleMessage; p: HuddleParticipant | undefined; handles: string[]; forYou: boolean }) {
-  if (m.kind === "system") {
-    return <div className={`hd-sys${forYou ? " for-you" : ""}`} title={fullTime(m.ts)}><MentionText text={m.text} handles={handles} /></div>;
-  }
+  if (m.kind === "system") return <SystemLine m={m} handles={handles} forYou={forYou} />;
   const mine = m.from === "you";
   return (
     <div className={`hd-msg${mine ? " mine" : ""}${forYou ? " for-you" : ""}`}>
@@ -717,6 +715,25 @@ function Message({ m, p, handles, forYou }: { m: HuddleMessage; p: HuddlePartici
         )}
       </div>
     </div>
+  );
+}
+
+/** A system line. On a phone a long one shows two lines; a tap opens the rest. */
+function SystemLine({ m, handles, forYou }: { m: HuddleMessage; handles: string[]; forYou: boolean }) {
+  const text = useRef<HTMLSpanElement>(null);
+  const [long, setLong] = useState(false);
+  const [open, setOpen] = useState(false);
+  useLayoutEffect(() => {
+    const el = text.current;
+    if (el && !open) setLong(el.scrollHeight > el.clientHeight + 1);
+  }, [m.text, open]);
+  const body = <span ref={text} className="hd-sys-text"><MentionText text={m.text} handles={handles} /></span>;
+  const cls = `hd-sys${forYou ? " for-you" : ""}${open ? " open" : ""}`;
+  if (!long) return <div className={cls} title={fullTime(m.ts)}>{body}</div>;
+  return (
+    <button type="button" className={`${cls} long`} title={fullTime(m.ts)} aria-expanded={open} onClick={() => setOpen(!open)}>
+      {body}<span className="hd-sys-more">{open ? "Show less" : "Show more"}</span>
+    </button>
   );
 }
 
@@ -742,7 +759,11 @@ function Composer({ slug, ticket, huddle: h, onError, prefill, onPrefilled, onOp
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
   const [closedPopup, setClosedPopup] = useState(false);
+  // Phone: the box is one line with a round Send, and the how-it-works hint shows only while typing.
+  const phone = usePhone();
+  const [focused, setFocused] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => { if (phone) autoGrow(ref.current, 6); }, [draft, phone]);
   const closed = h.status === "closed";
   const q = mentionQuery(draft, caret);
   const options = q ? mentionCandidates(h).filter((c) => c.handle.startsWith(q.query)) : [];
@@ -809,11 +830,15 @@ function Composer({ slug, ticket, huddle: h, onError, prefill, onPrefilled, onOp
         return;
       }
     }
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Touch keyboards: Enter is a new line and Send sends, like the main chat.
+    if (e.key === "Enter" && !e.shiftKey && !window.matchMedia("(pointer: coarse)").matches) {
       e.preventDefault();
       send();
     }
   };
+  // A tap on Send keeps the keyboard up: blurring first would hide the hint, move Send and lose the tap.
+  const keepFocus = (e: React.PointerEvent | React.MouseEvent) => { if (document.activeElement === ref.current) e.preventDefault(); };
+  const stopped = h.status === "stopped";
   if (closed) {
     return (
       <div className="huddle-closed muted small">
@@ -834,25 +859,36 @@ function Composer({ slug, ticket, huddle: h, onError, prefill, onPrefilled, onOp
           ))}
         </div>
       )}
-      <textarea ref={ref} rows={2} value={draft} disabled={sending}
-        placeholder={h.status === "stopped" ? "The huddle is stopped: nobody wakes until you resume it…" : "Message the huddle: @main, @all or @handle to wake someone…"}
-        onChange={(e) => { setDraft(e.target.value); setCaret(e.target.selectionStart); setClosedPopup(false); }}
-        onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
-        onBlur={() => setClosedPopup(true)} onFocus={() => setClosedPopup(false)}
-        onKeyDown={onKeyDown} aria-label="Message the huddle" />
-      <div className="composer-foot">
-        {hint ? (
-          <span className="small composer-hint hd-untagged" role="status">{hint}</span>
-        ) : (
-          <span className="muted small composer-hint">
-            You post as <b>@you</b>. Tagged participants wake; monitors read everything.
-            <span className="composer-keys"> Enter to send · Shift+Enter for a new line</span>
-          </span>
+      <div className="hd-compose-row">
+        <textarea ref={ref} rows={phone ? 1 : 2} value={draft} disabled={sending}
+          placeholder={phone ? (stopped ? "Stopped: resume it in ⋯" : "Message the huddle…")
+            : stopped ? "The huddle is stopped: nobody wakes until you resume it…" : "Message the huddle: @main, @all or @handle to wake someone…"}
+          onChange={(e) => { setDraft(e.target.value); setCaret(e.target.selectionStart); setClosedPopup(false); }}
+          onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+          onBlur={() => { setClosedPopup(true); setFocused(false); }} onFocus={() => { setClosedPopup(false); setFocused(true); }}
+          onKeyDown={onKeyDown} aria-label="Message the huddle" />
+        {phone && (
+          <button type="button" className="btn primary send-round" aria-label={sending ? "Sending" : "Send"} disabled={!draft.trim() || sending || tooLong}
+            onPointerDown={keepFocus} onMouseDown={keepFocus} onClick={send}><ArrowUpIcon size={18} /></button>
         )}
-        <span className="composer-actions">
-          <button className="btn primary small" disabled={!draft.trim() || sending || tooLong} onClick={send}>{sending ? "Sending…" : "Send"}<KeyHint keys="↵" /></button>
-        </span>
       </div>
+      {(!phone || focused || hint) && (
+        <div className="composer-foot">
+          {hint ? (
+            <span className="small composer-hint hd-untagged" role="status">{hint}</span>
+          ) : (
+            <span className="muted small composer-hint">
+              You post as <b>@you</b>. Tagged participants wake; monitors read everything.
+              {!phone && <span className="composer-keys"> Enter to send · Shift+Enter for a new line</span>}
+            </span>
+          )}
+          {!phone && (
+            <span className="composer-actions">
+              <button className="btn primary small" disabled={!draft.trim() || sending || tooLong} onClick={send}>{sending ? "Sending…" : "Send"}<KeyHint keys="↵" /></button>
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
