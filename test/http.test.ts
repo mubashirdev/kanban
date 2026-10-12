@@ -3,13 +3,14 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Board } from "../src/server/board";
 import { Bus } from "../src/server/events";
+import { run } from "../src/server/git";
 import { createServer, isAllowedRequest } from "../src/server/http";
 import { ptySupported } from "../src/server/shell";
 import { Store } from "../src/server/store";
 
 /** The board adds /clear to every Claude list: headless Claude can't start a new conversation itself. */
 const CLEAR = { name: "clear", description: "Start a new conversation", argumentHint: "", aliases: ["new"], builtin: true };
-import { tempDir } from "./helpers";
+import { makeRepo, tempDir } from "./helpers";
 
 let server: ReturnType<typeof createServer>;
 let store: Store;
@@ -233,6 +234,26 @@ test("stale body edit returns 409", async () => {
   expect(r.status).toBe(409);
 });
 
+test("PATCH queued/:id edits a held message; a peer's or a missing one is refused", async () => {
+  const path = tempDir("ck-plain-");
+  await fetch(`${base}/api/profiles`, json("POST", { name: "Queue Edit", path }));
+  const t = (await (await fetch(`${base}/api/profiles/queue-edit/tickets`, json("POST", { title: "t", body: "" }))).json()) as any;
+  const at = new Date().toISOString();
+  store.updateTicket("queue-edit", t.id, { queued: [
+    { id: "m1", text: "old", at, state: "unsent" },
+    { id: "m2", text: "from a peer", at, state: "queued", peer: true },
+  ] });
+  const url = (m: string) => `${base}/api/profiles/queue-edit/tickets/${t.id}/queued/${m}`;
+  let r = await fetch(url("m1"), json("PATCH", { text: "new" }));
+  expect(r.status).toBe(200);
+  expect(((await r.json()) as any).queued[0]).toMatchObject({ id: "m1", text: "new", state: "unsent" });
+  expect((await fetch(url("m1"), json("PATCH", { text: " " }))).status).toBe(400);
+  r = await fetch(url("m2"), json("PATCH", { text: "x" }));
+  expect(r.status).toBe(409);
+  expect(((await r.json()) as any).error).toMatch(/on its way to Claude/);
+  expect((await fetch(url("nope"), json("PATCH", { text: "x" }))).status).toBe(404);
+});
+
 test("claude discovery endpoints respond", async () => {
   const projects = (await (await fetch(`${base}/api/claude/projects`)).json()) as any;
   expect(Array.isArray(projects)).toBe(true);
@@ -306,7 +327,7 @@ test("chat endpoint validates and conflicts", async () => {
   expect([202, 409]).toContain(r.status);
 });
 
-test("inbox lists tickets across boards where Claude needs the user, not Review", async () => {
+test("inbox lists tickets across boards that need the user, Review included, oldest first", async () => {
   const a = tempDir("ck-plain-");
   const b = tempDir("ck-plain-");
   await fetch(`${base}/api/profiles`, json("POST", { name: "Inbox A", path: a }));
@@ -315,9 +336,39 @@ test("inbox lists tickets across boards where Claude needs the user, not Review"
   store.updateTicket("inbox-a", failed.id, { status: "planning", outcome: "failed", error: "boom" });
   const review = (await (await fetch(`${base}/api/profiles/inbox-b/tickets`, json("POST", { title: "check me", status: "backlog" }))).json()) as any;
   store.updateTicket("inbox-b", review.id, { status: "review", outcome: "done" });
+  // The failed run waits longer, so it comes first.
+  store.updateTicket("inbox-a", failed.id, { lastRunAt: "2026-10-01T00:00:00.000Z" });
+  store.updateTicket("inbox-b", review.id, { lastRunAt: "2026-10-02T00:00:00.000Z" });
   const inbox = (await (await fetch(`${base}/api/inbox`)).json()) as any[];
   const mine = inbox.filter((i) => i.profile.startsWith("inbox-"));
-  expect(mine).toEqual([{ profile: "inbox-a", profileName: "Inbox A", id: failed.id, title: "broken", attention: { kind: "failed", label: "Run failed" } }]);
+  expect(mine.map((i) => [i.title, i.attention.kind])).toEqual([["broken", "failed"], ["check me", "review"]]);
+  // The same tickets say "Your turn" on their cards.
+  for (const i of mine) {
+    const t = (await (await fetch(`${base}/api/profiles/${i.profile}/tickets/${i.id}`)).json()) as any;
+    expect(t.attention).toEqual(i.attention);
+  }
+});
+
+test("snoozing an Inbox entry hides it from counts until it is unsnoozed or moved", async () => {
+  await fetch(`${base}/api/profiles`, json("POST", { name: "Snooze", path: tempDir("ck-snooze-") }));
+  const t = (await (await fetch(`${base}/api/profiles/snooze/tickets`, json("POST", { title: "later", status: "backlog" }))).json()) as any;
+  const url = `${base}/api/profiles/snooze/tickets/${t.id}`;
+  // Nothing waits on the user yet: nothing to snooze.
+  expect((await fetch(`${url}/snooze`, json("POST", {}))).status).toBe(409);
+  store.updateTicket("snooze", t.id, { status: "review", outcome: "done" });
+  const mine = async () => ((await (await fetch(`${base}/api/inbox`)).json()) as any[]).filter((i) => i.profile === "snooze");
+  const snoozed = (await (await fetch(`${url}/snooze`, json("POST", {}))).json()) as any;
+  expect(snoozed.attention).toBeNull();
+  expect(snoozed.snoozed).toMatchObject({ attention: { kind: "review" } });
+  expect(Date.parse(snoozed.snoozed.until) - Date.now()).toBeGreaterThan(23 * 3600_000);
+  expect(await mine()).toEqual([expect.objectContaining({ id: t.id, snoozedUntil: snoozed.snoozed.until, attention: expect.objectContaining({ kind: "review" }) })]);
+  const back = (await (await fetch(`${url}/snooze`, { method: "DELETE" })).json()) as any;
+  expect(back.attention).toMatchObject({ kind: "review" });
+  expect((await mine())[0].snoozedUntil).toBeUndefined();
+  // Moving the ticket clears its snooze.
+  await fetch(`${url}/snooze`, json("POST", {}));
+  await fetch(url, json("PATCH", { status: "done" }));
+  expect(store.getTicket("snooze", t.id)!.snooze).toBeNull();
 });
 
 test("tickets lists a light row for every ticket on every board", async () => {
@@ -327,12 +378,15 @@ test("tickets lists a light row for every ticket on every board", async () => {
   await fetch(`${base}/api/profiles`, json("POST", { name: "Find B", path: b }));
   const one = (await (await fetch(`${base}/api/profiles/find-a/tickets`, json("POST", { title: "alpha", status: "backlog" }))).json()) as any;
   const two = (await (await fetch(`${base}/api/profiles/find-b/tickets`, json("POST", { title: "beta", status: "backlog" }))).json()) as any;
-  store.updateTicket("find-b", two.id, { status: "review", outcome: "done" });
+  store.updateTicket("find-b", two.id, { status: "review", outcome: "done", prUrl: "https://github.com/a/b/pull/7" });
+  store.addComment("find-b", two.id, "ai", "Added the retry loop.");
   const all = (await (await fetch(`${base}/api/tickets`)).json()) as any[];
   const mine = all.filter((t) => t.profile.startsWith("find-")).sort((x, y) => x.title.localeCompare(y.title));
   expect(mine).toEqual([
-    { profile: "find-a", profileName: "Find A", id: one.id, title: "alpha", status: "backlog", running: false, updatedAt: expect.any(String) },
-    { profile: "find-b", profileName: "Find B", id: two.id, title: "beta", status: "review", running: false, updatedAt: expect.any(String) },
+    { profile: "find-a", profileName: "Find A", id: one.id, title: "alpha", status: "backlog", running: false, updatedAt: expect.any(String),
+      body: "", summary: "", prUrl: null },
+    { profile: "find-b", profileName: "Find B", id: two.id, title: "beta", status: "review", running: false, updatedAt: expect.any(String),
+      body: "", summary: "Added the retry loop.", prUrl: "https://github.com/a/b/pull/7" },
   ]);
 });
 
@@ -663,12 +717,177 @@ test("the user's chat gives a ticket planner rights over its own children: adopt
     r = await post(`${tickets}/${mgr.id}/plan`, { action: "resume" }, run);
     expect(((await r.json()) as any).plan.state).toBe("running");
     await post(`${tickets}/${mgr.id}/plan`, { action: "done" });
-    // Done: no rights, no adopting.
+    // Done: the user's chat may still tidy up the plan's own children, but not adopt more or restart it.
     r = await post(`${tickets}/${a.id}`, { body: "late" }, run, "PATCH");
+    expect(r.status).toBe(200);
+    r = await post(`${tickets}/${elsewhere.id}`, { body: "late" }, run, "PATCH");
     expect(r.status).toBe(403);
     r = await post(`${tickets}/${mgr.id}/adopt`, { ids: [elsewhere.id] }, run);
+    expect(r.status).toBe(403);
+    r = await post(`${tickets}/${mgr.id}/plan`, { action: "resume" }, run);
     expect(r.status).toBe(403);
   } finally {
     board.userChatRun = real;
   }
+});
+
+test("a Planning chat answering the user's message may change any other ticket on its board, logged as a user request", async () => {
+  const mk = async (name: string) => (await (await fetch(`${base}/api/profiles`, json("POST", { name, path: tempDir("ck-req-") }))).json()) as any;
+  const p = await mk("Request Proj");
+  const q = await mk("Other Proj");
+  const tickets = `${base}/api/profiles/${p.slug}/tickets`;
+  const send = async (u: string, b: unknown, headers: Record<string, string> = {}, method = "POST") =>
+    fetch(u, { method, headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(b) });
+  const chatT = (await (await send(tickets, { title: "Planning chat", status: "backlog" })).json()) as any;
+  const x = (await (await send(tickets, { title: "X" })).json()) as any;
+  const y = (await (await send(tickets, { title: "Y" })).json()) as any;
+  const run = { "x-ckanban-run": `${p.slug}/${chatT.id}` };
+  const errorOf = async (r: Response) => ((await r.json()) as any).error as string;
+
+  // Without the user's message behind the run (plan wake-up, non-refine run): refused like any board run.
+  let r = await send(`${tickets}/${x.id}`, { status: "done" }, run, "PATCH");
+  expect(r.status).toBe(403);
+
+  const real = board.userRequestRights.bind(board);
+  board.userRequestRights = (slug, id) => (slug === p.slug && id === chatT.id ? store.getTicket(slug, id)! : real(slug, id));
+  try {
+    r = await send(`${tickets}/${x.id}`, { status: "done" }, run, "PATCH");
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as any).status).toBe("done");
+    expect(store.listComments(p.slug, x.id).at(-1)!.text).toBe(`Moved it to done by the Planning chat of ${chatT.id} (user request).`);
+    r = await send(`${tickets}/${y.id}`, { title: "Y2", body: "clearer" }, run, "PATCH");
+    expect(r.status).toBe(200);
+    expect(store.getTicket(p.slug, y.id)!.title).toBe("Y2");
+    expect(store.listComments(p.slug, y.id).at(-1)!.text).toBe(`Changed title, changed body by the Planning chat of ${chatT.id} (user request).`);
+    r = await send(`${tickets}/${y.id}/comments`, { text: "see X" }, run);
+    expect(((await r.json()) as any).text).toBe(`From the Planning chat of ${chatT.id} (user request): see X`);
+    r = await send(tickets, { title: "Follow-up" }, run);
+    expect(r.status).toBe(201);
+    const made = (await r.json()) as any;
+    expect([made.parentId ?? null, made.status]).toEqual([null, "backlog"]);
+    expect(store.listComments(p.slug, made.id).at(-1)!.text).toBe(`Created by the Planning chat of ${chatT.id} (user request).`);
+    r = await send(`${tickets}/${y.id}/stop`, {}, run);
+    expect(r.status).toBe(200);
+
+    // Its own ticket: refused, the user moves it.
+    r = await send(`${tickets}/${chatT.id}`, { status: "ready" }, run, "PATCH");
+    expect(r.status).toBe(403);
+    expect(await errorOf(r)).toContain("own ticket");
+    for (const action of ["stop", "chat", "comments"]) {
+      r = await send(`${tickets}/${chatT.id}/${action}`, { text: "go" }, run);
+      expect(r.status).toBe(403);
+    }
+    expect(store.getTicket(p.slug, chatT.id)!.status).toBe("backlog");
+    // Deleting stays the user's (propose_delete card), even here.
+    r = await fetch(`${tickets}/${y.id}`, { method: "DELETE", headers: run });
+    expect(r.status).toBe(403);
+    // A huddle agent of the same ticket, another ticket's run, and another board get nothing.
+    r = await send(`${tickets}/${x.id}`, { status: "review" }, { ...run, "x-ckanban-huddle-agent": "reviewer" }, "PATCH");
+    expect(r.status).toBe(403);
+    r = await send(`${tickets}/${x.id}`, { status: "review" }, { "x-ckanban-run": `${p.slug}/${y.id}` }, "PATCH");
+    expect(r.status).toBe(403);
+    const z = (await (await send(`${base}/api/profiles/${q.slug}/tickets`, { title: "Z" })).json()) as any;
+    r = await send(`${base}/api/profiles/${q.slug}/tickets/${z.id}`, { status: "done" }, run, "PATCH");
+    expect(r.status).toBe(403);
+    expect(store.getTicket(p.slug, x.id)!.status).toBe("done");
+    // The user's own delete (the card's Delete button) works.
+    r = await fetch(`${tickets}/${y.id}`, { method: "DELETE" });
+    expect(r.status).toBe(204);
+    expect(store.getTicket(p.slug, y.id)).toBeNull();
+  } finally {
+    board.userRequestRights = real;
+  }
+});
+
+test("spending: card cost, today's spend and caps set by the user only", async () => {
+  const path = tempDir("ck-plain-");
+  let r = await fetch(`${base}/api/profiles`, json("POST", { name: "Spend", path }));
+  const p = (await r.json()) as any;
+  r = await fetch(`${base}/api/profiles/${p.slug}`, json("PATCH", { runCapUsd: 3 }));
+  expect(((await r.json()) as any).runCapUsd).toBe(3);
+  r = await fetch(`${base}/api/profiles/${p.slug}/tickets`, json("POST", { title: "Costly" }));
+  const t = (await r.json()) as any;
+  store.appendActivity(p.slug, t.id, 1, { type: "result", session_id: "s", total_cost_usd: 0.42 });
+  // Backlog cards show no $; Review cards do.
+  r = await fetch(`${base}/api/profiles/${p.slug}/tickets/${t.id}`);
+  expect(((await r.json()) as any).costUsd).toBeNull();
+  store.updateTicket(p.slug, t.id, { status: "review" });
+  r = await fetch(`${base}/api/profiles/${p.slug}/tickets/${t.id}`);
+  expect((await r.json()) as any).toMatchObject({ costUsd: 0.42, runCap: 3 });
+  r = await fetch(`${base}/api/spend`);
+  const spend = (await r.json()) as any;
+  expect(spend.boards.find((b: any) => b.slug === p.slug).costUsd).toBeCloseTo(0.42);
+
+  r = await fetch(`${base}/api/profiles/${p.slug}/tickets/${t.id}`, json("PATCH", { runCapUsd: 0 }));
+  expect((await r.json()) as any).toMatchObject({ runCapUsd: 0, runCap: null });
+  r = await fetch(`${base}/api/profiles/${p.slug}/tickets/${t.id}`, json("PATCH", { runCapUsd: -1 }));
+  expect(r.status).toBe(400);
+  r = await fetch(`${base}/api/profiles/${p.slug}/tickets/${t.id}`, {
+    ...json("PATCH", { runCapUsd: 100 }), headers: { "content-type": "application/json", "x-ckanban-run": `${p.slug}/${t.id}` },
+  });
+  expect(r.status).toBe(403);
+});
+
+test("notification settings: read, update, validate; board runs are refused", async () => {
+  let r = await fetch(`${base}/api/notify`);
+  expect(r.status).toBe(200);
+  expect(((await r.json()) as any).webhookUrl).toBe("");
+  r = await fetch(`${base}/api/notify`, json("POST", { webhookUrl: "https://ntfy.sh/abc", kinds: { review: false } }));
+  const s = (await r.json()) as any;
+  expect(s.webhookUrl).toBe("https://ntfy.sh/abc");
+  expect(s.kinds.review).toBe(false);
+  expect(s.kinds.questions).toBe(true);
+  r = await fetch(`${base}/api/notify`, json("POST", { webhookUrl: "javascript:alert(1)" }));
+  expect(r.status).toBe(400);
+  r = await fetch(`${base}/api/notify`, { headers: { "x-ckanban-run": "p/t_1" } });
+  expect(r.status).toBe(403);
+  r = await fetch(`${base}/api/notify`, json("POST", { webhookUrl: "" }));
+  expect(((await r.json()) as any).webhookUrl).toBe("");
+});
+
+test("version history: offered for a plain folder, turned on with one local commit, a .gitignore and nothing pushed", async () => {
+  const path = tempDir("ck-plain-");
+  writeFileSync(join(path, "index.html"), "<h1>shop</h1>\n");
+  writeFileSync(join(path, ".env"), "SECRET=1\n");
+  mkdirSync(join(path, "node_modules", "x"), { recursive: true });
+  writeFileSync(join(path, "node_modules", "x", "i.js"), "1\n");
+  let r = await fetch(`${base}/api/version-history?path=${encodeURIComponent(path)}`);
+  expect(await r.json()).toEqual({ git: true, repo: "plain" });
+  r = await fetch(`${base}/api/version-history`, json("POST", { path }));
+  expect(r.status).toBe(200);
+  const out = (await r.json()) as any;
+  expect(out).toMatchObject({ changed: true, repo: "local" });
+  const files = (await run(["git", "ls-files"], path)).stdout.trim().split("\n");
+  expect(files.sort()).toEqual([".gitignore", "index.html"]);
+  expect((await run(["git", "log", "--format=%s"], path)).stdout.trim()).toBe("Initial snapshot (ckanban)");
+  expect((await run(["git", "remote"], path)).stdout.trim()).toBe("");
+  // Already on: nothing happens a second time.
+  r = await fetch(`${base}/api/version-history`, json("POST", { path }));
+  expect(((await r.json()) as any).changed).toBe(false);
+  expect((await run(["git", "rev-list", "--count", "HEAD"], path)).stdout.trim()).toBe("1");
+  r = await fetch(`${base}/api/version-history`, json("POST", { path: "relative/path" }));
+  expect(r.status).toBe(400);
+});
+
+test("the Changes tab explains why a ticket without a worktree has nothing to show", async () => {
+  const path = tempDir("ck-plain-");
+  const p = (await (await fetch(`${base}/api/profiles`, json("POST", { name: "Diffless", path }))).json()) as any;
+  const t = (await (await fetch(`${base}/api/profiles/${p.slug}/tickets`, json("POST", { title: "x" }))).json()) as any;
+  const r = await fetch(`${base}/api/profiles/${p.slug}/tickets/${t.id}/diff`);
+  expect(r.status).toBe(404);
+  expect(((await r.json()) as any).error).toBe("No version history for this folder, so changes can't be shown.");
+});
+
+test("board Workspace setting: default worktree, folder or worktree only", async () => {
+  const path = await makeRepo();
+  let r = await fetch(`${base}/api/profiles`, json("POST", { name: "Ws board", path }));
+  expect(r.status).toBe(201);
+  const p = (await r.json()) as any;
+  expect(p.workspace).toBeUndefined();
+  r = await fetch(`${base}/api/profiles/${p.slug}`, json("PATCH", { workspace: "folder" }));
+  expect(((await r.json()) as any).workspace).toBe("folder");
+  r = await fetch(`${base}/api/profiles/${p.slug}`, json("PATCH", { workspace: "elsewhere" }));
+  expect(r.status).toBe(400);
+  r = await fetch(`${base}/api/profiles`, json("POST", { name: "Ws board 2", path, workspace: "folder" }));
+  expect(((await r.json()) as any).workspace).toBe("folder");
 });

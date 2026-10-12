@@ -3,13 +3,32 @@ import type { InboxItem } from "./api";
 import { BellIcon } from "./icons";
 import { useLayer } from "./layers";
 import { Modal } from "./Modal";
+import { fullTime, OLD_WAIT_MS, timeUntil, waitedFor } from "./time";
 import { PHONE, useMediaQuery } from "./useMediaQuery";
+import { useNow } from "./useNow";
 
-/** Top-bar "N need you" across every board; the list jumps straight to a ticket. ↑↓ move, Esc closes. */
-export function Inbox({ items, onPick, landOnInbox = false, openRequest }: { items: InboxItem[]; onPick: (i: InboxItem) => void; landOnInbox?: boolean; openRequest?: number }) {
+/** The entry's open action: Answer when Claude asked something, else Open. */
+export const answers = (i: InboxItem) => ["questions", "proposal", "reply", "huddle"].includes(i.attention.kind);
+const keyOf = (i: InboxItem) => `${i.profile}/${i.id}`;
+
+/**
+ * Top-bar "N need you" across every board, oldest wait first, each with how long it has waited (marked after 8h).
+ * Each entry opens its ticket (Answer/Open), marks it done or snoozes it for a day; snoozed ones sit in a collapsed
+ * section with time left and Unsnooze. ↑↓ move, Enter opens, d marks done, s snoozes (or unsnoozes), Esc closes.
+ */
+export function Inbox({ items, snoozed = [], onPick, onMarkDone, onSnooze, landOnInbox = false, openRequest }: {
+  items: InboxItem[];
+  snoozed?: InboxItem[];
+  onPick: (i: InboxItem) => void;
+  onMarkDone: (i: InboxItem) => void;
+  onSnooze: (i: InboxItem, on: boolean) => void;
+  /** Phones open straight onto what is waiting for you, once per browser session. */
+  landOnInbox?: boolean;
+  openRequest?: number;
+}) {
   const [open, setOpen] = useState(false);
+  const [showSnoozed, setShowSnoozed] = useState(false);
   const phone = useMediaQuery(PHONE);
-  // Phones open straight onto what is waiting for you, once per browser session.
   useEffect(() => {
     if (!landOnInbox || !items.length) return;
     try {
@@ -55,14 +74,34 @@ export function Inbox({ items, onPick, landOnInbox = false, openRequest }: { ite
     else if (e.key === "Home") { e.preventDefault(); focusAt(0); }
     else if (e.key === "End") { e.preventDefault(); focusAt(-1); }
     else if (e.key === "Tab") setOpen(false);
+    else if ((e.key.toLowerCase() === "d" || e.key.toLowerCase() === "s") && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      const key = list[at]?.dataset.entry;
+      const i = key && [...items, ...snoozed].find((x) => keyOf(x) === key);
+      if (!i) return;
+      e.preventDefault();
+      if (e.key.toLowerCase() === "d") onMarkDone(i);
+      else onSnooze(i, !i.snoozedUntil);
+      // The next entry moves up into this place.
+      requestAnimationFrame(() => focusAt(Math.min(at, entries().length - 1)));
+    }
   };
 
-  if (!items.length) return null;
-  const boards = [...new Set(items.map((i) => i.profile))];
+  // The last entry went (done, snoozed or answered elsewhere): close, or the menu's layer would stay stacked.
+  const empty = !items.length && !snoozed.length;
+  useEffect(() => {
+    if (empty) setOpen(false);
+  }, [empty]);
+
+  const now = useNow();
+  if (empty) return null;
+  const several = new Set([...items, ...snoozed].map((i) => i.profile)).size > 1;
+  const sorted = [...items].sort((a, b) => a.attention.since.localeCompare(b.attention.since));
+  const later = [...snoozed].sort((a, b) => a.snoozedUntil!.localeCompare(b.snoozedUntil!));
+  const pick = (i: InboxItem) => { setOpen(false); onPick(i); };
 
   return (
     <div className="inbox" ref={root}>
-      <button ref={pill} className="inbox-pill" aria-label={`${items.length} need you`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}
+      <button ref={pill} className="inbox-pill" aria-label={items.length ? `${items.length} need you` : `${snoozed.length} snoozed`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}
         onKeyDown={(e) => {
           if (e.key === "ArrowDown") {
             e.preventDefault();
@@ -71,45 +110,94 @@ export function Inbox({ items, onPick, landOnInbox = false, openRequest }: { ite
           }
         }}
         title="Tickets on any board where Claude is waiting on you">
-        <span className="inbox-text"><span className="yt-dot" aria-hidden /> {items.length} need you</span>
+        <span className="inbox-text">{items.length ? <><span className="yt-dot" aria-hidden /> {items.length} need you</> : <>{snoozed.length} snoozed</>}</span>
         <span className="inbox-compact" aria-hidden><BellIcon size={20} /><span className="inbox-count">{items.length > 99 ? "99+" : items.length}</span></span>
       </button>
       {open && phone && (
         <Modal title="Needs you" onClose={() => setOpen(false)}>
           <div className="sheet-list">
-            {boards.map((b) => {
-              const group = items.filter((i) => i.profile === b);
-              return (
-                <div key={b}>
-                  {boards.length > 1 && <div className="sheet-heading">{group[0].profileName}</div>}
-                  {group.map((i) => (
-                    <button key={i.id} type="button" className="sheet-action inbox-row" onClick={() => { setOpen(false); onPick(i); }}>
-                      <span className="inbox-row-title">{i.title}</span>
-                      <span className={`inbox-why att-${i.attention.kind}`}>{i.attention.label}</span>
-                    </button>
-                  ))}
-                </div>
-              );
-            })}
+            {!items.length && <p className="inbox-empty muted small">Nothing needs you right now.</p>}
+            {sorted.map((i) => (
+              <div key={keyOf(i)} className="inbox-sheet-entry">
+                <button type="button" className="sheet-action inbox-row" onClick={() => pick(i)}>
+                  <span className="inbox-row-title">{i.title}</span>
+                  <span className={`inbox-why att-${i.attention.kind}`}>
+                    {i.attention.label}{several && <span className="inbox-board-name"> · {i.profileName}</span>} · {waitedFor(i.attention.since, now)}
+                  </span>
+                </button>
+                <span className="inbox-actions">
+                  <button type="button" className="btn small" onClick={() => onMarkDone(i)}>Mark done</button>
+                  <button type="button" className="btn small ghost" onClick={() => onSnooze(i, true)}>Snooze</button>
+                </span>
+              </div>
+            ))}
+            {later.length > 0 && <div className="sheet-heading">Snoozed</div>}
+            {later.map((i) => (
+              <div key={keyOf(i)} className="inbox-sheet-entry snoozed">
+                <button type="button" className="sheet-action inbox-row" onClick={() => pick(i)}>
+                  <span className="inbox-row-title">{i.title}</span>
+                  <span className="inbox-why muted">back {timeUntil(i.snoozedUntil!)}</span>
+                </button>
+                <span className="inbox-actions">
+                  <button type="button" className="btn small ghost" onClick={() => onSnooze(i, false)}>Unsnooze</button>
+                </span>
+              </div>
+            ))}
           </div>
         </Modal>
       )}
       {open && !phone && (
         <div className="inbox-menu" role="menu" ref={menu} onKeyDown={onMenuKey}>
-          {boards.map((b) => {
-            const group = items.filter((i) => i.profile === b);
+          {!items.length && <p className="inbox-empty muted small">Nothing needs you right now.</p>}
+          {sorted.map((i) => {
+            const old = now - new Date(i.attention.since).getTime() > OLD_WAIT_MS;
             return (
-              <div key={b} className="inbox-group" role="group" aria-label={group[0].profileName}>
-                <div className="inbox-board" aria-hidden>{group[0].profileName}</div>
-                {group.map((i) => (
-                  <button key={i.id} role="menuitem" className="inbox-item" onClick={() => { setOpen(false); onPick(i); }}>
-                    <span className="inbox-title">{i.title}</span>
-                    <span className={`inbox-why att-${i.attention.kind}`}>{i.attention.label}</span>
-                  </button>
-                ))}
+              <div key={keyOf(i)} className="inbox-entry">
+                <button role="menuitem" data-entry={keyOf(i)} className="inbox-item" onClick={() => pick(i)}
+                  title={`Enter ${answers(i) ? "answers" : "opens"} · d marks done · s snoozes for a day`}>
+                  <span className="inbox-title">{i.title}</span>
+                  <span className="inbox-row">
+                    <span className={`inbox-why att-${i.attention.kind}`}>
+                      {i.attention.label}{several && <span className="inbox-board-name"> · {i.profileName}</span>}
+                    </span>
+                    <time className={`inbox-age${old ? " old" : ""}`} dateTime={i.attention.since} title={`Waiting since ${fullTime(i.attention.since)}`}>
+                      waiting {waitedFor(i.attention.since, now)}
+                    </time>
+                  </span>
+                </button>
+                <span className="inbox-actions">
+                  <button className="btn small primary" tabIndex={-1} onClick={() => pick(i)} title="Open the ticket (Enter)">{answers(i) ? "Answer" : "Open"}</button>
+                  <button className="btn small" tabIndex={-1} onClick={() => onMarkDone(i)} title="Move it to Done (d)">Mark done</button>
+                  <button className="btn small ghost" tabIndex={-1} onClick={() => onSnooze(i, true)} title="Hide it from the Inbox and counts for a day, or until something changes (s)">Snooze</button>
+                </span>
               </div>
             );
           })}
+          {later.length > 0 && (
+            <>
+              <button role="menuitem" className="inbox-board inbox-snoozed-toggle" aria-expanded={showSnoozed} onClick={() => setShowSnoozed((v) => !v)}>
+                {showSnoozed ? "▾" : "▸"} Snoozed · {later.length}
+              </button>
+              {showSnoozed && later.map((i) => (
+                <div key={keyOf(i)} className="inbox-entry snoozed">
+                  <button role="menuitem" data-entry={keyOf(i)} className="inbox-item" onClick={() => pick(i)} title="Enter opens · s unsnoozes · d marks done">
+                    <span className="inbox-title">{i.title}</span>
+                    <span className="inbox-row">
+                      <span className="inbox-why muted">
+                        {i.attention.label}{several && <span className="inbox-board-name"> · {i.profileName}</span>}
+                      </span>
+                      <time className="inbox-age" dateTime={i.snoozedUntil} title={`Snoozed until ${fullTime(i.snoozedUntil!)}`}>
+                        back {timeUntil(i.snoozedUntil!)}
+                      </time>
+                    </span>
+                  </button>
+                  <span className="inbox-actions">
+                    <button className="btn small ghost" tabIndex={-1} onClick={() => onSnooze(i, false)} title="Back in the Inbox now (s)">Unsnooze</button>
+                  </span>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       )}
     </div>

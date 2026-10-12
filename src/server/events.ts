@@ -1,6 +1,7 @@
+import type { HuddleView } from "./huddle";
 import type { McpState } from "./mcp";
 import type { SessionSummary } from "./session";
-import type { Profile, Schedule, Ticket } from "./types";
+import type { HuddleMessage, Profile, Schedule, Ticket } from "./types";
 
 export type BusEvent =
   | { type: "ticket.updated"; profile: string; ticket: Ticket }
@@ -18,7 +19,15 @@ export type BusEvent =
   /** Prompt snippets changed (any scope); clients refetch. */
   | { type: "snippets.updated" }
   /** A daemon restart is waiting for `waiting` active runs; nothing new starts until then. */
-  | { type: "restart.updated"; pending: boolean; waiting: number };
+  | { type: "restart.updated"; pending: boolean; waiting: number }
+  /** A huddle's status, roster or findings changed. */
+  | { type: "huddle.updated"; profile: string; huddle: HuddleView }
+  /** A message was posted in a huddle. */
+  | { type: "huddle.message"; profile: string; huddleId: string; message: HuddleMessage }
+  /** What a huddle participant is doing now (lastActivity), without a whole huddle.updated. */
+  | { type: "huddle.activity"; profile: string; huddleId: string; handle: string; lastActivity: string | null; liveCostUsd?: number; contextTokens?: number }
+  /** A huddle agent's session file changed (the session viewer refetches; polled, so at most every 2 s). */
+  | { type: "huddle.session"; profile: string; huddleId: string; handle: string };
 
 export class Bus {
   private listeners = new Set<(e: BusEvent) => void>();

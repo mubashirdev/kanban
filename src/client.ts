@@ -1,9 +1,12 @@
 // Talks to the local daemon's HTTP API for the `ckanban ticket` CLI and the `ckanban mcp` server.
 import { realpathSync } from "node:fs";
 import { dirname, isAbsolute, resolve, sep } from "node:path";
+import type { HuddlePresetView } from "./server/huddle-presets";
+import { HUDDLE_AGENT_ENV, HUDDLE_HEADER, SOURCE_HEADER, type RosterEntry } from "./server/huddle-roster";
+import type { HuddleTemplateView } from "./server/huddle-templates";
 import { RUN_HEADER } from "./server/scheduler";
 import { defaultRoot, Store } from "./server/store";
-import { STATUSES, type Status, type TicketMode } from "./server/types";
+import { STATUSES, type HuddleFinding, type HuddleLearning, type HuddleMessage, type HuddleMode, type Status, type TicketMode } from "./server/types";
 
 export class ClientError extends Error {}
 
@@ -48,6 +51,9 @@ export interface TicketInfo {
   /** Plan child waiting on the user: the plan won't start it until then. */
   userWait?: string | null;
   plan?: { state: string; maxConcurrent: number } | null;
+  /** ⭐ Important: reviewed in an auto huddle before landing. */
+  important?: boolean;
+  autoHuddle?: { state: "waiting" | "live"; reason: string; template: string; huddleId?: string | null } | null;
   createdAt: string;
   updatedAt: string;
   attention?: { kind: string } | null;
@@ -106,15 +112,6 @@ export interface CommentInfo {
   at: string;
 }
 
-export interface QuestionInfo {
-  id: string;
-  from: string;
-  to: string;
-  toTitle: string;
-  text: string;
-  waitUntil: string;
-}
-
 export interface TicketPatch {
   title?: string;
   body?: string;
@@ -122,6 +119,7 @@ export interface TicketPatch {
   mode?: TicketMode;
   dependsOn?: string[];
   needs?: string[];
+  important?: boolean;
   /** null takes the ticket out of its plan. */
   parentId?: null;
 }
@@ -129,6 +127,68 @@ export interface TicketPatch {
 export interface AdoptReply {
   adopted: TicketInfo[];
   skipped: { id: string; reason: string }[];
+}
+
+export interface HuddleParticipantInfo {
+  handle: string;
+  role: string;
+  mode: HuddleMode;
+  lead: boolean;
+  canEdit: boolean;
+  workspace: string;
+  status: string;
+  /** done / blocked: why. */
+  statusReason?: string | null;
+  kind: string;
+  focus?: string;
+  ticketId?: string | null;
+  running: boolean;
+}
+
+export interface HuddleInfo {
+  id: string;
+  hostTicket: string;
+  hostTitle: string | null;
+  status: string;
+  maxParticipants: number;
+  maxCostUsd?: number;
+  participants: HuddleParticipantInfo[];
+  findings: HuddleFinding[];
+  seq: number;
+  /** Live, nobody working, no unanswered tags, no open findings; idleSince: the last message or turn. */
+  quiet?: boolean;
+  idleSince?: string | null;
+  closeRequest?: { by: string; at: string; reason: string } | null;
+  /** Pinned brief (goal, decisions). */
+  brief?: { text: string; by: string; at: string } | null;
+}
+
+/** A lesson an agent proposes when it turns done: a rule worth reusing, its evidence, and where it applies. */
+export interface HuddleLesson {
+  text: string;
+  evidence?: string;
+  scope?: "general" | "repo";
+}
+
+/** A participant's own huddle status: done, blocked (with a reason) or active again. */
+export type HuddleStatusChange = "done" | "blocked" | "active";
+
+/** A huddle with a page of its messages; `you` is the caller's own handle. */
+export interface HuddlePage {
+  huddle: HuddleInfo;
+  you: string;
+  messages: HuddleMessage[];
+  hasMore: boolean;
+}
+
+/** Who calls the huddle API from a run: its ticket (CKANBAN_TICKET) and, for a huddle agent, CKANBAN_HUDDLE_AGENT. */
+export interface HuddleCaller {
+  run?: string | null;
+  agent?: string | null;
+}
+
+export function huddleCaller(env: Record<string, string | undefined>): HuddleCaller {
+  return { run: env[RUN_ENV] ?? null, agent: env[HUDDLE_AGENT_ENV] ?? null };
 }
 
 export interface BugReportRequest {
@@ -208,14 +268,6 @@ export class BoardClient {
   listComments = (slug: string, id: string) => this.req<CommentInfo[]>("GET", `${this.t(slug, id)}/comments`);
   comment = (slug: string, id: string, text: string, run?: string | null) =>
     this.req<CommentInfo>("POST", `${this.t(slug, id)}/comments`, { text }, this.by(run));
-  // Ticket-to-ticket questions: `run` is the board run's CKANBAN_TICKET (the asking or replying ticket).
-  ask = (slug: string, id: string, question: string, waitMs: number, run: string) =>
-    this.req<QuestionInfo>("POST", `${this.t(slug, id)}/ask`, { question, waitMs }, this.by(run));
-  pollQuestion = (slug: string, qid: string, final: boolean, run: string) =>
-    this.req<{ reply: string | null }>("POST", `${this.q(slug, qid)}/poll`, { final }, this.by(run));
-  replyQuestion = (slug: string, qid: string, text: string, run?: string | null) =>
-    this.req<{ delivered: "call" | "steer" | "comment" | "gone"; from: string }>("POST", `${this.q(slug, qid)}/reply`, { text }, this.by(run));
-  private q = (slug: string, qid: string) => `/api/profiles/${encodeURIComponent(slug)}/questions/${encodeURIComponent(qid)}`;
   reportBug = (input: BugReportRequest) => this.req<BugReportReply>("POST", "/api/bug-report", input);
 
   private s(slug: string, id?: string): string {
@@ -235,6 +287,54 @@ export class BoardClient {
     this.req<{ entry: ScheduleHistoryInfo; schedule: ScheduleInfo }>("POST", `${this.s(slug, id)}/run`, {});
   scheduleHistory = (slug: string, id: string) => this.req<ScheduleHistoryInfo[]>("GET", `${this.s(slug, id)}/history`);
   cronPreview = (expr: string) => this.req<CronPreviewInfo>("GET", `/api/cron/preview?expr=${encodeURIComponent(expr)}`);
+
+  // Huddle role presets (teammates): built-ins merged with the global ones and the board's own.
+  private hp = (slug: string, name?: string) =>
+    `/api/profiles/${encodeURIComponent(slug)}/huddle-presets${name ? `/${encodeURIComponent(name)}` : ""}`;
+  listHuddlePresets = (slug: string) => this.req<HuddlePresetView[]>("GET", this.hp(slug));
+  /** c: the calling run (a run may only add new presets). */
+  saveHuddlePreset = (slug: string, preset: Record<string, unknown>, c: HuddleCaller = {}) => this.req<HuddlePresetView>("POST", this.hp(slug), preset, this.as(c));
+  /** scope: the level to delete at (default: the one in effect). */
+  deleteHuddlePreset = (slug: string, name: string, c: HuddleCaller = {}, scope?: "board" | "global") =>
+    this.req<{ reset: boolean; presets: HuddlePresetView[] }>("DELETE", `${this.hp(slug, name)}${scope ? `?scope=${scope}` : ""}`, undefined, this.as(c));
+
+  // Whole-huddle templates (roster and rules): built-ins merged with the board's own.
+  listHuddleTemplates = (slug: string) => this.req<HuddleTemplateView[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/huddle-templates`);
+
+  // Huddles. The daemon decides who the caller is from these headers, never from the request body.
+  private h(slug: string, hid: string): string {
+    return `/api/profiles/${encodeURIComponent(slug)}/huddles/${encodeURIComponent(hid)}`;
+  }
+  private as = (c: HuddleCaller): Record<string, string> => ({ [SOURCE_HEADER]: "mcp", ...this.by(c.run), ...(c.agent ? { [HUDDLE_HEADER]: c.agent } : {}) });
+  /** hid "current": the caller's own huddle. */
+  huddleRead = (slug: string, hid: string, q: { since?: number; limit?: number }, c: HuddleCaller) => {
+    const qs = new URLSearchParams();
+    if (q.since !== undefined) qs.set("since", String(q.since));
+    if (q.limit !== undefined) qs.set("limit", String(q.limit));
+    return this.req<HuddlePage>("GET", `${this.h(slug, hid)}${qs.size ? `?${qs}` : ""}`, undefined, this.as(c));
+  };
+  /** status: the sender is done or blocked (reason) with this message. */
+  huddlePost = (slug: string, hid: string, text: string, kind: "message" | "finding", c: HuddleCaller, status?: { status: HuddleStatusChange; reason?: string; lessons?: HuddleLesson[] }) =>
+    this.req<HuddleMessage>("POST", `${this.h(slug, hid)}/messages`, { text, kind, ...status }, this.as(c));
+  /** lessons (status done): proposed for the user to review as role notes. */
+  huddleStatus = (slug: string, hid: string, status: HuddleStatusChange, reason: string | undefined, c: HuddleCaller, lessons?: HuddleLesson[]) =>
+    this.req<HuddleParticipantInfo>("POST", `${this.h(slug, hid)}/status`, { status, reason, ...(lessons?.length ? { lessons } : {}) }, this.as(c));
+  /** start_huddle: the host ticket's own unattended run starts its auto huddle, or waits for the board's slot. */
+  startAutoHuddle = (slug: string, input: { reason: string; template?: string; roster?: RosterEntry[]; maxCostUsd?: number }, c: HuddleCaller) =>
+    this.req<{ waiting: boolean; template: string; huddle: HuddleInfo | null }>("POST", `/api/profiles/${encodeURIComponent(slug)}/huddles/auto`, input, this.as(c));
+  huddleCloseRequest = (slug: string, hid: string, reason: string, c: HuddleCaller) =>
+    this.req<HuddleInfo>("POST", `${this.h(slug, hid)}/close-request`, { reason }, this.as(c));
+  huddleMode = (slug: string, hid: string, handle: string, mode: HuddleMode, c: HuddleCaller) =>
+    this.req<HuddleInfo>("PATCH", `${this.h(slug, hid)}/participants/${encodeURIComponent(handle)}`, { mode }, this.as(c));
+  huddleAdd = (slug: string, hid: string, entry: RosterEntry, c: HuddleCaller) =>
+    this.req<{ added: HuddleParticipantInfo[]; huddle: HuddleInfo }>("POST", `${this.h(slug, hid)}/participants`, entry, this.as(c));
+  huddleFindings = (slug: string, hid: string, action: "add" | "resolve" | "list", arg: { text?: string; id?: string }, c: HuddleCaller) =>
+    this.req<HuddleFinding[]>("POST", `${this.h(slug, hid)}/findings`, { action, ...arg }, this.as(c));
+  /** A huddle agent proposes a teammate: it waits under the huddle's Learnings until the user saves it. */
+  huddleProposeTeammate = (slug: string, hid: string, input: Record<string, unknown>, c: HuddleCaller) =>
+    this.req<HuddleLearning>("POST", `${this.h(slug, hid)}/teammates`, input, this.as(c));
+  /** Set the pinned brief ("" clears it). */
+  huddleBrief = (slug: string, hid: string, text: string, c: HuddleCaller) => this.req<HuddleInfo>("PUT", `${this.h(slug, hid)}/brief`, { text }, this.as(c));
 }
 
 function real(p: string): string {
@@ -341,7 +441,7 @@ function state(t: TicketInfo): string {
 
 export function ticketLine(t: TicketInfo): string {
   const extra = [t.parentId ? `in plan ${t.parentId}` : null, t.needs?.length ? `needs ${t.needs.join(", ")}` : null].filter(Boolean);
-  return `${t.id}  [${state(t)}]  ${t.title}${extra.length ? `  (${extra.join("; ")})` : ""}`;
+  return `${t.id}  [${state(t)}]  ${t.important ? "⭐ " : ""}${t.title}${extra.length ? `  (${extra.join("; ")})` : ""}`;
 }
 
 export function ticketText(t: TicketInfo, comments: CommentInfo[] = []): string {

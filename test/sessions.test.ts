@@ -147,7 +147,7 @@ test("a failed session run is cleared by the next message", async () => {
 test("a session waits on the user only for a reply they haven't seen", () => {
   const t = { standalone: true, agent: "codex", status: "backlog", outcome: null, readAt: "2026-01-01T10:00:00.000Z" } as Ticket;
   const reply = (at: string) => ({ lastMessage: { role: "assistant", text: "Done", at }, openQuestions: 0 }) as any;
-  expect(attentionFor(t, reply("2026-01-01T11:00:00.000Z"), false)).toEqual({ kind: "reply", label: "Codex replied" });
+  expect(attentionFor(t, reply("2026-01-01T11:00:00.000Z"), false)).toMatchObject({ kind: "reply", label: "Codex replied" });
   expect(attentionFor(t, reply("2026-01-01T09:00:00.000Z"), false)).toBeNull();
   expect(attentionFor(t, reply("2026-01-01T11:00:00.000Z"), true)).toBeNull();
   expect(attentionFor({ ...t, outcome: "failed" }, null, false)?.kind).toBe("failed");

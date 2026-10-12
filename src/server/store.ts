@@ -1,14 +1,17 @@
 import { ticketMetadata, type TicketMetadata } from "./ticket-metadata";
 import {
-  appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync,
+  appendFileSync, closeSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import YAML from "yaml";
 import type { SessionEntry } from "./session";
 import type {
-  ActivityEntry, Comment, Config, OutputFile, Profile, Schedule, ScheduleHistoryEntry, Status, Ticket, TicketMode, TicketQuestion,
+  ActivityEntry, Comment, Config, Huddle, HuddleMessage, OutputFile, Profile, Schedule, ScheduleHistoryEntry, Status, Ticket, TicketMode,
 } from "./types";
+import { cleanPresets, type HuddlePreset } from "./huddle-presets";
+import { cleanTemplates, type HuddleTemplate } from "./huddle-templates";
+import { type HuddleNote, type NoteScope, parseNotes, serializeNotes } from "./huddle-notes";
 import { newId, newTicketId, nowIso } from "./util";
 
 const DEFAULT_CONFIG: Config = { port: 7777, prPollMinutes: 5 };
@@ -53,6 +56,9 @@ function serializeTicket(t: Ticket): string {
 interface WorkspaceChange { id: string; title: string; at: string; changes: string[] }
 
 export class Store {
+  /** Parsed huddle message logs by "<slug>/<huddle>", with the byte offset read up to (see readHuddleMessages). */
+  private huddleLogs = new Map<string, { offset: number; msgs: HuddleMessage[] }>();
+  private aiCache = new Map<string, { key: string; comments: Comment[] }>();
   constructor(public readonly root: string) {
     mkdirSync(join(root, "profiles"), { recursive: true });
   }
@@ -161,7 +167,7 @@ export class Store {
 
   createTicket(
     slug: string,
-    input: TicketMetadata & { title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; parentId?: string; planKey?: string; dependsOn?: string[]; needs?: string[]; standalone?: boolean; access?: "read" | "edit"; isolated?: boolean; codexSessionId?: string },
+    input: TicketMetadata & { title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; parentId?: string; planKey?: string; dependsOn?: string[]; needs?: string[]; important?: boolean; standalone?: boolean; access?: "read" | "edit"; isolated?: boolean; codexSessionId?: string },
   ): Ticket {
     const at = nowIso();
     const t: Ticket = {
@@ -175,6 +181,7 @@ export class Store {
       ...(input.standalone ? { standalone: true, access: input.access ?? "read", readAt: at, ...(input.isolated ? { isolated: true } : {}) } : {}),
       ...(input.codexSessionId ? { codexSessionId: input.codexSessionId } : {}),
       ...(input.needs?.length ? { needs: input.needs } : {}),
+      ...(input.important ? { important: true } : {}),
     };
     atomicWrite(this.ticketPath(slug, t.id), serializeTicket(t));
     this.recordWorkspaceChange(slug, t, ["Created ticket"]);
@@ -258,6 +265,28 @@ export class Store {
     return readJsonl<Comment>(join(this.ticketDir(slug, id), "comments.jsonl"));
   }
 
+  /** Text of the ticket's last Claude comment (its last result summary). */
+  lastAiComment(slug: string, id: string): string | null {
+    return this.aiComments(slug, id).at(-1)?.text ?? null;
+  }
+
+  /** The ticket's Claude comments (its result summaries), oldest first, cached until comments.jsonl changes. */
+  aiComments(slug: string, id: string): Comment[] {
+    const file = join(this.ticketDir(slug, id), "comments.jsonl");
+    let key: string;
+    try {
+      const st = statSync(file);
+      key = `${st.mtimeMs}:${st.size}`;
+    } catch {
+      return [];
+    }
+    const hit = this.aiCache.get(file);
+    if (hit?.key === key) return hit.comments;
+    const comments = this.listComments(slug, id).filter((c) => c.author === "ai");
+    this.aiCache.set(file, { key, comments });
+    return comments;
+  }
+
   addComment(slug: string, id: string, author: Comment["author"], text: string): Comment {
     const c: Comment = { id: newId(), author, text, at: nowIso() };
     appendFileSync(join(this.ticketDir(slug, id), "comments.jsonl"), JSON.stringify(c) + "\n");
@@ -269,9 +298,13 @@ export class Store {
     appendFileSync(join(this.ticketDir(slug, id), "activity.jsonl"), JSON.stringify(e) + "\n");
   }
 
+  activityPath(slug: string, id: string): string {
+    return join(this.ticketDir(slug, id), "activity.jsonl");
+  }
+
   activityVersion(slug: string, id: string): string | null {
     try {
-      const stat = statSync(join(this.ticketDir(slug, id), "activity.jsonl"));
+      const stat = statSync(this.activityPath(slug, id));
       return `${stat.mtimeMs}:${stat.size}`;
     } catch {
       return null;
@@ -279,7 +312,7 @@ export class Store {
   }
 
   readActivity(slug: string, id: string): ActivityEntry[] {
-    return readJsonl<ActivityEntry>(join(this.ticketDir(slug, id), "activity.jsonl"));
+    return readJsonl<ActivityEntry>(this.activityPath(slug, id));
   }
 
   appendCommandEntry(slug: string, id: string, entry: SessionEntry & { sessionId: string }): void {
@@ -333,18 +366,163 @@ export class Store {
     return readJsonl<ScheduleHistoryEntry>(join(this.schedulesDir(slug), `${id}.history.jsonl`));
   }
 
-  listQuestions(slug: string): TicketQuestion[] {
-    const file = join(this.profileDir(slug), "questions.json");
+  /** Huddle presets at one level: a board's own (slug), or the global ones every board gets (slug null). Merge with mergePresets. */
+  listHuddlePresets(slug: string | null): HuddlePreset[] {
+    return this.readList(this.levelFile(slug, "huddle-presets.json"), cleanPresets);
+  }
+
+  saveHuddlePresets(slug: string | null, ps: HuddlePreset[]): void {
+    atomicWrite(this.levelFile(slug, "huddle-presets.json"), JSON.stringify(ps, null, 2) + "\n");
+  }
+
+  /** Huddle templates at one level: a board's own (slug), or the global ones (slug null). Merge with mergeTemplates. */
+  listHuddleTemplates(slug: string | null): HuddleTemplate[] {
+    return this.readList(this.levelFile(slug, "huddle-templates.json"), cleanTemplates);
+  }
+
+  saveHuddleTemplates(slug: string | null, ts: HuddleTemplate[]): void {
+    atomicWrite(this.levelFile(slug, "huddle-templates.json"), JSON.stringify(ts, null, 2) + "\n");
+  }
+
+  /** <home>/<name> for the global level (slug null), else the board's profiles/<slug>/<name>. */
+  private levelFile(slug: string | null, name: string): string {
+    return join(slug === null ? this.root : this.profileDir(slug), name);
+  }
+
+  private readList<T>(file: string, clean: (v: unknown) => T[]): T[] {
     if (!existsSync(file)) return [];
     try {
-      const v = JSON.parse(readFileSync(file, "utf8"));
-      return Array.isArray(v) ? v : [];
+      return clean(JSON.parse(readFileSync(file, "utf8")));
     } catch {
       return [];
     }
   }
 
-  saveQuestions(slug: string, qs: TicketQuestion[]): void {
-    atomicWrite(join(this.profileDir(slug), "questions.json"), JSON.stringify(qs, null, 2) + "\n");
+  /** A role's notes file: general ones are global (<home>/huddle-notes), repo ones the board's. role: "_all" or a preset name. */
+  huddleNotesPath(slug: string, role: string, scope: NoteScope): string {
+    return join(scope === "general" ? this.root : this.profileDir(slug), "huddle-notes", `${role}.md`);
+  }
+
+  /** A role's notes, newest first. */
+  readHuddleNotes(slug: string, role: string, scope: NoteScope): HuddleNote[] {
+    const file = this.huddleNotesPath(slug, role, scope);
+    return existsSync(file) ? parseNotes(readFileSync(file, "utf8")) : [];
+  }
+
+  writeHuddleNotes(slug: string, role: string, scope: NoteScope, notes: HuddleNote[]): void {
+    atomicWrite(this.huddleNotesPath(slug, role, scope), serializeNotes(role, scope, notes));
+  }
+
+  /** Roles with a notes file (general or this board's repo notes). */
+  huddleNoteRoles(slug: string): string[] {
+    const names = (dir: string) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)) : []);
+    return [...new Set([...names(join(this.root, "huddle-notes")), ...names(join(this.profileDir(slug), "huddle-notes"))])].sort();
+  }
+
+  private huddlesDir(slug: string) {
+    return join(this.profileDir(slug), "huddles");
+  }
+
+  listHuddles(slug: string): Huddle[] {
+    const dir = this.huddlesDir(slug);
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir)
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => this.getHuddle(slug, f.slice(0, -5)))
+      .filter((h): h is Huddle => h !== null)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  /** Cheap change marker for the board's huddle files (names, sizes and mtimes). */
+  huddlesVersion(slug: string): string {
+    const dir = this.huddlesDir(slug);
+    if (!existsSync(dir)) return "";
+    return readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => {
+      try {
+        const st = statSync(join(dir, f));
+        return `${f}:${st.size}:${st.mtimeMs}`;
+      } catch {
+        return f;
+      }
+    }).join("|");
+  }
+
+  getHuddle(slug: string, id: string): Huddle | null {
+    if (!/^h_[a-z0-9_]+$/i.test(id)) return null;
+    const file = join(this.huddlesDir(slug), `${id}.json`);
+    if (!existsSync(file)) return null;
+    try {
+      return JSON.parse(readFileSync(file, "utf8"));
+    } catch {
+      return null;
+    }
+  }
+
+  saveHuddle(slug: string, h: Huddle): void {
+    atomicWrite(join(this.huddlesDir(slug), `${h.id}.json`), JSON.stringify(h, null, 2) + "\n");
+  }
+
+  /** Identifies one version of the huddle file (inode and mtime), or null if it is gone: tells edits from outside. */
+  huddleStamp(slug: string, id: string): string | null {
+    try {
+      const st = statSync(join(this.huddlesDir(slug), `${id}.json`));
+      return `${st.ino}:${st.mtimeMs}`;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The message log is append-only: messages are never edited or removed. */
+  appendHuddleMessage(slug: string, id: string, m: HuddleMessage): void {
+    mkdirSync(this.huddlesDir(slug), { recursive: true });
+    appendFileSync(join(this.huddlesDir(slug), `${id}.messages.jsonl`), JSON.stringify(m) + "\n");
+  }
+
+  /**
+   * The huddle's messages, oldest first. The parsed log is cached per huddle with the byte offset read up to (the
+   * append index): a read parses only the lines appended since. A shorter file (replaced) is read again in full.
+   */
+  readHuddleMessages(slug: string, id: string): HuddleMessage[] {
+    const file = join(this.huddlesDir(slug), `${id}.messages.jsonl`);
+    const key = `${slug}/${id}`;
+    let size: number;
+    try {
+      size = statSync(file).size;
+    } catch {
+      this.huddleLogs.delete(key);
+      return [];
+    }
+    let log = this.huddleLogs.get(key);
+    if (!log || size < log.offset) log = { offset: 0, msgs: [] };
+    if (size > log.offset) {
+      const fd = openSync(file, "r");
+      let buf: Buffer;
+      try {
+        buf = Buffer.alloc(size - log.offset);
+        buf = buf.subarray(0, readSync(fd, buf, 0, buf.length, log.offset));
+      } finally {
+        closeSync(fd);
+      }
+      // Only whole lines: a line still being written is read next time.
+      const end = buf.lastIndexOf(0x0a) + 1;
+      const msgs = log.msgs.slice();
+      for (const line of buf.subarray(0, end).toString("utf8").split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          msgs.push(JSON.parse(line));
+        } catch {}
+      }
+      log = { offset: log.offset + end, msgs };
+    }
+    this.huddleLogs.set(key, log);
+    // Copies: a caller changing a message must not change the cache.
+    return log.msgs.map((m) => ({ ...m, mentions: [...(m.mentions ?? [])] }));
+  }
+
+  /** Where a huddle participant saves reports and scripts: outputs/<handle>/ of the host ticket. */
+  huddleOutputsDir(slug: string, ticketId: string, handle: string): string {
+    const dir = join(this.ticketDir(slug, ticketId), "outputs", handle);
+    mkdirSync(dir, { recursive: true });
+    return dir;
   }
 }

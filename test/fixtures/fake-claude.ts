@@ -1,14 +1,23 @@
 #!/usr/bin/env bun
 // Fake `claude` CLI for tests. Behaviour controlled by env:
-// FAKE_MODE=ok|fail|slow|partial|blocked|noresult|background|bgsilent|asks, FAKE_PR=<url>, FAKE_ARGS_FILE=<path to append argv JSON>
+// FAKE_MODE=ok|fail|limit|budget|slow|partial|blocked|noresult|background|bgsilent|asks|nosession|overloaded|badrequest|silent, FAKE_PR=<url>, FAKE_ARGS_FILE=<path to append argv JSON>
+// FAKE_ONCE_FILE=<path>: overloaded/silent only misbehave on the first run (the file marks it); later runs are ok.
+// FAKE_SILENT_MS: how long silent mode goes quiet after init before carrying on (default 30s).
+// FAKE_HEARD_FILE=<path>: appends {session, text} for every user message it reads (huddle routing tests).
+// FAKE_NO_SAVE=1: stopped before the session transcript is saved (under CLAUDE_CONFIG_DIR, like the real CLI).
+// FAKE_TRANSCRIPT=1: it also thinks, runs a Bash call and posts to its huddle, and writes what it emits to the transcript.
 // With --input-format stream-json it reads user messages from stdin like the real CLI: messages that
 // arrive mid-run are picked up at the next step (replayed with --replay-user-messages), later ones
 // get their own turn, and it exits at end of input.
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 
 const args = process.argv.slice(2);
 const streamIn = args.includes("--input-format");
 const replay = args.includes("--replay-user-messages");
+
+// FAKE_INIT_SKILLS=a,b: skills (also offered as slash commands) the init event reports, like Claude Code's bundled ones.
+const fakeSkills = (process.env.FAKE_INIT_SKILLS ?? "").split(",").filter(Boolean);
+const initSkills = fakeSkills.length ? { skills: fakeSkills, slash_commands: fakeSkills } : {};
 
 const inbox: string[] = [];
 // Answers to control requests (permission asks), by request id.
@@ -58,6 +67,7 @@ async function nextMessage(): Promise<string | null> {
 const heard: string[] = [];
 function take(text: string) {
   heard.push(text);
+  if (process.env.FAKE_HEARD_FILE) appendFileSync(process.env.FAKE_HEARD_FILE, JSON.stringify({ session: sessionId, text, env: process.env.CKANBAN_HUDDLE_AGENT ?? null }) + "\n");
   if (replay) emit({ type: "user", message: { role: "user", content: [{ type: "text", text }] }, isReplay: true });
 }
 /** Pick up messages sent while "working", as the real CLI does between steps. */
@@ -76,16 +86,38 @@ const sessionId = idx >= 0 ? args[idx + 1] : "none";
 
 const stepMs = Number(process.env.FAKE_STEP_MS ?? 0);
 
-function emit(obj: unknown) {
+const transcriptFile = process.env.CLAUDE_CONFIG_DIR && sessionId !== "none" && !process.env.FAKE_NO_SAVE
+  ? `${process.env.CLAUDE_CONFIG_DIR}/projects/${process.cwd().replace(/[^a-zA-Z0-9]/g, "-")}/${sessionId}.jsonl`
+  : null;
+
+function emit(obj: any) {
   process.stdout.write(JSON.stringify(obj) + "\n");
+  // Like the real CLI's transcript: assistant blocks and tool results, with timestamps.
+  if (process.env.FAKE_TRANSCRIPT && transcriptFile && (obj.type === "assistant" || obj.type === "user") && !obj.isReplay) {
+    appendFileSync(transcriptFile, JSON.stringify({ ...obj, sessionId, timestamp: new Date().toISOString() }) + "\n");
+  }
 }
 
 if (mode === "fail") {
   process.stderr.write("boom: something failed\n");
   process.exit(1);
 }
+// The real CLI's answer to --resume with a session it has no transcript for.
+// A fork resumes the parent (--resume) under a new id (--session-id): the parent's transcript is the one that must exist.
+const resumed = args.includes("--resume") ? args[args.indexOf("--resume") + 1] : null;
+if (resumed && (mode === "nosession" || (process.env.CLAUDE_CONFIG_DIR && !existsSync(`${process.env.CLAUDE_CONFIG_DIR}/projects/${process.cwd().replace(/[^a-zA-Z0-9]/g, "-")}/${resumed}.jsonl`)))) {
+  emit({ type: "result", subtype: "error_during_execution", is_error: true, num_turns: 0, session_id: sessionId, errors: [`No conversation found with session ID: ${sessionId}`] });
+  process.exit(1);
+}
 
-emit({ type: "system", subtype: "init", session_id: sessionId, cwd: process.cwd() });
+emit({ type: "system", subtype: "init", session_id: sessionId, cwd: process.cwd(), ...initSkills });
+// Like the real CLI, save the transcript where --resume looks for it (only under a test's own CLAUDE_CONFIG_DIR).
+if (process.env.CLAUDE_CONFIG_DIR && sessionId !== "none" && !process.env.FAKE_NO_SAVE) {
+  const { mkdirSync } = await import("node:fs");
+  const dir = `${process.env.CLAUDE_CONFIG_DIR}/projects/${process.cwd().replace(/[^a-zA-Z0-9]/g, "-")}`;
+  mkdirSync(dir, { recursive: true });
+  appendFileSync(`${dir}/${sessionId}.jsonl`, JSON.stringify({ type: "user", sessionId, cwd: process.cwd(), message: { role: "user", content: first ?? "" } }) + "\n");
+}
 if (first !== null && mode !== "command") take(first);
 if (mode === "command") {
   emit({ type: "assistant", message: { model: "<synthetic>", content: [{ type: "text", text: "Command finished" }] } });
@@ -93,6 +125,36 @@ if (mode === "command") {
   while (streamIn && !eof) await new Promise<void>((resolve) => (wake = resolve));
   process.exit(0);
 }
+
+// The real CLI when the account's spend limit is hit: a synthetic API-error message, an is_error result, exit 1.
+if (mode === "limit") {
+  const text = process.env.FAKE_LIMIT_TEXT ?? "You've hit your individual spend limit · run /usage-credits to raise it, or visit claude.ai/admin-settings/usage · your session limit resets 4am (Asia/Kuala_Lumpur)";
+  emit({ type: "assistant", message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text }] }, error: "rate_limit", is_api_error_message: true });
+  emit({ type: "result", subtype: "success", is_error: true, api_error_status: 429, result: text, session_id: sessionId });
+  process.exit(1);
+}
+
+// The real CLI when a run reaches --max-budget-usd: an error_max_budget_usd result, exit 1.
+if (mode === "budget" && args.includes("--max-budget-usd")) {
+  const cap = args[args.indexOf("--max-budget-usd") + 1];
+  emit({ type: "result", subtype: "error_max_budget_usd", is_error: true, terminal_reason: "budget_exhausted", total_cost_usd: 0.06, session_id: sessionId, errors: [`Reached maximum budget ($${cap})`] });
+  process.exit(1);
+}
+// First run only with FAKE_ONCE_FILE (later runs behave): a passing API error or a silence.
+const onceFile = process.env.FAKE_ONCE_FILE;
+const firstTime = !onceFile || !existsSync(onceFile);
+if (onceFile && firstTime) appendFileSync(onceFile, "1");
+// The real CLI giving up on an overloaded API (or a lasting 400): a synthetic API-error message, an is_error result, exit 1.
+if ((mode === "overloaded" && firstTime) || mode === "badrequest") {
+  const [text, status] = mode === "overloaded"
+    ? ["API Error: 529 {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}", 529]
+    : ["API Error: 400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"prompt is too long\"}}", 400];
+  emit({ type: "assistant", message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text }] }, error: "unknown", is_api_error_message: true });
+  emit({ type: "result", subtype: "success", is_error: true, api_error_status: status, result: text, session_id: sessionId });
+  process.exit(1);
+}
+// A hung tool call: no output at all for a while.
+if (mode === "silent" && firstTime) await Bun.sleep(Number(process.env.FAKE_SILENT_MS ?? 30000));
 
 // one event split across two chunks to exercise line buffering
 const split = JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Edit", input: { file_path: `${process.cwd()}/src/app.ts` } }] } }) + "\n";
@@ -109,6 +171,14 @@ if (stepMs) {
     emit({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: cmd, content: `ok: ${cmd}` }] } });
     drain();
   }
+}
+
+if (process.env.FAKE_TRANSCRIPT) {
+  emit({ type: "assistant", message: { content: [{ type: "text", text: "Checking how rows are built." }] } });
+  emit({ type: "assistant", message: { content: [{ type: "tool_use", id: "tu_ls", name: "Bash", input: { command: "ls src" } }] } });
+  emit({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu_ls", content: "app.ts\nlib.ts" }] } });
+  emit({ type: "assistant", message: { content: [{ type: "tool_use", id: "tu_post", name: "mcp__ckanban__huddle_post", input: { text: "@main found it" } }] } });
+  emit({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tu_post", content: [{ type: "text", text: "Posted #7 as @qa." }] }] } });
 }
 
 if (mode === "child") {
@@ -131,7 +201,7 @@ if (mode === "partial") {
 // Asks the host for permission like the real CLI does with --permission-prompt-tool stdio.
 const decisions: string[] = [];
 if (mode === "asks") {
-  const asks = [["c1", "mcp__claude-in-chrome__navigate"], ["c2", "Bash"], ["c3", "other"]];
+  const asks = [["c1", "mcp__claude-in-chrome__navigate"], ["c2", "Bash"], ["c3", "other"], ["c4", "mcp__ckanban__move_ticket"]];
   for (const [id, tool] of asks) {
     emit({ type: "control_request", request_id: id, request: tool === "other"
       ? { subtype: "elicitation" }
@@ -165,7 +235,12 @@ for (const chunk of ["Work ", "complete."]) {
   if (process.env.FAKE_STREAM_DELAY) await Bun.sleep(Number(process.env.FAKE_STREAM_DELAY));
   emit({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: chunk } } });
 }
-emit({ type: "assistant", message: { content: [{ type: "text", text }] } });
+// FAKE_CTX: the message carries usage whose context (input + cache read + cache write) is FAKE_CTX tokens.
+const ctx = Number(process.env.FAKE_CTX ?? 0);
+const usage = ctx ? { usage: { input_tokens: 10, cache_read_input_tokens: ctx - 15, cache_creation_input_tokens: 5, output_tokens: 7 } } : {};
+emit({ type: "assistant", message: { ...(ctx ? { id: `msg_${sessionId}_${Date.now()}`, model: "claude-opus-5-5" } : {}), content: [{ type: "text", text }], ...usage } });
+// A subagent's message (its own small context) comes last: the session's size must not take it.
+if (ctx) emit({ type: "assistant", parent_tool_use_id: "tu_task", message: { id: `msg_sub_${Date.now()}`, model: "claude-opus-5-5", content: [{ type: "text", text: "sub" }], usage: { input_tokens: 3, cache_read_input_tokens: 500, output_tokens: 1 } } });
 emit({ type: "result", subtype: "success", is_error: false, result: text, total_cost_usd: 0.01, duration_ms: 100, session_id: sessionId });
 
 // The real CLI kills background tasks at end of input; otherwise it starts a turn when one finishes
@@ -177,7 +252,7 @@ if (background) {
   emit({ type: "system", subtype: "background_tasks_changed", tasks: [] });
   emit({ type: "system", subtype: "task_notification", task_id: "bg1", status });
   if (!eof && mode === "background") {
-    emit({ type: "system", subtype: "init", session_id: sessionId, cwd: process.cwd() });
+    emit({ type: "system", subtype: "init", session_id: sessionId, cwd: process.cwd(), ...initSkills });
     const reply = `Background result: ${status}\nCKANBAN_RESULT: ${JSON.stringify({ status: "done", prUrl: pr, summary: "bg done" })}`;
     emit({ type: "assistant", message: { content: [{ type: "text", text: reply }] } });
     emit({ type: "result", subtype: "success", is_error: false, result: reply, session_id: sessionId });

@@ -20,6 +20,8 @@ beforeEach(async () => {
   board = new Board(store, bus, { claudeBin: FAKE, isSessionLive: async () => false, notify: (t) => notes.push(t), planWakeDelayMs: 300 });
   const p: Profile = { name: "P", slug: "p", path: await makeRepo(), baseBranch: "main", maxParallel: 5, model: null, createdAt: new Date().toISOString() };
   store.saveProfile(p);
+  // Fake claude saves its sessions here, so runs can resume them.
+  process.env.CLAUDE_CONFIG_DIR = tempDir("ck-claude-");
   process.env.FAKE_MODE = "ok";
   process.env.FAKE_ARGS_FILE = join(tempDir("ck-args-"), "args.jsonl");
   delete process.env.FAKE_PR;
@@ -28,6 +30,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await board.shutdown();
   delete process.env.FAKE_BLOCK_MATCH;
+  delete process.env.CLAUDE_CONFIG_DIR;
   delete process.env.FAKE_STEP_MS;
 }, 15000);
 
@@ -96,7 +99,8 @@ test("children failing together wake the planner once; an unresolved dead end ma
   expect(p.plan?.wakeups).toBe(1);
   expect(p.plan?.state).toBe("stuck");
   expect(p.plan?.reason).toContain("nothing can run");
-  expect(notes).toEqual(["Plan stuck: Plan"]);
+  // A stuck plan needs the user: the Notifier (notify.ts) tells them, not a board banner.
+  expect(notes).toEqual([]);
   const wake = store.listComments("p", planner.id).find((c) => c.text.startsWith("Plan stuck"));
   expect(wake).toBeDefined();
 });
@@ -172,9 +176,14 @@ test("children that need the emulator run one at a time; a child without needs r
   expect(kids[0].needs).toEqual(["emulator"]);
   const seen = liveTracker();
   board.startPlan("p", planner.id, { maxConcurrent: 3 });
-  // Right away: E1 holds the emulator, E2 and E3 wait for it in Backlog.
-  expect(board.resourceState("p", store.getTicket("p", kids[1].id)!)).toEqual({ holding: false, waitingFor: ["emulator"] });
-  expect(store.getTicket("p", kids[1].id)!.status).toBe("backlog");
+  // Right away: one E child holds the emulator (whichever the plan picked first), the other two wait for it in Backlog.
+  const emuKids = kids.slice(0, 3).map((k) => store.getTicket("p", k.id)!);
+  const holders = emuKids.filter((t) => board.resourceState("p", t)?.holding);
+  expect(holders.length).toBe(1);
+  for (const t of emuKids.filter((t) => t.id !== holders[0].id)) {
+    expect(board.resourceState("p", t)).toEqual({ holding: false, waitingFor: ["emulator"] });
+    expect(t.status).toBe("backlog");
+  }
   await settle();
   const emu = (s: string[]) => s.filter((t) => t.startsWith("E")).length;
   expect(Math.max(...seen.map(emu))).toBe(1);
@@ -273,9 +282,33 @@ test("planner rights: a reply to the user's own chat message, or any run of a ru
   expect(board.isRunning("p", w.id)).toBe(true);
   expect(board.plannerRights("p", w.id)).toBeNull();
   await settle();
-  // Nor a chat on a ticket whose plan is done.
+  // A plan that is done: the user's own message still grants rights (tidy up its children), wake-ups don't.
   store.updateTicket("p", mgr.id, { plan: { state: "done", maxConcurrent: 2, wakeups: 0, startedAt: "", originalCount: 1 } });
-  await board.chat("p", mgr.id, "again");
+  await board.chat("p", mgr.id, "mark all children done");
+  expect(board.plannerRights("p", mgr.id)?.id).toBe(mgr.id);
+  await settle();
+  await board.chat("p", mgr.id, "from the planner", { fromPlanner: true });
   expect(board.plannerRights("p", mgr.id)).toBeNull();
+  await settle();
+}, 30000);
+
+test("user-request rights: only a Planning chat's reply to the user's own message", async () => {
+  process.env.FAKE_STEP_MS = "100";
+  const t = await board.createTicket("p", { title: "Shape me", body: "", status: "backlog" });
+  expect(board.userRequestRights("p", t.id)).toBeNull();
+  await board.chat("p", t.id, "move X to done");
+  expect(board.userRequestRights("p", t.id)?.id).toBe(t.id);
+  await settle();
+  expect(board.userRequestRights("p", t.id)).toBeNull();
+  // A message from another run (chat_ticket) doesn't hand the user's rights on.
+  await board.chat("p", t.id, "from a run", { fromPlanner: true });
+  expect(board.isRunning("p", t.id)).toBe(true);
+  expect(board.userRequestRights("p", t.id)).toBeNull();
+  await settle();
+  // A chat outside Backlog/Planning acts (bypassPermissions) and keeps the planner-only rights.
+  const r = await board.createTicket("p", { title: "Reviewed", body: "", status: "review" });
+  await board.chat("p", r.id, "move X to done");
+  expect(board.userChatRun("p", r.id)).toBe(true);
+  expect(board.userRequestRights("p", r.id)).toBeNull();
   await settle();
 }, 30000);

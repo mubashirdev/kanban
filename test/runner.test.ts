@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { mcpConfig } from "../src/server/agents";
-import { buildArgs, describeAsk, permissionAnswer, startRun } from "../src/server/runner";
+import { buildArgs, controlResponse, describeAsk, inheritedEnv, permissionAnswer, startRun } from "../src/server/runner";
 import { tempDir } from "./helpers";
 
 const FAKE = join(import.meta.dir, "fixtures", "fake-claude.ts");
@@ -156,8 +156,11 @@ test("permission asks: Chrome tools are allowed, other tools denied, other reque
   const seen: any[] = [];
   const r = await startRun({ bin: FAKE, cwd: tempDir(), args: STREAM, input: "open example.com", onEvent: (e) => seen.push(e) }).done;
   expect(r.code).toBe(0);
-  expect(r.events.at(-1).result).toContain("Asks: mcp__claude-in-chrome__navigate=allow Bash=deny other=error");
+  expect(r.events.at(-1).result).toContain("Asks: mcp__claude-in-chrome__navigate=allow Bash=deny other=error mcp__ckanban__move_ticket=deny");
   expect(seen.some((e) => e.type === "control_request")).toBe(false);
+  // A Planning run (plan mode) may use the board tools; the daemon still checks each call.
+  const p = await startRun({ bin: FAKE, cwd: tempDir(), args: STREAM, input: "move t_1 to done", planning: true, onEvent: () => {} }).done;
+  expect(p.events.at(-1).result).toContain("Bash=deny other=error mcp__ckanban__move_ticket=allow");
 }));
 
 test("permission asks handed to the user wait for their answer", withMode("asks", async () => {
@@ -230,3 +233,64 @@ test("stop while waiting on a background task ends the run", withMode("backgroun
     delete process.env.FAKE_BG_MS;
   }
 }), 10000);
+
+test("idleMs (huddle monitor mode) keeps input open between turns, then ends it after the idle timeout", withMode("ok", async () => {
+  const results: number[] = [];
+  const t0 = Date.now();
+  const h = startRun({
+    bin: FAKE, cwd: tempDir(), args: ["--input-format", "stream-json", "--replay-user-messages"], input: "first", idleMs: 400,
+    onEvent: (e) => { if (e.type === "result") results.push(Date.now()); },
+  });
+  let exited = false;
+  void h.done.then(() => (exited = true));
+  while (!results.length) await Bun.sleep(10);
+  // Idle after its turn, but still alive: a message reaches the live session.
+  await Bun.sleep(150);
+  expect(exited).toBe(false);
+  expect(h.send("second")).toBe(true);
+  while (results.length < 2) await Bun.sleep(10);
+  const r = await h.done;
+  expect(r.code).toBe(0);
+  expect(r.events.filter((e) => e.type === "result").map((e) => e.result.split("\n")[0])).toEqual(["Work complete.", "Reply: second"]);
+  // It ended about idleMs after the last turn, not right away.
+  expect(Date.now() - results[1]).toBeGreaterThanOrEqual(350);
+  expect(Date.now() - t0).toBeLessThan(5000);
+}), 10000);
+
+test("without idleMs input ends as soon as Claude is idle; endWhenIdle ends a kept-open run at once", withMode("ok", async () => {
+  const quick = startRun({ bin: FAKE, cwd: tempDir(), args: ["--input-format", "stream-json", "--replay-user-messages"], input: "x", onEvent: () => {} });
+  const t0 = Date.now();
+  await quick.done;
+  expect(Date.now() - t0).toBeLessThan(3000);
+  let idle = false;
+  const kept = startRun({
+    bin: FAKE, cwd: tempDir(), args: ["--input-format", "stream-json", "--replay-user-messages"], input: "x", idleMs: 60_000,
+    onEvent: (e) => { if (e.type === "result") idle = true; },
+  });
+  while (!idle) await Bun.sleep(10);
+  const t1 = Date.now();
+  kept.endWhenIdle();
+  expect((await kept.done).code).toBe(0);
+  expect(Date.now() - t1).toBeLessThan(3000);
+}), 10000);
+
+test("controlResponse allows the board tools only for Planning runs; Chrome and huddle tools work for every run", () => {
+  const ask = (tool: string, planning?: boolean) =>
+    (controlResponse({ request_id: "r", request: { subtype: "can_use_tool", tool_name: tool, input: { id: "t_1" } } }, planning) as any).response.response.behavior;
+  const board = ["move_ticket", "update_ticket", "comment_ticket", "create_ticket", "chat_ticket", "stop_ticket", "plan_control", "adopt_tickets"];
+  for (const t of board) {
+    expect(ask(`mcp__ckanban__${t}`, true)).toBe("allow");
+    expect(ask(`mcp__ckanban__${t}`)).toBe("deny");
+  }
+  for (const planning of [false, true]) {
+    expect(ask("mcp__ckanban__huddle_post", planning)).toBe("allow");
+    expect(ask("mcp__claude-in-chrome__navigate", planning)).toBe("allow");
+    // Deleting, file edits and shell commands stay blocked in plan mode.
+    for (const t of ["mcp__ckanban__delete_ticket", "mcp__ckanban__run_schedule", "Edit", "Write", "Bash"]) expect(ask(t, planning)).toBe("deny");
+  }
+});
+
+test("a run doesn't inherit the daemon's run identity vars (a daemon started from a run)", () => {
+  const env = inheritedEnv({ PATH: "/bin", CKANBAN_TICKET: "p/t_1", CKANBAN_HUDDLE_AGENT: "h/x/tok", CKANBAN_OUTPUT_DIR: "/o", CKANBAN_PORT: "1" });
+  expect(env).toEqual({ PATH: "/bin", CKANBAN_PORT: "1" });
+});

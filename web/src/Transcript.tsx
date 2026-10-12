@@ -2,6 +2,8 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { useEffect, useMemo, useRef } from "react";
 import { copy, type ActivityEntry } from "./api";
+import { opensNewTab } from "./links";
+import { sourceLabel, splitCommandMentions, type SlashCommand } from "./slashText";
 
 function textOf(content: unknown): string {
   if (typeof content === "string") return content;
@@ -25,14 +27,22 @@ const PURIFY = {
 // Pasted images: the UI URL, or the absolute file path Claude was given in its prompt (seen in the chat history).
 const ATTACHMENT_SRC = /(?:^|\/)attachments\/([0-9a-f]{32}\.(?:png|jpg|gif|webp))$/;
 
-/** Runs after sanitizing, so the copy button it adds is ours, not the agent's. */
-function enhance(html: string): string {
+/** Runs after sanitizing, so the chips and copy buttons it adds are ours, not the agent's. */
+function enhance(html: string, commands?: SlashCommand[] | null, handles?: string[]): string {
   const doc = new DOMParser().parseFromString(html, "text/html");
+  if (commands?.length) mentionChips(doc, commands);
+  if (handles?.length) handleChips(doc, handles);
   doc.querySelectorAll("img").forEach((img) => {
     const m = (img.getAttribute("src") ?? "").match(ATTACHMENT_SRC);
     if (!m) return;
     img.setAttribute("src", `/api/attachments/${m[1]}`);
     img.classList.add("attachment");
+  });
+  // Clicking a link must not replace the board: open it in a new tab.
+  doc.querySelectorAll("a").forEach((a) => {
+    if (!opensNewTab(a.getAttribute("href"))) return;
+    a.setAttribute("target", "_blank");
+    a.setAttribute("rel", "noopener noreferrer");
   });
   doc.querySelectorAll("pre").forEach((pre) => {
     const code = pre.querySelector("code");
@@ -61,8 +71,66 @@ function colorDiff(doc: Document, code: Element) {
   }
 }
 
-export function Markdown({ text }: { text: string }) {
-  const html = useMemo(() => enhance(DOMPurify.sanitize(marked.parse(text, { async: false, breaks: true }) as string, PURIFY)), [text]);
+/** `/name` of a known skill or command in prose (not code or links) becomes a chip; hover tells what it is. */
+function mentionChips(doc: Document, commands: SlashCommand[]) {
+  const byName = new Map(commands.map((c) => [c.name, c]));
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  const nodes: Text[] = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode as Text);
+  for (const node of nodes) {
+    const text = node.nodeValue ?? "";
+    if (!text.includes("/") || node.parentElement?.closest("code, pre, a")) continue;
+    const parts = splitCommandMentions(text, (n) => byName.has(n));
+    if (parts.every((p) => typeof p === "string")) continue;
+    const frag = doc.createDocumentFragment();
+    for (const p of parts) {
+      if (typeof p === "string") { frag.append(p); continue; }
+      const c = byName.get(p.name)!;
+      const chip = doc.createElement("span");
+      chip.className = "cmd-chip mention";
+      chip.textContent = `/${p.name}`;
+      chip.title = `${c.kind === "skill" ? "Skill" : "Command"} · ${sourceLabel(c)}${c.description ? `\n${c.description}` : ""}`;
+      frag.append(chip);
+    }
+    node.replaceWith(frag);
+  }
+}
+
+/** `@handle` of a huddle participant (or @all) in prose (not code or links) becomes a chip. */
+function handleChips(doc: Document, handles: string[]) {
+  const known = new Set(handles.map((h) => h.toLowerCase()));
+  const re = /(^|[^\w@./-])@([a-z0-9][a-z0-9_-]*)/gi;
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  const nodes: Text[] = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode as Text);
+  for (const node of nodes) {
+    const text = node.nodeValue ?? "";
+    if (!text.includes("@") || node.parentElement?.closest("code, pre, a")) continue;
+    const frag = doc.createDocumentFragment();
+    let last = 0;
+    for (const m of text.matchAll(re)) {
+      const name = m[2].replace(/[-_]+$/, "");
+      if (!known.has(name.toLowerCase())) continue;
+      const at = m.index! + m[1].length;
+      frag.append(text.slice(last, at));
+      const chip = doc.createElement("span");
+      chip.className = name.toLowerCase() === "you" ? "at-chip me" : "at-chip";
+      chip.textContent = `@${name}`;
+      frag.append(chip);
+      last = at + 1 + name.length;
+    }
+    if (!last) continue;
+    frag.append(text.slice(last));
+    node.replaceWith(frag);
+  }
+}
+
+/** `commands`: `/name` mentions of these render as chips (ticket descriptions). `handles`: `@handle` mentions (huddles). */
+export function Markdown({ text, commands, handles }: { text: string; commands?: SlashCommand[] | null; handles?: string[] }) {
+  const html = useMemo(
+    () => enhance(DOMPurify.sanitize(marked.parse(text, { async: false, breaks: true }) as string, PURIFY), commands, handles),
+    [text, commands, handles?.join(" ")],
+  );
   return (
     <div className="md" dangerouslySetInnerHTML={{ __html: html }}
       onClick={(e) => {

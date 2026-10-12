@@ -231,6 +231,8 @@ export function startCodexRun(options: {
   return {
     done,
     send: () => false,
+    endWhenIdle() {},
+    keepWaiting() {},
     get stopped() {
       return stopped;
     },

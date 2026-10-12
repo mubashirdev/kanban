@@ -1,10 +1,11 @@
 import { PRIORITIES, TEMPLATES } from "./ticketTemplates";
 import { useRef, useState } from "react";
 import type { ClaudeSession, Status, TicketMode, Ticket } from "./api";
+import { DescriptionEditor } from "./DescriptionEditor";
 import { useImagePaste } from "./imagePaste";
 import { Modal } from "./Modal";
 import { SessionPicker, sessionLabel } from "./SessionPicker";
-import { useSnippetPicker } from "./SnippetPicker";
+import { StarToggle } from "./StarToggle";
 
 export function NewTicketDialog({
   slug,
@@ -20,6 +21,7 @@ export function NewTicketDialog({
     body: string;
     status: Status;
     sessionId?: string;
+    important?: boolean;
     mode?: TicketMode;
     agent?: Ticket["agent"];
     priority?: Ticket["priority"];
@@ -30,6 +32,7 @@ export function NewTicketDialog({
   const [mode, setMode] = useState<TicketMode>("interview");
   const [session, setSession] = useState<ClaudeSession | null>(null),
     [picking, setPicking] = useState(false);
+  const [important, setImportant] = useState(false);
   const [title, setTitle] = useState(""),
     [body, setBody] = useState(""),
     [labels, setLabels] = useState("");
@@ -42,7 +45,6 @@ export function NewTicketDialog({
   const images = useImagePaste(setBody),
     template = TEMPLATES.find((t) => t.kind === kind)!;
   const bodyRef = useRef<HTMLTextAreaElement>(null);
-  const snippets = useSnippetPicker({ slug, ref: bodyRef, setValue: setBody });
   const startStatus: Status = mode === "interview" ? "planning" : "ready";
   const submit = async (status: Status) => {
     if (busy || !title.trim() || images.uploading) return;
@@ -62,6 +64,7 @@ export function NewTicketDialog({
           .map((s) => s.trim())
           .filter(Boolean),
         sessionId: session?.id,
+        ...(important ? { important } : {}),
       });
     } catch (e: any) {
       setError(e.message);
@@ -118,33 +121,33 @@ export function NewTicketDialog({
           }
         }}
       >
-        <label>
-          Title
-          <input
-            autoFocus
-            value={title}
-            disabled={busy}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder={
-              kind === "bug" ? "What is broken?" : "What needs to happen?"
-            }
-          />
-        </label>
+        <div className="field">
+          <label htmlFor="new-ticket-title">Title</label>
+          <div className="title-row">
+            <input
+              id="new-ticket-title"
+              autoFocus
+              value={title}
+              disabled={busy}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder={
+                kind === "bug" ? "What is broken?" : "What needs to happen?"
+              }
+            />
+            <StarToggle on={important} onChange={setImportant} />
+          </div>
+        </div>
         <label>
           Description
-          <textarea
-            ref={bodyRef}
-            rows={5}
+          <DescriptionEditor
+            slug={slug}
             value={body}
-            disabled={busy}
-            onChange={(e) => setBody(e.target.value)}
+            setValue={setBody}
+            images={images}
+            inputRef={bodyRef}
+            rows={5}
             placeholder="Context, expected result, and acceptance criteria…"
-            className={images.dragOver ? "drop-target" : undefined}
-            {...images.handlers}
-            {...snippets.handlers}
-            onKeyDown={snippets.onKeyDown}
           />
-          {snippets.popup}
           <span className="muted small">
             {template.hint} · Markdown and pasted images supported
           </span>
@@ -183,11 +186,6 @@ export function NewTicketDialog({
             </select>
           </label>
         </div>
-        {images.error && (
-          <p className="form-error" role="alert">
-            {images.error}
-          </p>
-        )}
         <fieldset className="ticket-workflow" disabled={busy}>
           <legend>How to start</legend>
           <div

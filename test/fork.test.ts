@@ -16,12 +16,13 @@ let store: Store, bus: Bus, board: Board, argsFile: string;
 beforeEach(() => {
   store = new Store(tempDir("ck-home-"));
   bus = new Bus();
-  board = new Board(store, bus, { claudeBin: FAKE_CLAUDE, isSessionLive: async () => false, sessionExists: () => false });
+  board = new Board(store, bus, { claudeBin: FAKE_CLAUDE, isSessionLive: async () => false });
   argsFile = join(tempDir("ck-args-"), "args.jsonl");
-  Object.assign(process.env, { FAKE_ARGS_FILE: argsFile, FAKE_MODE: "ok" });
+  // The fake saves its sessions here, so the board can tell which ones exist.
+  Object.assign(process.env, { FAKE_ARGS_FILE: argsFile, FAKE_MODE: "ok", CLAUDE_CONFIG_DIR: tempDir("ck-claude-") });
 });
 afterEach(() => {
-  for (const key of ["FAKE_ARGS_FILE", "FAKE_MODE"]) {
+  for (const key of ["FAKE_ARGS_FILE", "FAKE_MODE", "CLAUDE_CONFIG_DIR"]) {
     if (saved[key] === undefined) delete process.env[key];
     else process.env[key] = saved[key];
   }

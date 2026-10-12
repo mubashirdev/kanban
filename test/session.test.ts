@@ -194,6 +194,24 @@ test("move marker is hidden from text and exposed as moved", () => {
   expect(s.entries[0].moved).toBe("planning");
 });
 
+test("move marker on a blocked reply shows no move: the board kept the card", () => {
+  const tag = '<ckanban-move to="planning"/>';
+  const result = (status: string) => `CKANBAN_RESULT: {"status":"${status}","prUrl":null,"summary":"x"}`;
+  const blocked = parseSession(asst([{ type: "text", text: `Fixes A-H.\n${tag}\n${result("blocked")}` }], "2026-09-29T04:00:00Z"));
+  expect(blocked.entries[0].moved).toBeUndefined();
+  expect(blocked.entries[0].text).not.toContain("ckanban-move");
+  const done = parseSession(asst([{ type: "text", text: `Fixes A-H.\n${tag}\n${result("done")}` }], "2026-09-29T04:00:00Z"));
+  expect(done.entries[0].moved).toBe("planning");
+  // The result line in a later block of the same reply still counts; the next user message ends the reply.
+  const split = parseSession([
+    asst([{ type: "text", text: `Fixes A-H.\n${tag}` }], "2026-09-29T04:00:00Z"),
+    asst([{ type: "text", text: result("blocked") }], "2026-09-29T04:00:01Z"),
+    user("Ideas?", "2026-09-29T04:01:00Z"),
+    asst([{ type: "text", text: `Some ideas.\n${tag}` }], "2026-09-29T04:01:01Z"),
+  ].join("\n"));
+  expect(split.entries.map((e) => e.moved)).toEqual([undefined, undefined, undefined, "planning"]);
+});
+
 test("stay marker is hidden from text", () => {
   const s = parseSession(asst([{ type: "text", text: "Proposed 1 ticket.\n<ckanban-stay/>" }], "2026-09-29T04:00:00Z"));
   expect(s.entries[0].text).toBe("Proposed 1 ticket.");
@@ -335,6 +353,44 @@ test("parseSession: propose_branch shows a Branch card", () => {
   expect(parseSession(asst([{ type: "tool_use", id: "b2", name: "propose_branch", input: {} }], "1")).entries[0].branch).toEqual({ reason: "" });
 });
 
+test("parseSession: propose_delete shows a delete card; a refused call shows none", () => {
+  const s = parseSession(asst([{ type: "tool_use", id: "toolu_d", name: "mcp__ckanban__propose_delete", input: { ids: [" t_1 ", "t_2", "t_1", 3], reason: " replaced " } }], "2026-10-10T01:00:00Z"));
+  expect(s.entries).toEqual([{ uuid: "toolu_d", at: "2026-10-10T01:00:00Z", role: "assistant", kind: "text", text: "", deletion: { ids: ["t_1", "t_2"], reason: "replaced" } }]);
+  expect(s.lastMessage?.text).toBe("Asked to delete 2 tickets");
+  const refused = parseSession([
+    asst([{ type: "tool_use", id: "toolu_own", name: "mcp__ckanban__propose_delete", input: { ids: ["t_9"], reason: "x" } }], "2026-10-10T01:00:00Z"),
+    user([{ type: "tool_result", tool_use_id: "toolu_own", is_error: true, content: [{ type: "text", text: "t_9 is this chat's own ticket" }] }], "2026-10-10T01:00:01Z"),
+  ].join("\n"));
+  expect(refused.entries.some((e) => e.deletion)).toBe(false);
+  expect(parseSession(asst([{ type: "tool_use", id: "x", name: "propose_delete", input: { ids: [] } }], "1")).entries[0].kind).toBe("tool");
+});
+
+test("parseSession: propose_teammate shows a teammate card; refused or broken calls show none; pending until the user's next message", () => {
+  const input = { name: "WA Watcher", role: " WhatsApp responder ", prompt: " Draft replies. ", model: "", mode: "tagged", workspace: "shared", canEdit: false, why: " No teammate watches a web inbox. " };
+  const s = parseSession(asst([{ type: "tool_use", id: "toolu_t", name: "mcp__ckanban__propose_teammate", input }], "2026-10-10T01:00:00Z"));
+  expect(s.entries).toEqual([{
+    uuid: "toolu_t", at: "2026-10-10T01:00:00Z", role: "assistant", kind: "text", text: "",
+    teammate: { name: "wa-watcher", role: "WhatsApp responder", prompt: "Draft replies.", model: null, mode: "tagged", workspace: "shared", canEdit: false, why: "No teammate watches a web inbox." },
+  }]);
+  expect(s.lastMessage?.text).toBe("Proposed teammate @wa-watcher");
+  expect(s.pendingTeammates).toEqual(["toolu_t"]);
+  // Fields Claude left out stay out (an existing teammate keeps its values for them).
+  expect(parseSession(asst([{ type: "tool_use", id: "t2", name: "propose_teammate", input: { name: "qa", prompt: "p", why: "w" } }], "1")).entries[0].teammate).toEqual({ name: "qa", prompt: "p", why: "w" });
+  const refused = parseSession([
+    asst([{ type: "tool_use", id: "toolu_bad", name: "mcp__ckanban__propose_teammate", input }], "2026-10-10T01:00:00Z"),
+    user([{ type: "tool_result", tool_use_id: "toolu_bad", is_error: true, content: [{ type: "text", text: "nope" }] }], "2026-10-10T01:00:01Z"),
+  ].join("\n"));
+  expect(refused.entries.some((e) => e.teammate)).toBe(false);
+  for (const bad of [{ name: "x", prompt: "p" }, { name: "you", prompt: "p", why: "w" }, { name: "x", prompt: "p", why: "w", mode: "loud" }]) {
+    expect(parseSession(asst([{ type: "tool_use", id: "x", name: "propose_teammate", input: bad }], "1")).entries[0].kind).toBe("tool");
+  }
+  const answered = parseSession([
+    asst([{ type: "tool_use", id: "toolu_t", name: "mcp__ckanban__propose_teammate", input }], "2026-10-10T01:00:00Z"),
+    user("thanks", "2026-10-10T01:00:01Z"),
+  ].join("\n"));
+  expect(answered.pendingTeammates).toEqual([]);
+});
+
 test("parseSession: an unreadable planning tool call falls back to a tool line", () => {
   const s = parseSession(asst([{ type: "tool_use", id: "x", name: "mcp__ckanban__propose_tickets", input: { tickets: "nope" } }], "1"));
   expect(s.entries[0].kind).toBe("tool");
@@ -411,4 +467,33 @@ test("pollSessions can check only running tickets and keeps the others' state", 
   expect(seen).toEqual([busy.id]);
   pollSessions(store, bus, cache, state);
   expect(seen).toEqual([busy.id, idle.id]);
+});
+
+test("parseSession: huddle digests are huddle entries, not the user's; Claude's reply to them doesn't need the user", () => {
+  const digest = "[#1] (system) Huddle started\n\n[#2] @qa-1: @main look";
+  const raw = [
+    user("hi", "2026-10-10T01:00:00Z"),
+    asst([{ type: "text", text: "Hello" }], "2026-10-10T01:00:01Z"),
+    user(`${digest}\n\n<ckanban-context note="Huddle messages" huddle="h_abc">\nrules\n</ckanban-context>`, "2026-10-10T01:00:02Z"),
+  ].join("\n");
+  const s = parseSession(raw);
+  const e = s.entries.at(-1)!;
+  expect(e).toMatchObject({ role: "user", kind: "text", text: digest, huddleId: "h_abc", peer: { dir: "in", ticketId: null } });
+  expect(s.lastMessage).toMatchObject({ role: "user", from: "huddle" });
+  const replied = parseSession(`${raw}\n${asst([{ type: "text", text: "Posted in the huddle." }], "2026-10-10T01:00:03Z")}`);
+  expect(replied.lastMessage).toMatchObject({ role: "assistant", peerReply: true });
+  expect(parseSession(RAW).lastMessage?.from).toBeUndefined();
+});
+
+test("parseSession: a propose_huddle card with a template and no roster", () => {
+  const raw = [
+    asst([{ type: "tool_use", id: "h1", name: "mcp__ckanban__propose_huddle", input: { template: "design-review", reason: "Review the feature" } }], "2026-10-10T01:00:00Z"),
+    asst([{ type: "tool_use", id: "h2", name: "mcp__ckanban__propose_huddle", input: { template: "design-review", roster: [{ preset: "qa" }] } }], "2026-10-10T01:00:01Z"),
+    asst([{ type: "tool_use", id: "h3", name: "mcp__ckanban__propose_huddle", input: { reason: "no roster, no template" } }], "2026-10-10T01:00:02Z"),
+  ].join("\n");
+  const cards = parseSession(raw).entries.filter((e: any) => e.huddle).map((e: any) => e.huddle);
+  expect(cards).toEqual([
+    { roster: [], reason: "Review the feature", template: "design-review" },
+    { roster: [{ preset: "qa" }], reason: "", template: "design-review" },
+  ]);
 });

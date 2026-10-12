@@ -2,6 +2,7 @@
 import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { sha256, sumFor } from "./checksum";
 import { boardPort, ClientError } from "./client";
 import { serveStdio } from "./mcp-server";
 import { runArtifactJob } from "./server/artifact";
@@ -9,7 +10,7 @@ import { LABEL, PLIST_PATH, plistXml } from "./server/launchd";
 import { RESTART_MAX_WAIT_MS } from "./server/board";
 import { startDaemon } from "./server/main";
 import { AgentError } from "./server/agents";
-import { defaultRoot } from "./server/store";
+import { defaultRoot, Store } from "./server/store";
 import { latestRelease } from "./server/update";
 import { IS_BINARY, VERSION } from "./server/version";
 import { mcpCommand, profilesCommand, ticketCommand, TICKET_USAGE } from "./ticket-cli";
@@ -25,6 +26,7 @@ Usage:
   ckanban uninstall    Stop and remove the launchd daemon
   ckanban open         Open the board in your browser
   ckanban update       Update to the latest release and restart the daemon
+                       Phone access over Tailscale (tailnet only, your login only)
   ckanban artifact publish <file> [--url <artifact url>] [--title <title>]
                        Publish a page to claude.ai (works from headless board runs)
   ckanban artifact read <url> [--out <file>]
@@ -140,14 +142,29 @@ async function update() {
     console.error(`No build for darwin-${process.arch} in release v${rel.version}.`);
     process.exit(1);
   }
+  const sumsAsset = rel.assets.find((a) => a.name === "SHA256SUMS");
+  if (!sumsAsset) {
+    console.error(`Release v${rel.version} has no SHA256SUMS, so the download can't be verified. Not updated.`);
+    process.exit(1);
+  }
   console.log(`Updating v${VERSION} → v${rel.version}…`);
-  const res = await fetch(asset.url);
-  if (!res.ok) {
-    console.error(`Download failed: ${res.status} ${res.statusText}`);
+  const [res, sumsRes] = await Promise.all([fetch(asset.url), fetch(sumsAsset.url)]);
+  if (!res.ok || !sumsRes.ok) {
+    const bad = res.ok ? sumsRes : res;
+    console.error(`Download failed: ${bad.status} ${bad.statusText}`);
+    process.exit(1);
+  }
+  const bin = await res.arrayBuffer();
+  const want = sumFor(await sumsRes.text(), asset.name);
+  const got = sha256(bin);
+  if (!want || want !== got) {
+    console.error(want
+      ? `Checksum mismatch for ${asset.name}: expected ${want}, got ${got}. The download may be corrupt or tampered with. Not updated.`
+      : `SHA256SUMS has no entry for ${asset.name}. Not updated.`);
     process.exit(1);
   }
   const tmp = `${process.execPath}.new`;
-  await Bun.write(tmp, res);
+  await Bun.write(tmp, bin);
   chmodSync(tmp, 0o755);
   renameSync(tmp, process.execPath);
   const running = (await quiet(["launchctl", "print", `gui/${process.getuid!()}/${LABEL}`])) === 0;

@@ -10,12 +10,14 @@ import { avatarColor, avatarLetter } from "./avatar";
 import { BugReportDialog } from "./BugReportDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
 import { HeaderMenu } from "./HeaderMenu";
-import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, ColumnsIcon, ContrastIcon, CopyIcon, DollarIcon, GearIcon, HistoryIcon, KeyboardIcon, PlusIcon, PlugIcon, RefreshIcon, SearchIcon, SlidersIcon, TerminalIcon } from "./icons";
+import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, ColumnsIcon, ContrastIcon, CopyIcon, DollarIcon, GearIcon, HistoryIcon, KeyboardIcon, PlusIcon, PlugIcon, RefreshIcon, SearchIcon, SlidersIcon, TeamIcon, TerminalIcon } from "./icons";
 import { buzz } from "./haptics";
 import { Inbox } from "./Inbox";
+import { AlertsDialog } from "./AlertsDialog";
 import { UsagePill } from "./UsagePill";
 import { anyLayerOpen } from "./layers";
-import { Board, boardOrder } from "./Board";
+import { Board } from "./Board";
+import { boardColumnOf, columnNeighbours, columnOrder } from "./columns";
 import { NewTicketDialog } from "./NewTicketDialog";
 import { DailyCostDialog } from "./DailyCostDialog";
 import { DefaultModelsDialog } from "./DefaultModelsDialog";
@@ -26,7 +28,8 @@ import { Select } from "./Select";
 import { SearchDialog } from "./SearchDialog";
 import { BoardSwitcher, ShortcutsDialog } from "./Shortcuts";
 import { CommandBar, type CommandAction } from "./CommandBar";
-import { boardDigit, cardDir, stepBoard, stepCard, type CardPos } from "./keynav";
+import { boardDigit, cardDir, isTyping, stepBoard, stepCard, type CardPos } from "./keynav";
+import { KeyHint, useHintReveal } from "./KeyHint";
 import { TicketDrawer } from "./TicketDrawer";
 import { toast, Toaster } from "./toast";
 import { PHONE, useMediaQuery } from "./useMediaQuery";
@@ -35,6 +38,10 @@ import { InstallDialog, usePwa } from "./Pwa";
 
 import type { DockTab } from "./Dock";
 import { setThemeChoice, themeChoice, type ThemeChoice } from "./theme";
+import { SampleOffer } from "./SampleOffer";
+import type { HuddleSeed, TeamRequest } from "./Team";
+import { useBoardHuddles } from "./huddle";
+import { hasOpenPr, runCounts } from "./boardStats";
 
 // xterm.js and highlight.js only load once the panel is opened. After an upgrade the old chunk is gone:
 // reload once to get the new build instead of blanking the whole page.
@@ -76,6 +83,9 @@ function saveOpen(slug: string, id: string | null) {
   } catch {}
 }
 
+/** Board slug the sample ticket is offered on, until it is started or dismissed. */
+const SAMPLE_OFFER = "ckanban.sample-offer";
+
 /** URL hash is the source of truth for what's open: #/<profile> or #/<profile>/<ticketId>. */
 function parseHash(): { slug: string | null; ticket: string | null } {
   const [, slug, ticket] = decodeURIComponent(location.hash.replace(/^#/, "")).split("/");
@@ -85,11 +95,6 @@ function parseHash(): { slug: string | null; ticket: string | null } {
 function hashFor(slug: string | null, ticket?: string | null): string {
   if (!slug) return "#/";
   return `#/${encodeURIComponent(slug)}${ticket ? `/${encodeURIComponent(ticket)}` : ""}`;
-}
-
-function isTyping(e: KeyboardEvent): boolean {
-  const el = e.target as HTMLElement | null;
-  return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
 }
 
 /** Cards on screen, per expanded column, in board order. */
@@ -117,9 +122,9 @@ function focusCard(pos: CardPos | null, grid = cardGrid()) {
 
 /** Board filter chips; several on = tickets matching any of them. */
 const FILTERS = [
-  { id: "you", label: "Needs you", test: (t: Ticket) => !!t.attention && t.status !== "in_progress" && !t.running },
+  { id: "you", label: "Needs you", test: (t: Ticket) => !!t.attention },
   { id: "running", label: "Running", test: (t: Ticket) => t.status === "in_progress" || !!t.running },
-  { id: "pr", label: "Has PR", test: (t: Ticket) => !!t.prUrl },
+  { id: "pr", label: "Has PR", test: hasOpenPr },
 ] as const;
 type FilterId = (typeof FILTERS)[number]["id"];
 
@@ -181,14 +186,19 @@ export function App() {
   const pushedFrom = useRef<string | null>(null);
   // The open ticket was reached with prev/next: the drawer stays put instead of sliding in again.
   const stepped = useRef(false);
-  // Ticket order prev/next follows, frozen when the drawer opens (see below).
-  const [navOrder, setNavOrder] = useState<string[] | null>(null);
+  // Column and ticket order prev/next follow, frozen when the drawer opens (see below).
+  const [navOrder, setNavOrder] = useState<{ column: Status; ids: string[] } | null>(null);
   const [inbox, setInbox] = useState<InboxItem[]>([]);
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const inboxTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [profileDialog, setProfileDialog] = useState<"new" | "edit" | null>(null);
   const [newTicket, setNewTicket] = useState(false);
+  const [sampleFor, setSampleForState] = useState(() => { try { return localStorage.getItem(SAMPLE_OFFER); } catch { return null; } });
+  const setSampleFor = (v: string | null) => {
+    setSampleForState(v);
+    try { if (v) localStorage.setItem(SAMPLE_OFFER, v); else localStorage.removeItem(SAMPLE_OFFER); } catch {}
+  };
   const setError = (msg: string) => toast(msg, { tone: "error" });
   const [activityOpen, setActivityOpen] = useState(false);
   const [newSession, setNewSession] = useState(false);
@@ -216,6 +226,7 @@ export function App() {
     else nav.clearAppBadge?.().catch(() => {});
   }, [inbox.length]);
   const [shortcuts, setShortcuts] = useState(false);
+  useHintReveal();
   const [bugReport, setBugReport] = useState(false);
   const [fullSearch, setFullSearch] = useState(false);
   // ⌘K command bar; the inbox and usage popovers open from it too (n makes repeats count).
@@ -225,20 +236,25 @@ export function App() {
   // Command to type into the dock's terminal (e.g. "claude mcp login x"); n makes repeats count.
   const [dockCommand, setDockCommand] = useState<{ text: string; n: number } | null>(null);
   // Tab the dock should switch to (C opens the quick Claude chat).
-  const [dockTab, setDockTab] = useState<{ tab: DockTab; n: number } | null>(null);
+  const [dockTab, setDockTab] = useState<{ tab: DockTab; n: number; team?: TeamRequest } | null>(null);
   // Tab the open dock shows (reported by the dock), for the header buttons' on state.
   const [dockShown, setDockShown] = useState<DockTab | null>(null);
   const chatOpen = dockOpen && dockShown === "claude";
-  const openDockOn = (tab: DockTab) => {
+  const termOpen = dockOpen && (dockShown === "terminal" || dockShown === "files");
+  const teamOpen = dockOpen && dockShown === "team";
+  /** team: what the Team tab shows (the new-teammate editor, a proposal to edit, a teammate). */
+  const openDockOn = (tab: DockTab, team?: TeamRequest) => {
     setDockOpen(true);
-    setDockTab({ tab, n: Date.now() });
+    setDockTab({ tab, n: Date.now(), ...(team ? { team } : {}) });
   };
+  const toggleTeam = () => (teamOpen ? setDockOpen(false) : openDockOn("team"));
   const [mcp, setMcp] = useState<McpState | null>(null);
   const [connections, setConnections] = useState(false);
   const [schedules, setSchedules] = useState<Schedule[] | null>(null);
   const [schedulesOpen, setSchedulesOpen] = useState(false);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
   const schedulesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [alertsOpen, setAlertsOpen] = useState(false);
   const [version, setVersion] = useState<{ version: string; latest: string | null; updateAvailable: boolean } | null>(null);
 
   const loadProfiles = useCallback(async () => {
@@ -262,7 +278,11 @@ export function App() {
     }, 300);
   }, [loadSchedules]);
 
-  const loadInbox = useCallback(() => quiet(api.inbox, "the inbox", setInbox), []);
+  const [snoozed, setSnoozed] = useState<InboxItem[]>([]);
+  const loadInbox = useCallback(() => quiet(api.inbox, "the inbox", (list) => {
+    setInbox(list.filter((i) => !i.snoozedUntil));
+    setSnoozed(list.filter((i) => i.snoozedUntil));
+  }), []);
   const refreshInboxSoon = useCallback(() => {
     if (inboxTimer.current) return;
     inboxTimer.current = setTimeout(() => {
@@ -278,6 +298,13 @@ export function App() {
     quiet(api.version, "the version", setVersion);
     quiet(api.mcp, "connections", setMcp);
   }, [loadProfiles, loadInbox]);
+  // First visit with no boards yet: open New board straight away (it lists recent Claude Code folders).
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (profiles?.length !== 0 || autoOpened.current) return;
+    autoOpened.current = true;
+    setProfileDialog("new");
+  }, [profiles]);
 
   // Browser Back/Forward and pasted links drive the open board and ticket.
   useEffect(() => {
@@ -313,6 +340,16 @@ export function App() {
     setOpenId(id);
   }, [slug]);
 
+  // A huddle badge or the dock's Huddles list: open the ticket on its Huddle tab.
+  const [huddleTab, setHuddleTab] = useState<{ id: string; n: number; huddleId?: string } | null>(null);
+  const openHuddle = useCallback((id: string, huddleId?: string) => {
+    setHuddleTab({ id, n: Date.now(), huddleId });
+    if (id !== openId) openTicket(id);
+  }, [openId, openTicket]);
+  const huddles = useBoardHuddles(slug);
+  // The Team tab's Start huddle: the drawer's ticket (or a new one) opens on its Huddle tab with this roster filled in.
+  const [huddleSeed, setHuddleSeed] = useState<{ id: string; seed: HuddleSeed; n: number } | null>(null);
+
   const closeTicket = useCallback(() => {
     if (pushedOpen.current && pushedFrom.current === slug) history.back();
     else {
@@ -339,6 +376,16 @@ export function App() {
   }), [slug, loadProfiles, loadInbox, loadSchedules]);
 
   const needYou = inbox.length;
+  // A snooze ends by itself: reload when the first one runs out (the server only counts it again then).
+  useEffect(() => {
+    if (!snoozed.length) return;
+    const first = Math.min(...snoozed.map((i) => Date.parse(i.snoozedUntil!)));
+    const timer = setTimeout(() => {
+      loadInbox();
+      if (slugRef.current) api.tickets(slugRef.current).then(setTickets).catch(() => {});
+    }, Math.min(Math.max(first - Date.now(), 0) + 1000, 2 ** 31 - 1));
+    return () => clearTimeout(timer);
+  }, [snoozed, loadInbox]);
   useEffect(() => {
     document.title = needYou ? `(${needYou}) Muba AI` : "Muba AI";
   }, [needYou]);
@@ -363,7 +410,7 @@ export function App() {
   // Latest values for the window key handler below, which is bound once per dialog state.
   const live = useRef({ profiles, tickets, markDone: (_id: string) => {} });
 
-  // Shortcuts: N new ticket, / search, ? cheatsheet, C quick Claude chat, ⌘K command bar (tickets on every board, actions, boards), Ctrl+` terminal & files,
+  // Shortcuts: N new ticket, / search, ? cheatsheet, C quick Claude chat, T Team, ⌘K command bar (tickets on every board, actions, boards), Ctrl+` terminal & files,
   // B board picker, [ ] previous / next board, 1…9 board N, J/K/H/L or arrows select a card, D marks a Review card done.
   // Esc is handled by the panel and dialogs (one layer at a time, see layers.ts).
   useEffect(() => {
@@ -419,6 +466,9 @@ export function App() {
       } else if (e.key === "c" || e.key === "C") {
         e.preventDefault();
         if (slug) openDockOn("claude");
+      } else if (e.key === "t" || e.key === "T") {
+        e.preventDefault();
+        if (slug) toggleTeam();
       } else if (e.key === "b" || e.key === "B") {
         e.preventDefault();
         if (boards.length) setBoardSwitcher(true);
@@ -436,7 +486,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [openId, profileDialog, newTicket, connections, schedulesOpen, slug, switchBoard]);
+  }, [openId, profileDialog, newTicket, connections, schedulesOpen, slug, switchBoard, dockOpen, dockShown]);
 
   const runInTerminal = useCallback((text: string) => {
     setDockOpen(true);
@@ -485,7 +535,7 @@ export function App() {
           attentionSeen.current.set(e.ticket.id, now);
           if (before !== undefined && now && now !== before && !e.ticket.running) buzz([30, 60, 30]);
         }
-        if (e.type === "ticket.updated" || e.type === "ticket.deleted" || e.type === "session.updated") refreshInboxSoon();
+        if (e.type === "ticket.updated" || e.type === "ticket.deleted" || e.type === "session.updated" || e.type === "huddle.updated") refreshInboxSoon();
         if (e.type === "schedule.updated" && e.profile === slug) refreshSchedulesSoon(slug);
         if (e.type === "ticket.updated" && e.profile === slug && e.ticket.scheduleId) refreshSchedulesSoon(slug);
         if (e.type === "ticket.updated" && e.profile === slug) {
@@ -510,6 +560,32 @@ export function App() {
 
   const profile = useMemo(() => profiles?.find((p) => p.slug === slug) ?? null, [profiles, slug]);
   const open = tickets.find((t) => t.id === openId) ?? null;
+
+  /** Start huddle from the Team tab: on the ticket open in the drawer, else on a new ticket in Planning. No picker. */
+  const startHuddle = async (seed: HuddleSeed) => {
+    if (!profile) return;
+    let id = open?.id;
+    if (!id) {
+      try {
+        const what = "preset" in seed ? `@${seed.preset}` : `the ${seed.template} template`;
+        const t = await api.createTicket(profile.slug, {
+          title: "preset" in seed ? `Huddle with @${seed.preset}` : `Huddle: ${seed.template}`,
+          body: `Started from the Team tab: a huddle with ${what}. Say what it should work on.`, status: "planning",
+        });
+        setTickets((ts) => (ts.some((x) => x.id === t.id) ? ts : [...ts, t]));
+        id = t.id;
+      } catch (e) {
+        toast(`Couldn't create the ticket: ${(e as Error).message}`, { tone: "error" });
+        return;
+      }
+    }
+    setHuddleSeed({ id, seed, n: Date.now() });
+    openHuddle(id);
+  };
+  // The drawer has taken the Huddle tab request (as its first tab, or switched to it): forget it.
+  useEffect(() => {
+    if (huddleTab && open?.id === huddleTab.id) setHuddleTab(null);
+  }, [huddleTab, open?.id]);
   const q = query.trim().toLowerCase();
   const activeFilters = FILTERS.filter((f) => filters.has(f.id));
   // Sessions live on their own page; the board, its filters and counts only see board tickets.
@@ -539,20 +615,18 @@ export function App() {
   const shownTickets = boardTickets.filter((t) =>
     metadataMatches(t, metadataFilter) && (!q || `${t.title}\n${t.body}`.toLowerCase().includes(q)) && (!activeFilters.length || activeFilters.some((f) => f.test(t))));
   const filtering = !!q || activeFilters.length > 0 || Object.values(metadataFilter).some(Boolean);
-  // Prev/next walk the visible tickets in board order as it was when the drawer opened, so moving the open
-  // ticket (e.g. Backlog to Done) doesn't send Next into its new column. Stepping keeps that order;
-  // deleted tickets are skipped.
-  const liveOrder = open ? boardOrder(shownTickets).map((t) => t.id) : [];
-  const orderMissing = !!openId && !navOrder?.includes(openId);
+  // Prev/next walk the visible tickets of the column the drawer opened in, in its order at that time, so
+  // moving the open ticket (e.g. Planning to Done) keeps Next in Planning, and the ends of the column stop
+  // there. Stepping keeps that order; deleted tickets are skipped.
+  const liveOrder = open ? { column: boardColumnOf(open), ids: columnOrder(shownTickets, boardColumnOf(open)) } : null;
+  const orderMissing = !!openId && !navOrder?.ids.includes(openId);
   useEffect(() => {
     if (!openId) setNavOrder(null);
     else if (!stepped.current || orderMissing) setNavOrder(liveOrder);
   }, [openId, orderMissing, tickets.length > 0]);
   // navOrder is null until the effect above runs (and whenever no ticket is open): fall back to the live order.
-  const order = (orderMissing ? liveOrder : navOrder ?? liveOrder).filter((id) => id === openId || tickets.some((t) => t.id === id));
-  const at = open ? order.indexOf(open.id) : -1;
-  const prevId = at > 0 ? order[at - 1] : null;
-  const nextId = at >= 0 && at < order.length - 1 ? order[at + 1] : null;
+  const navIn = orderMissing ? liveOrder : navOrder ?? liveOrder;
+  const { prev: prevId, next: nextId } = open && navIn ? columnNeighbours(navIn.ids, navIn.column, open.id, tickets) : { prev: null, next: null };
   const perBoard = useMemo(() => {
     const m = new Map<string, number>();
     for (const i of inbox) m.set(i.profile, (m.get(i.profile) ?? 0) + 1);
@@ -590,8 +664,8 @@ export function App() {
   const mcpAttention = mcp?.servers.filter((s) => s.attention).length ?? 0;
   const scheduleErrors = schedules?.filter((s) => s.lastError).length ?? 0;
   const missing = health ? (["claude", "git", "gh"] as const).filter((k) => !health[k]) : [];
-  // Runs holding a slot, as the server counts them (Planning and replies to other tickets don't take one).
-  const running = tickets.filter((t) => t.holdsSlot).length;
+  // Every active ticket run (chat replies and Planning too); slots: the ones holding a maxParallel slot, as the server counts them.
+  const running = runCounts(tickets, huddles);
   const queued = tickets.filter((t) => t.status === "ready" || waitsForSlot(t)).length;
 
   const updateKey = `update:${version?.latest}`;
@@ -604,12 +678,56 @@ export function App() {
     return next;
   });
 
+  // Inbox triage on any board: the entry leaves the list (and the counts) at once, the server confirms.
+  const inboxDone = async (i: InboxItem) => {
+    setInbox((l) => l.filter((x) => x !== i));
+    setSnoozed((l) => l.filter((x) => x !== i));
+    if (i.profile === slug) return move(i.id, "done").finally(loadInbox);
+    try {
+      await api.updateTicket(i.profile, i.id, { status: "done" });
+      toast(<>Moved <b>{i.title}</b> to Done</>);
+    } catch (e: any) {
+      setError(`Couldn't move the ticket: ${e.message}`);
+      loadInbox();
+    }
+  };
+  const inboxSnooze = async (i: InboxItem, on: boolean) => {
+    const until = new Date(Date.now() + 24 * 3600_000).toISOString();
+    if (on) {
+      setInbox((l) => l.filter((x) => x !== i));
+      setSnoozed((l) => [...l, { ...i, snoozedUntil: until }]);
+    } else {
+      setSnoozed((l) => l.filter((x) => x !== i));
+      setInbox((l) => [...l, { ...i, snoozedUntil: undefined }]);
+    }
+    if (i.profile === slug) setTickets((ts) => ts.map((t) => (t.id === i.id ? { ...t, attention: on ? null : i.attention, snoozed: on ? { attention: i.attention, until } : null } : t)));
+    try {
+      const t = await (on ? api.snooze(i.profile, i.id) : api.unsnooze(i.profile, i.id));
+      const merge = (t: Ticket) => { if (i.profile === slugRef.current) setTickets((ts) => ts.map((x) => (x.id === t.id ? { ...x, ...t } : x))); };
+      if (on) toast(<>Snoozed <b>{i.title}</b> for a day</>, { action: { label: "Undo", run: () => void api.unsnooze(i.profile, i.id).then((t) => { merge(t); loadInbox(); }, () => {}) } });
+      merge(t);
+    } catch (e: any) {
+      setError(`Couldn't ${on ? "snooze" : "unsnooze"} the ticket: ${e.message}`);
+      if (i.profile === slugRef.current) api.tickets(i.profile).then(setTickets).catch(() => {});
+    }
+    loadInbox();
+  };
+
+  const openFrom = (board: string, id: string) => {
+    if (board !== slug) setSlug(board);
+    openTicket(id, board);
+  };
+
   // ⌘K actions run the same handlers as their buttons and menu items.
   const commandActions: CommandAction[] = [
     ...(profile ? [
       { id: "new", label: "New ticket", keys: ["N"], run: () => setNewTicket(true) },
       { id: "dock", label: "Open terminal & files", keys: ["Ctrl", "`"], icon: <TerminalIcon size={14} />, run: () => openDockOn("terminal") },
       { id: "chat", label: "Quick Claude chat", keys: ["C"], icon: <ChatIcon size={14} />, run: () => openDockOn("claude") },
+    ] : []),
+    ...(profile ? [
+      { id: "team", label: "Open Team", keys: ["T"], icon: <TeamIcon size={14} />, hint: "teammates, templates, notes", run: () => openDockOn("team") },
+      { id: "new-teammate", label: "New teammate…", run: () => openDockOn("team", { action: "new" }) },
     ] : []),
     ...(inbox.length ? [{ id: "inbox", label: `Open inbox (${inbox.length} need you)`, run: () => setInboxRequest(Date.now()) }] : []),
     ...(profile ? [{ id: "schedules", label: "Schedules", icon: <ClockIcon size={14} />, run: () => setSchedulesOpen(true) }] : []),
@@ -618,6 +736,8 @@ export function App() {
     { id: "usage", label: "Usage", run: () => setUsageRequest(Date.now()) },
     ...(profile ? [{ id: "settings", label: "Board settings", icon: <GearIcon size={14} />, run: () => setProfileDialog("edit") }] : []),
     { id: "new-board", label: "New board", run: () => setProfileDialog("new") },
+    { id: "notifications", label: "Notifications", icon: <BellIcon size={14} />, hint: "push to this device", run: () => setNotificationsOpen(true) },
+    { id: "alerts", label: "Mac & webhook alerts", icon: <BellIcon size={14} />, hint: "macOS banner, ntfy / webhook", run: () => setAlertsOpen(true) },
     { id: "shortcuts", label: "Keyboard shortcuts", keys: ["?"], icon: <KeyboardIcon size={14} />, run: () => setShortcuts(true) },
     { id: "bug", label: "Report a bug", icon: <BugIcon size={14} />, run: () => setBugReport(true) },
   ];
@@ -632,7 +752,7 @@ export function App() {
         {profiles && profiles.length > 0 && (
           <Select
             className="profile-select"
-            ariaLabel="Profile"
+            ariaLabel="Board"
             value={slug ?? ""}
             onChange={switchRepo}
             menuClassName="profile-menu"
@@ -652,19 +772,20 @@ export function App() {
               </>
             )}
             renderValue={() => profile?.name}
+            badge={<KeyHint keys="B  [ ]" />}
             footer={[
               ...(profile ? [{
                 label: "Copy folder path",
                 icon: <CopyIcon size={12} />,
                 onSelect: () => { copy(profile.path).then(() => toast(<>Copied <code>{tildePath(profile.path)}</code></>, { tone: "ok" })); },
               }] : []),
-              { label: "New profile…", onSelect: () => setProfileDialog("new") },
+              { label: "New board…", onSelect: () => setProfileDialog("new") },
             ]}
           />
         )}
         {profile && (
-          <span className="pill" title={`At most ${profile.maxParallel} tickets run at the same time on this board`}>
-            {running}/{profile.maxParallel} running{queued > 0 && <> · {queued} queued</>}
+          <span className="pill" title={`${running.runs} ticket ${running.runs === 1 ? "run" : "runs"} active, ${running.slots} of ${profile.maxParallel} slots in use. Slots apply to ticket runs: at most ${profile.maxParallel} work at the same time on this board. Planning chats and replies to other tickets don't take a slot.${running.agents ? ` Huddle agents (${running.agents} working) run outside the slots.` : ""}`}>
+            {running.runs}/{profile.maxParallel} running{running.agents > 0 && <> · {running.agents} huddle {running.agents === 1 ? "agent" : "agents"}</>}{queued > 0 && <> · {queued} queued</>}
           </span>
         )}
         <UsagePill compact={narrow} openRequest={usageRequest} />
@@ -689,10 +810,8 @@ export function App() {
           </button>
         )}
         <div className="spacer" />
-        <Inbox items={inbox} landOnInbox={narrow && !startedOnTicket.current} openRequest={inboxRequest} onPick={(i) => {
-          if (i.profile !== slug) setSlug(i.profile);
-          openTicket(i.id, i.profile);
-        }} />
+        <Inbox items={inbox} snoozed={snoozed} landOnInbox={narrow && !startedOnTicket.current} openRequest={inboxRequest} onPick={(i) => openFrom(i.profile, i.id)}
+          onMarkDone={(i) => void inboxDone(i)} onSnooze={(i, on) => void inboxSnooze(i, on)} />
         {profile && !compact && (
           <button className={`btn ghost icon-label${dockOpen && !chatOpen ? " on" : ""}`}
             onClick={() => (chatOpen ? openDockOn("terminal") : setDockOpen((o) => !o))}
@@ -704,7 +823,7 @@ export function App() {
           <button className={`btn ghost icon-label${chatOpen ? " on" : ""}`}
             onClick={() => (chatOpen ? setDockOpen(false) : openDockOn("claude"))}
             aria-pressed={chatOpen} title="Quick chat with Claude in this folder, no ticket needed (C)" aria-label="Quick Claude chat">
-            <ChatIcon /><span className="label">Claude</span>
+            <ChatIcon /><span className="label">Claude</span><KeyHint keys="C" />
           </button>
         )}
         {profile && !compact && (
@@ -721,6 +840,12 @@ export function App() {
           {mcpAttention > 0 && <span className="need-chip">{mcpAttention}</span>}
         </button>}
         {profile && !compact && (
+          <button className={`btn ghost icon-label${teamOpen ? " on" : ""}`} onClick={toggleTeam}
+            aria-pressed={teamOpen} title="Teammates, templates and notes (T)" aria-label="Team">
+            <TeamIcon /><span className="label">Team</span>
+          </button>
+        )}
+        {profile && !compact && (
           <button className="btn primary new-ticket-btn" onClick={() => (mode === "chats" ? (wideChats ? closeTicket() : setNewSession(true)) : setNewTicket(true))}
             title={mode === "chats" ? "New chat" : "New ticket (N)"} aria-label={mode === "chats" ? "New chat" : "New ticket"}>
             <PlusIcon size={21} className="icon new-ticket-symbol" /><span className="new-ticket-label">{mode === "chats" ? "New chat" : "New ticket"}</span>
@@ -734,6 +859,7 @@ export function App() {
             ...(profile ? [
               { label: "Terminal & files", icon: <TerminalIcon />, onSelect: () => openDockOn("terminal") },
               { label: "Quick Claude chat", icon: <ChatIcon />, onSelect: () => openDockOn("claude") },
+              { label: "Team", icon: <TeamIcon />, onSelect: () => openDockOn("team") },
               { label: `Schedules${scheduleErrors ? ` · ${scheduleErrors} need you` : ""}`, icon: <RefreshIcon />, onSelect: () => setSchedulesOpen(true) },
             ] : []),
             { label: `Connections${mcpAttention ? ` · ${mcpAttention} need you` : ""}`, icon: <PlugIcon />, onSelect: () => setConnections(true) },
@@ -754,6 +880,7 @@ export function App() {
             },
           },
           { label: "Notifications", icon: <BellIcon />, onSelect: () => setNotificationsOpen(true) },
+          { label: "Mac & webhook alerts", icon: <BellIcon />, onSelect: () => setAlertsOpen(true), title: "macOS banner and ntfy / webhook when a ticket needs you" },
           { label: "Keyboard shortcuts", hint: "?", icon: <KeyboardIcon />, onSelect: () => setShortcuts(true) },
           { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
         ]} footer={narrow && profile ? `${running}/${profile.maxParallel} running` : version && version.version !== "dev" ? `Muba AI v${version.version}` : null} />
@@ -796,7 +923,7 @@ export function App() {
       )}
       {profile && profile.pathExists === false && !dismissed.has(folderKey) && (
         <div className="banner warn" role="status">
-          <span>Profile folder <code>{profile.path}</code> does not exist. Tickets will not be picked up.</span>
+          <span>Board folder <code>{profile.path}</code> does not exist. Tickets will not be picked up.</span>
           <button className="icon-btn" aria-label="Dismiss" title="Hide until next time" onClick={() => dismiss(folderKey)}><CloseIcon size={12} /></button>
         </div>
       )}
@@ -805,10 +932,10 @@ export function App() {
         <div className="empty"><span className="spinner" /> Loading boards…</div>
       ) : !profile ? (
         <div className="empty">
-          <h2>No profiles yet</h2>
-          <p>A profile is a folder (usually a git repo) with its own board.</p>
+          <h2>No boards yet</h2>
+          <p>A board runs tickets in one folder, usually a git repo.</p>
           <button className="btn primary" onClick={() => setProfileDialog("new")}>
-            Create profile
+            Create board
           </button>
         </div>
       ) : mode === "chats" ? (
@@ -828,6 +955,7 @@ export function App() {
                   <CloseIcon size={12} />
                 </button>
               ) : <kbd className="search-kbd" aria-hidden>/</kbd>}
+              <KeyHint keys="/" />
             </div>
             <div className="filter-chips" role="group" aria-label="Filter tickets">
               {FILTERS.map((f) => {
@@ -848,9 +976,18 @@ export function App() {
               </span>
             )}
           </div>
-          {layout === "list" ? <TicketList tickets={shownTickets} onOpen={openTicket} /> : <Board key={profile.slug} tickets={shownTickets} filtered={filtering} onOpen={(id) => openTicket(id)} onMove={move} onAdd={() => setNewTicket(true)} restartPending={restart.pending} />}
+          {sampleFor === profile.slug && (
+            <SampleOffer slug={profile.slug} onDismiss={() => setSampleFor(null)}
+              onStarted={(t) => {
+                setSampleFor(null);
+                setTickets((ts) => (ts.some((x) => x.id === t.id) ? ts : [...ts, t]));
+                openTicket(t.id);
+              }} />
+          )}
+          {layout === "list" ? <TicketList tickets={shownTickets} onOpen={openTicket} /> : <Board key={profile.slug} tickets={shownTickets} filtered={filtering} huddles={huddles} onOpenHuddle={openHuddle} slug={slug ?? undefined} onOpen={(id) => openTicket(id)} onMove={move} onAdd={() => setNewTicket(true)} restartPending={restart.pending} />}
         </>
       )}
+      {alertsOpen && <AlertsDialog profile={profile?.slug ?? null} onClose={() => setAlertsOpen(false)} />}
 
       {dockOpen && profile && (
         <Suspense fallback={<section className="dock dock-loading" aria-label="Opening tools panel">
@@ -858,7 +995,8 @@ export function App() {
           <button className="btn" onClick={() => setDockOpen(false)}>Cancel</button>
         </section>}>
           <Dock key={profile.slug} profile={profile} pty={health?.pty ?? true} onClose={() => setDockOpen(false)} command={dockCommand}
-            onCommandSent={() => setDockCommand(null)} tabRequest={dockTab} onTabChange={setDockShown} onOpenTicket={(id) => openTicket(id)} />
+            onCommandSent={() => setDockCommand(null)} tabRequest={dockTab} onTabChange={setDockShown} onOpenTicket={(id) => openTicket(id)}
+            huddles={huddles} onOpenHuddle={openHuddle} openTicket={open ? { id: open.id, title: open.title } : null} onStartHuddle={startHuddle} />
         </Suspense>
       )}
 
@@ -915,16 +1053,23 @@ export function App() {
       {open && profile && open.standalone && !wideChats && <SessionView key={open.id} profile={profile} ticket={open} tickets={tickets} onClose={closeTicket} onOpenTicket={openTicket} />}
       {snippetsOpen && profile && <SnippetsDialog profile={profile} onClose={() => setSnippetsOpen(false)} />}
       {open && profile && !open.standalone && <TicketDrawer key={open.id} profile={profile} ticket={open} tickets={tickets} onOpenTicket={openTicket} onClose={closeTicket}
-        nav={{ prev: prevId, next: nextId, go: stepTicket }} slideIn={!stepped.current} />}
+        nav={{ prev: prevId, next: nextId, go: stepTicket }} slideIn={!stepped.current}
+        tabRequest={huddleTab?.id === open.id ? { tab: "huddle", n: huddleTab.n, huddleId: huddleTab.huddleId } : null}
+        huddleSeed={huddleSeed?.id === open.id ? { seed: huddleSeed.seed, n: huddleSeed.n } : null}
+        onOpenTeam={(r) => { closeTicket(); openDockOn("team", r); }} />}
       {profileDialog && (
         <ProfileDialog
           profile={profileDialog === "edit" ? profile : null}
           onClose={() => setProfileDialog(null)}
+          onOpenTeam={() => { setProfileDialog(null); openDockOn("team"); }}
           onSaved={(p) => {
+            // The first board gets the sample ticket offer.
+            if (profileDialog === "new" && profiles?.length === 0) setSampleFor(p.slug);
             setProfileDialog(null);
             loadProfiles().then(() => setSlug(p.slug));
           }}
           onDeleted={() => {
+            if (sampleFor === profile?.slug) setSampleFor(null);
             setProfileDialog(null);
             setSlug(null);
             loadProfiles();

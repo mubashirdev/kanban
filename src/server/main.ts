@@ -3,14 +3,19 @@ import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
+import { cleanupTmuxLeftovers } from "./artifact";
 import { Board } from "./board";
 import { Bus } from "./events";
 import { createServer } from "./http";
+import { Huddles } from "./huddle";
 import { withUtf8Locale } from "./locale";
 import { McpManager } from "./mcp";
 import { startPoller } from "./prpoller";
+import { Notifier } from "./notify";
 import { Scheduler } from "./scheduler";
 import { CodexSessions } from "./codex-session";
+import { LimitWatcher } from "./limit";
+import { startHuddleSessionWatcher } from "./huddle-session";
 import { SessionCache, startSessionWatcher } from "./session";
 import { ShellManager } from "./shell";
 import { TerminalWatcher } from "./terminals";
@@ -40,15 +45,27 @@ export async function startDaemon(): Promise<void> {
   } : undefined;
   const bus = new Bus();
   const sessions = new SessionCache();
-  const board = new Board(store, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude", sessionSummary: (id) => sessions.summary(id) });
+  const shells = new ShellManager();
+  void cleanupTmuxLeftovers();
+  const board = new Board(store, bus, {
+    claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude",
+    sessionSummary: (id) => sessions.summary(id),
+    findOwnedSession: (id) => shells.findSession(id),
+    notify: (title, body) => notifier.macOnly(title, body),
+  });
+  const notifier: Notifier = new Notifier(store, bus, {
+    root: store.root, sessionSummary: (id) => sessions.summary(id), isRunning: (slug, id) => board.isRunning(slug, id),
+    hostHuddles: (slug) => board.hostHuddles(slug),
+    baseUrl: () => `http://localhost:${server.port}`,
+  });
   const webDir = join(import.meta.dir, "..", "..", "web", "dist");
   const embedded = Object.keys(WEB_ASSETS).length > 0;
   if (!embedded && !existsSync(join(webDir, "index.html"))) console.warn("web UI not built yet: run `bun run build:web`");
   const codexSessions = new CodexSessions(store);
   const terminals = new TerminalWatcher(store, bus, sessions);
-  const shells = new ShellManager();
   const mcp = new McpManager(bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude", seenFile: join(store.root, "mcp-seen.json") });
   const scheduler = new Scheduler(board, store, bus);
+  const huddles = new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   // launchd (KeepAlive) starts the daemon again once it exits.
   const restart = () => board.requestRestart(() => void shutdown());
   const commands = new ClaudeCommands(process.env.CKANBAN_CLAUDE_BIN ?? "claude");
@@ -58,7 +75,7 @@ export async function startDaemon(): Promise<void> {
     const parsed = codexSessions.get(slug, ticket.id);
     return parsed ? { ...parsed, updatedAt: ticket.updatedAt } : null;
   });
-  const server = createServer({ store, bus, board, port, webDir, lan, sessions, terminals, shells, mcp, scheduler, commands, notifications, codexSessions, assets: WEB_ASSETS, restart });
+  const server = createServer({ store, bus, board, port, webDir, lan, sessions, terminals, shells, mcp, scheduler, huddles, commands, notifications, codexSessions, assets: WEB_ASSETS, restart, notifier });
   console.log(`ckanban v${VERSION} listening on http://localhost:${server.port} (data: ${store.root})`);
   if (lan?.trustedNetwork) console.log(`Wi-Fi preview: http://${lan.host}:${server.port}/`);
   else if (lan) {
@@ -66,24 +83,34 @@ export async function startDaemon(): Promise<void> {
     console.log(`Phone pairing: http://${lan.host}:${server.port}/ — code ${lan.pairingCode.match(/.{4}/g)!.join("-")}`);
   }
   board.recover();
+  huddles.recover();
+  huddles.startWatchdog();
+  void board.sweepWorktrees();
   void detectMissing(store, (profile) => bus.emit({ type: "profile.updated", slug: profile.slug, profile }));
   const stopPoller = startPoller(board, store, config.prPollMinutes);
   // After recover(): a missed run's ticket must not be mistaken for an interrupted one.
   const stopScheduler = scheduler.start();
+  const stopLimits = new LimitWatcher(board, store).start();
   const stopWatcher = startSessionWatcher(store, bus, sessions, (slug, id) => board.isRunning(slug, id));
+  const stopHuddleWatcher = startHuddleSessionWatcher(store, bus, (id) => sessions.version(id));
   const stopTerminals = terminals.start();
   const stopMcp = mcp.start();
+  // After recover(): what already waits when the daemon starts doesn't notify again.
+  const stopNotifier = notifier.start();
 
   const shutdown = async () => {
     console.log("ckanban shutting down");
     stopNotifications();
     stopPoller();
     stopScheduler();
+    stopLimits();
     stopWatcher();
+    stopHuddleWatcher();
     stopTerminals();
     shells.killAll();
     stopMcp();
-    await board.shutdown();
+    stopNotifier();
+    await Promise.all([board.shutdown(), huddles.shutdown()]);
     server.stop(true);
     process.exit(0);
   };

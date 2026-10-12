@@ -1,25 +1,14 @@
+import type { SlashCommand } from "./slashText";
 import type { TicketUsage, UsageResult } from "./usage";
-export type Status = "backlog" | "planning" | "ready" | "in_progress" | "review" | "done";
-export type Outcome = null | "done" | "blocked" | "failed" | "stopped" | "needs_input";
+import type { Status } from "./columns";
+import type { PrStatus } from "./prText";
+export type { PrCheck, PrStatus } from "./prText";
+export type { Status } from "./columns";
+/** limit: the run hit the Claude usage/spend limit (see Ticket.limit). */
+export type Outcome = null | "done" | "blocked" | "failed" | "stopped" | "needs_input" | "limit";
 export type TicketMode = "interview" | "auto";
 
-/** claude: dropping a card here makes Claude start (or it is running). */
-export const COLUMNS: { id: Status; label: string; hint: string; claude: boolean }[] = [
-  { id: "backlog", label: "Backlog", hint: "Park ideas. Nothing runs.", claude: false },
-  { id: "planning", label: "Planning", hint: "Clarify the task with your agent", claude: true },
-  { id: "ready", label: "Queued", hint: "Waits for a free agent slot", claude: true },
-  { id: "in_progress", label: "In Progress", hint: "Agent is working, or waiting for a free slot", claude: true },
-  { id: "review", label: "Review", hint: "Your turn: check the result", claude: false },
-  { id: "done", label: "Done", hint: "Finished", claude: false },
-];
-
-/** Columns the board shows: queued (`ready`) tickets sit in In Progress, under the running ones. */
-export const BOARD_COLUMNS = COLUMNS.filter((c) => c.id !== "ready");
-
-/** A chat reply waiting for a free run slot: the board shows it in the queue, ahead of Ready tickets. */
-export function waitsForSlot(t: Ticket): boolean {
-  return t.status === "in_progress" && !!t.slotWait && !t.running;
-}
+export { BOARD_COLUMNS, COLUMNS, waitsForSlot } from "./columns";
 
 /** Start work on a Backlog ticket nobody shaped yet goes through the Planning interview first. */
 export function startWorkTarget(t: Ticket): "planning" | "ready" {
@@ -33,6 +22,16 @@ export interface Health {
   gh: boolean;
   /** Server can run the embedded terminal (Bun ≥ 1.3.5). */
   pty?: boolean;
+}
+
+/** A folder's version history: none (plain), git without commits (empty), commits without a remote (local), or a remote. */
+export type RepoKind = "plain" | "empty" | "local" | "remote";
+
+export interface VersionHistory {
+  /** git is installed (the offer is hidden without it). */
+  git: boolean;
+  /** Null: the folder doesn't exist or git isn't installed. */
+  repo: RepoKind | null;
 }
 
 export interface FileEntry {
@@ -60,6 +59,8 @@ export interface DiffFile {
   hunks: { header: string; lines: DiffLine[] }[];
 }
 
+export type Workspace = "worktree" | "folder";
+
 export interface TicketDiff {
   base: string;
   mergeBase: string;
@@ -67,6 +68,8 @@ export interface TicketDiff {
   files: DiffFile[];
   additions: number;
   deletions: number;
+  /** Shown instead of files when the changes can't be worked out. */
+  note?: string;
 }
 
 export interface FileContent {
@@ -105,7 +108,13 @@ export interface ClaudeModel { value: string; displayName: string; description: 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 export interface ClaudeCatalog { commands: ClaudeCommand[]; models: ClaudeModel[]; efforts: Effort[]; outputStyles: string[]; defaultModel: string | null }
 
-export type AttentionKind = "failed" | "blocked" | "questions" | "proposal" | "review" | "reply" | "approval";
+export type AttentionKind = "stalled" | "failed" | "limit" | "blocked" | "questions" | "proposal" | "review" | "reply" | "huddle" | "approval";
+/** Why a ticket needs you (one server rule for cards, counts and the Inbox); since: when it started waiting. */
+export interface Attention {
+  kind: AttentionKind;
+  label: string;
+  since: string;
+}
 
 export interface Profile {
   name: string;
@@ -123,6 +132,15 @@ export interface Profile {
   cleanupCommand?: string;
   /** What auto-detection last found (values equal to it show an "Auto-detected" badge). */
   setupDetected?: SetupDetection | null;
+  /** Unattended runs start a review huddle themselves before landing important or risky work. Missing: on. */
+  autoHuddles?: boolean;
+  /** Spending cap per run in USD for its tickets' work runs; missing/null: none. */
+  runCapUsd?: number | null;
+  artifacts?: boolean;
+  /** Minutes without output before a run counts as stalled; 0: off. Missing: 20. */
+  stallMinutes?: number;
+  /** Where new runs work: a worktree per ticket (missing: this) or the project folder itself. */
+  workspace?: Workspace;
   pathExists?: boolean;
   running?: number;
 }
@@ -165,7 +183,11 @@ export interface Ticket {
   worktree: string | null;
   workdir?: string | null;
   branch: string | null;
+  /** HEAD of the board's folder at the ticket's first run there (its Changes base without a worktree). */
+  baseSha?: string | null;
   prUrl: string | null;
+  /** Last fetched PR status; stale when pr.url differs from prUrl. */
+  pr?: PrStatus | null;
   outcome: Outcome;
   lastActivity: string | null;
   lastRunAt: string | null;
@@ -195,6 +217,8 @@ export interface Ticket {
   needs?: string[];
   /** For tickets with needs: holds them now, or which ones another ticket holds while this one would start. */
   resources?: { holding: boolean; waitingFor: string[] } | null;
+  /** It would start now, but another ticket is editing the board's folder in place (no version history). */
+  folderWait?: boolean;
   /** A plan child waiting on the user (questions, a proposal to apply, in Planning); the plan won't start it. */
   userWait?: string | null;
   /** Set once this ticket's plan was started: the board runs its children unattended. */
@@ -205,20 +229,50 @@ export interface Ticket {
   interrupted?: { at: string; partial?: string; held?: boolean } | null;
   /** A chat reply waiting for a free run slot: shown queued in In Progress. */
   slotWait?: { at: string; from: { status: Status; outcome: Outcome } } | null;
+  /** The run has sent no output for the board's stall time: Stop, Keep waiting or Restart. */
+  stalled?: { at: string; minutes: number } | null;
+  /** Set with outcome "limit": when it resets and whether the board sends "continue" then. */
+  limit?: { resetAt: string; auto: boolean; capped?: boolean; at: string; message: string } | null;
+  /** false: automatic continues after the usage limit are off for this ticket. */
+  autoContinue?: boolean;
+  /** Per-run spending cap for this ticket: a positive amount, 0 for none; missing/null: the board's. */
+  runCapUsd?: number | null;
+  /** The last run stopped at its spending cap. */
+  capHit?: { capUsd: number; at: string } | null;
+  /** Cap for the next run only ("Continue with +$Y"). */
+  capNextUsd?: number | null;
+  /** API-equivalent $ so far (In Progress and Review cards; null otherwise). */
+  costUsd?: number | null;
+  /** Spending cap its next work run gets (null: none). */
+  runCap?: number | null;
   /** Its run takes one of the board's maxParallel slots. */
   holdsSlot?: boolean;
+  /** ⭐ Important: unattended runs review it in an auto huddle before landing. */
+  important?: boolean;
+  /** The auto huddle its run started (live) or waits for (waiting, another one has the board's slot). */
+  autoHuddle?: { state: "waiting" | "live"; reason: string; template: string; at: string; huddleId?: string | null } | null;
   createdAt: string;
   updatedAt: string;
   body: string;
   running?: boolean;
   /** Linked session currently open in a terminal. */
   terminalOpen?: boolean;
+  /** The last run's error has a one-click fix: Start fresh session (session_missing) or Take over here (session_open). */
+  recovery?: "session_missing" | "session_open" | null;
   resumeCommand?: string | null;
   session?: SessionSummary | null;
   /** Why the ticket is waiting on you ("Your turn"), computed by the server. */
-  attention?: { kind: AttentionKind; label: string } | null;
+  attention?: Attention | null;
+  /** Snoozed from the Inbox: what it waits for and until when (attention is null meanwhile). */
+  snoozed?: { attention: Attention; until: string } | null;
+  /** Its own huddle is working: the card shows the huddle badge instead of an outcome badge. */
+  huddleBusy?: boolean;
   /** Output files published as claude.ai pages from the Share menu, one link per file. */
   shareLinks?: ShareLink[];
+  /** Artifacts and share links, newest first (src/server/links.ts). */
+  links?: TicketLink[];
+  /** Teammate cards in the chat the user answered, by entry uuid (src/server/types.ts). */
+  teammateCards?: Record<string, TeammateCardState>;
   /** Share menu publishes in progress (or the last one's error), per output file. */
   shareJobs?: ShareJob[];
   /** Absolute path of the ticket's outputs folder. */
@@ -228,6 +282,11 @@ export interface Ticket {
 }
 
 export interface ShareLink { file: string; url: string; at: string }
+/** Where a link was found: the ticket's session, a huddle teammate's session ("huddle:@handle"), a result summary or the Share menu. */
+export interface TicketLink { url: string; label: string; at: string; source: string }
+export const isArtifactLink = (l: TicketLink) => l.source !== "share";
+/** The ticket's newest claude.ai artifact (share links of output files aside). */
+export const newestArtifact = (t: Pick<Ticket, "links">) => t.links?.find(isArtifactLink) ?? null;
 export interface ShareJob { file: string; state: "publishing" | "failed"; error?: string; at: string }
 
 export type PlanState = "running" | "paused" | "finishing" | "done" | "stuck";
@@ -250,14 +309,20 @@ export interface QueuedMessage {
   text: string;
   at: string;
   state: "queued" | "unsent";
-  /** From another ticket's Claude: text is the full prompt (question first, then board instructions). */
+  /** From another session (a huddle's messages): text is the full prompt. */
   peer?: boolean;
+  /** A slash command: Claude Code runs it as its own turn, after the current one. */
+  slash?: "prompt" | "local";
 }
 
 export interface SessionMessage {
   role: "user" | "assistant";
   text: string;
   at: string;
+  /** A user-role message the user didn't write: a huddle digest. */
+  from?: "huddle";
+  /** Claude's quiet reply to such a message. */
+  peerReply?: boolean;
 }
 
 export interface SessionSummary {
@@ -268,6 +333,7 @@ export interface SessionSummary {
   openQuestions: number;
   pendingProposal: { title: string; description: string } | null;
   pendingNewTickets?: { title: string; description: string }[];
+  pendingTeammates?: string[];
 }
 
 export interface QuestionOption {
@@ -336,6 +402,7 @@ export interface SessionEntry {
   uuid: string;
   at: string;
   role: "user" | "assistant";
+  /** agent: a subagent Claude started (its own row with status, steps and result). */
   kind: "text" | "tool" | "board";
   text: string;
   questions?: Question[];
@@ -343,17 +410,36 @@ export interface SessionEntry {
   newTickets?: NewTicketDraft[];
   /** Claude offered to branch this ticket (Branch button). */
   branch?: { reason: string };
+  /** Claude proposed a huddle (propose_huddle): the roster card with Start. */
+  huddle?: { roster: RosterEntry[]; reason: string; template?: string };
+  /** Claude asked to delete tickets (propose_delete): the card with Cancel / Delete. */
+  deletion?: { ids: string[]; reason: string };
+  /** Claude proposed a teammate (propose_teammate): the card with Save teammate / Edit first / Dismiss. */
+  teammate?: TeammateProposal;
   /** Mockups Claude sent in this reply, saved as outputs/mockups/<name>. */
   mockups?: string[];
   moved?: "planning";
   /** A board block whose JSON couldn't be read (left visible as text). */
   unreadable?: "questions" | "proposal" | "tickets";
-  /** A ticket-to-ticket message: in = from that ticket's Claude, out = Claude to it. */
+  /** A message from outside the user (a huddle digest): in = into this session. */
   peer?: { dir: "in" | "out"; ticketId: string | null };
+  /** Huddle messages delivered to this ticket's session (a peer entry too): the huddle's id. text is the digest. */
+  huddleId?: string;
   /** Worktree setup that ran before this prompt (shown as a row before it). */
   setup?: SetupResult;
   /** This step started a helper agent (shown as its own card with live progress). */
   helper?: HelperRun;
+}
+
+/** One tool call in full (huddle session viewer), loaded when its row is opened. */
+export interface FullToolDetail {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+  /** null while the call has no result yet (or the session lost it). */
+  output: string | null;
+  isError: boolean;
+  truncated: boolean;
 }
 
 export interface Comment {
@@ -450,6 +536,255 @@ export interface McpConfig extends McpAddInput {
   commandLine: string | null;
 }
 
+/** Where a teammate or template is saved (src/server/layers.ts): built-in, for every board (global) or this board. */
+export type LayerSource = "builtin" | "global" | "board";
+/** A saved level. */
+export type Level = "global" | "board";
+
+export interface LayerInfo {
+  /** The level whose version is in effect. */
+  source: LayerSource;
+  /** The version Reset falls back to; null: deleting removes it. */
+  base: LayerSource | null;
+  /** The name is a built-in. */
+  builtin: boolean;
+}
+
+/** A huddle role preset, a "teammate" in the UI (src/server/huddle-presets.ts). */
+export interface HuddlePreset extends LayerInfo {
+  name: string;
+  role: string;
+  prompt: string;
+  model: string | null;
+  mode: "tagged" | "monitor";
+  lead: boolean;
+  canEdit: boolean;
+  workspace: "shared" | "own";
+}
+
+/** A teammate Claude proposed (src/server/teammate-proposal.ts): fields it left out keep an existing teammate's values. */
+export type TeammateProposal = Pick<HuddlePreset, "name" | "prompt"> & Partial<Pick<HuddlePreset, "role" | "model" | "mode" | "lead" | "canEdit" | "workspace">> & { why: string };
+
+/** What the user did with a teammate card. */
+export interface TeammateCardState {
+  state: "saved" | "dismissed";
+  name?: string;
+  scope?: Level;
+  at: string;
+}
+
+/** A whole-huddle template (src/server/huddle-templates.ts): a roster and its rules. */
+export interface HuddleTemplate extends LayerInfo {
+  name: string;
+  label: string;
+  description: string;
+  roster: RosterEntry[];
+  /** Rounds of discussion before the lead wraps up; null: no limit. */
+  rounds: number | null;
+  /** Budget in USD; null: the default. */
+  maxCostUsd: number | null;
+  /** Report format ("" for none). */
+  report: string;
+}
+
+/** What every board spent today (src/server/spend.ts). */
+export interface TodaySpend {
+  day: string;
+  costUsd: number;
+  boards: { slug: string; name: string; costUsd: number }[];
+}
+
+/** One huddle a teammate or template took part in (src/server/huddle-usage.ts). */
+export interface UsageHuddle {
+  board: string;
+  huddle: string;
+  ticket: string;
+  title: string | null;
+  at: string;
+  costUsd: number;
+}
+
+export interface TeamUsage {
+  huddles: number;
+  lastUsed: string | null;
+  costUsd: number;
+  /** Newest first. */
+  recent: UsageHuddle[];
+}
+
+/** One line of a huddle roster (src/server/huddle-roster.ts): `count` participants from a preset or a free-form role. */
+export interface RosterEntry {
+  preset?: string;
+  role?: string;
+  count?: number;
+  focus?: string;
+  model?: string | null;
+  mode?: HuddleMode;
+  workspace?: "shared" | "own";
+  lead?: boolean;
+  canEdit?: boolean;
+  handle?: string;
+  prompt?: string;
+}
+
+export type HuddleMode = "tagged" | "monitor";
+
+/** A huddle participant as the daemon shows it (src/server/huddle.ts ParticipantView). */
+export interface HuddleParticipant {
+  handle: string;
+  role: string;
+  preset: string | null;
+  focus?: string;
+  model: string | null;
+  mode: HuddleMode;
+  lead: boolean;
+  canEdit: boolean;
+  workspace: "shared" | "own";
+  /** done: finished its job (only a lead, @main or the user wakes it). blocked: waiting on something (statusReason). */
+  status: "working" | "idle" | "stopped" | "failed" | "done" | "blocked";
+  statusReason?: string | null;
+  kind: "agent" | "ticket-main" | "human";
+  ticketId?: string | null;
+  joinedAt: string;
+  lastActivity?: string | null;
+  costUsd?: number;
+  /** ≈ cost of the turn it is in now, not yet in costUsd. */
+  liveCostUsd?: number;
+  /** Its conversation's size at its latest step (tokens Claude re-reads every step). */
+  contextTokens?: number;
+  error?: string | null;
+  running: boolean;
+  /** Read-only agent: the host branch and commit its snapshot shows. */
+  snapshot?: { branch: string | null; sha: string } | null;
+  sessionId?: string | null;
+}
+
+/** One step of a huddle participant's session (src/server/huddle-session.ts SessionStep). */
+export interface SessionStep {
+  i: number;
+  kind: "text" | "tool" | "post" | "wake";
+  text: string;
+  at: string | null;
+  id?: string;
+  out?: string;
+  error?: true;
+  pending?: true;
+  seq?: number;
+}
+
+/** A participant's own session for the read-only viewer (src/server/huddle-session.ts ParticipantSession). */
+export interface ParticipantSession {
+  handle: string;
+  kind: HuddleParticipant["kind"];
+  role: string;
+  model: string | null;
+  mode: HuddleMode;
+  status: HuddleParticipant["status"];
+  live: boolean;
+  costUsd: number;
+  sessionId: string | null;
+  snapshot: { branch: string | null; sha: string } | null;
+  ticketId: string | null;
+  file: string | null;
+  steps: SessionStep[];
+  total: number;
+  hasMore: boolean;
+  current: number | null;
+}
+
+export interface HuddleFinding {
+  id: string;
+  text: string;
+  by: string;
+  status: "open" | "resolved";
+  resolvedBy: string | null;
+  at: string;
+}
+
+export interface Huddle {
+  id: string;
+  hostTicket: string;
+  hostTitle: string | null;
+  status: "live" | "stopped" | "closed";
+  maxParticipants: number;
+  participants: HuddleParticipant[];
+  findings: HuddleFinding[];
+  invited: string[];
+  /** Highest message seq so far (the message count). */
+  seq: number;
+  /** Spending limit; the huddle stops when it is spent (default 20). */
+  maxCostUsd?: number;
+  /** Why it stopped by itself: budget spent, message limit, or too long without the user (routing paused). */
+  stopReason?: "budget" | "messages" | "loop" | null;
+  /** @main or a lead asked the user to close the huddle (its summary is in the host's outputs). */
+  closeRequest?: { by: string; at: string; reason: string } | null;
+  /** Live, nobody working, no unanswered tags, no open findings; idleSince: the last message or turn. */
+  quiet?: boolean;
+  idleSince?: string | null;
+  /** Messages tagging @you since the user last posted, acted (Stop, Resume…) or viewed the latest message; forYouSince: that seq. */
+  forYou?: number;
+  forYouSince?: number;
+  /** Pinned brief (goal, decisions) at the head of every digest. */
+  brief?: { text: string; by: string; at: string } | null;
+  /** Template it was started from. */
+  template?: string | null;
+  /** Lessons agents proposed when they turned done; only the user saves them as role notes. */
+  learnings?: HuddleLearning[];
+  /** Learnings waiting for review (they count in forYou). */
+  learningsPending?: number;
+  /** Its summary, relative to the host ticket's outputs folder (huddles/<id>/summary.md, or the older huddle-summary.md); null while there is none. */
+  summary?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  closedAt?: string | null;
+}
+
+/** A lesson an agent proposed (src/server/types.ts). target: "_all", a preset name, or "new" (a preset from the ad-hoc role). */
+export interface HuddleLearning {
+  id: string;
+  from: string;
+  role: string;
+  preset: string | null;
+  text: string;
+  evidence: string;
+  scope: "general" | "repo";
+  status: "pending" | "saved" | "discarded";
+  target: string;
+  at: string;
+  newRole?: boolean;
+  /** A teammate the agent proposed instead of a lesson (text: its why; scope general: all boards, repo: this board). */
+  teammate?: TeammateProposal;
+}
+
+/** A role note (src/server/huddle-notes.ts): by "you" or the agent's handle. */
+export interface HuddleNote {
+  text: string;
+  by: string;
+  date: string | null;
+  huddle: string | null;
+}
+
+export type HuddleNotes = Record<string, { general: HuddleNote[]; repo: HuddleNote[] }>;
+
+export interface HuddleMessage {
+  id: string;
+  seq: number;
+  ts: string;
+  from: string;
+  text: string;
+  mentions: string[];
+  kind: "message" | "finding" | "system";
+  /** Where a post came in from: the board UI, the MCP server/CLI, or a request with neither header. */
+  source?: "ui" | "mcp" | "none";
+}
+
+/** `?a=1&b=2` from the defined values ("" when none). */
+const query = (q: Record<string, number | undefined>) => {
+  const s = new URLSearchParams(Object.entries(q).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])).toString();
+  return s ? `?${s}` : "";
+};
+const hud = (slug: string, id?: string) => `/api/profiles/${encodeURIComponent(slug)}/huddles${id ? `/${encodeURIComponent(id)}` : ""}`;
+
 export interface Schedule {
   id: string;
   name: string;
@@ -513,14 +848,43 @@ export type BusEvent =
   | { type: "mcp.updated"; state: McpState }
   | { type: "snippets.updated" }
   | { type: "schedule.updated"; profile: string; id: string; schedule: Omit<Schedule, "summary" | "active"> | null }
-  | { type: "restart.updated"; pending: boolean; waiting: number };
+  | { type: "restart.updated"; pending: boolean; waiting: number }
+  | { type: "huddle.updated"; profile: string; huddle: Huddle }
+  | { type: "huddle.message"; profile: string; huddleId: string; message: HuddleMessage }
+  | { type: "huddle.activity"; profile: string; huddleId: string; handle: string; lastActivity: string | null; liveCostUsd?: number; contextTokens?: number }
+  | { type: "huddle.session"; profile: string; huddleId: string; handle: string };
+
+/** Phone access over Tailscale (src/server/remote.ts). local: this page is open on the Mac, not the phone. */
+export interface RemoteState {
+  enabled: boolean;
+  url: string | null;
+  host: string | null;
+  allowedLogin: string | null;
+  lastVisit: string | null;
+  warning?: string;
+  qrSvg: string | null;
+  local: boolean;
+}
+
+/** "Needs you" notifications (src/server/notify.ts): webhook (ntfy or JSON), macOS banner, per-kind toggles. */
+export type NotifyKind = "stalled" | "questions" | "proposal" | "review" | "failed" | "limit" | "blocked" | "huddle" | "reply";
+export interface NotifyState {
+  webhookUrl: string;
+  format: "auto" | "ntfy" | "json";
+  mac: boolean;
+  kinds: Record<NotifyKind, boolean>;
+  lastSentAt: string | null;
+  lastError: string | null;
+}
 
 export interface InboxItem {
   profile: string;
   profileName: string;
   id: string;
   title: string;
-  attention: { kind: AttentionKind; label: string };
+  attention: Attention;
+  /** Snoozed from the Inbox until then: listed apart, not counted. */
+  snoozedUntil?: string;
 }
 
 /** A ticket on any board, as the ⌘K command bar lists it. */
@@ -532,6 +896,10 @@ export interface TicketRow {
   status: Status;
   running: boolean;
   updatedAt: string;
+  body: string;
+  /** Its last result summary (Claude's last comment), capped. */
+  summary: string;
+  prUrl: string | null;
 }
 
 export type BugBlockId = "env" | "ticket" | "log";
@@ -555,7 +923,8 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const hasBody = method === "POST" || method === "PATCH" || method === "PUT";
   const r = await fetch(url, {
     method,
-    headers: hasBody ? { "content-type": "application/json" } : undefined,
+    // x-ckanban-source: the daemon records where huddle posts come from.
+    headers: hasBody ? { "content-type": "application/json", "x-ckanban-source": "ui" } : undefined,
     body: hasBody ? JSON.stringify(body ?? {}) : undefined,
   });
   if (r.status === 204) return undefined as T;
@@ -580,23 +949,96 @@ export const api = {
   claudeModels: () => req<ClaudeModel[]>("GET", "/api/claude/models"),
   claudeDefaults: () => req<{ model: string | null }>("GET", "/api/claude/defaults"),
   pickFolder: () => req<{ path: string | null }>("POST", "/api/pick-folder"),
+  versionHistory: (path: string) => req<VersionHistory>("GET", `/api/version-history?path=${encodeURIComponent(path)}`),
+  enableVersionHistory: (path: string) => req<{ changed: boolean; sha: string | null; ignored: string[]; repo: RepoKind }>("POST", "/api/version-history", { path }),
   /** Claude plan usage (5h / weekly windows) or a plain-words error. */
   usage: () => req<UsageResult>("GET", "/api/usage"),
+  /** What every board spent today (local day). */
+  spend: () => req<TodaySpend>("GET", "/api/spend"),
   version: () => req<{ version: string; latest: string | null; updateAvailable: boolean; url: string | null }>("GET", "/api/version"),
   health: () => req<Health>("GET", "/api/health"),
   /** pending: a daemon restart holds new runs until the `waiting` active runs finish. */
+  remote: () => req<RemoteState>("GET", "/api/remote"),
+  setRemote: (enabled: boolean) => req<RemoteState>("POST", "/api/remote", { enabled }),
+  notify: () => req<NotifyState>("GET", "/api/notify"),
+  setNotify: (patch: Partial<Pick<NotifyState, "webhookUrl" | "format" | "mac">> & { kinds?: Partial<Record<NotifyKind, boolean>> }) => req<NotifyState>("POST", "/api/notify", patch),
+  testNotify: (profile: string | null) =>
+    req<{ ok: boolean; error: string | null; webhook: boolean; state: NotifyState }>("POST", "/api/notify/test", profile ? { profile } : {}),
   restartState: () => req<{ pending: boolean; waiting: number }>("GET", "/api/restart"),
   bugDraft: (ref: { profile: string; ticketId: string } | null) =>
     req<{ blocks: BugBlock[]; screenshots: string[] }>("POST", "/api/bug-report/draft", ref ?? {}),
   reportBug: (input: { title: string; description: string; include: BugBlockId[]; profile?: string; ticketId?: string }) =>
     req<BugReportResult>("POST", "/api/bug-report", { ...input, source: "ui" }),
   profiles: () => req<Profile[]>("GET", "/api/profiles"),
-  createProfile: (p: { name: string; path: string; maxParallel?: number; model?: string; baseBranch?: string }) =>
+  createProfile: (p: { name: string; path: string; maxParallel?: number; model?: string; baseBranch?: string; workspace?: Workspace }) =>
     req<Profile>("POST", "/api/profiles", p),
   updateProfile: (slug: string, p: Partial<Profile>) => req<Profile>("PATCH", `/api/profiles/${slug}`, p),
   deleteProfile: (slug: string) => req<void>("DELETE", `/api/profiles/${slug}`),
   detectSetup: (slug: string) => req<SetupDetection>("POST", `/api/profiles/${slug}/detect-setup`),
   tickets: (slug: string) => req<Ticket[]>("GET", t(slug)),
+  huddlePresets: (slug: string) => req<HuddlePreset[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/huddle-presets`),
+  /** scope: global (every board) or this board. */
+  saveHuddlePreset: (slug: string, p: Partial<Omit<HuddlePreset, keyof LayerInfo>> & { name: string }, scope: Level) =>
+    req<HuddlePreset>("POST", `/api/profiles/${encodeURIComponent(slug)}/huddle-presets`, { ...p, scope }),
+  /** Deletes a teammate at one level: it falls back to the level below (all boards, then built-in), or goes away. */
+  deleteHuddlePreset: (slug: string, name: string, scope: Level) =>
+    req<{ reset: boolean; presets: HuddlePreset[] }>("DELETE", `/api/profiles/${encodeURIComponent(slug)}/huddle-presets/${encodeURIComponent(name)}?scope=${scope}`),
+  /** How every teammate and template was used, from the huddles on every board. */
+  teamUsage: () => req<{ teammates: Record<string, TeamUsage>; templates: Record<string, TeamUsage> }>("GET", "/api/team-usage"),
+  /** Every huddle on the board (live, stopped and closed). */
+  boardHuddles: (slug: string) => req<Huddle[]>("GET", hud(slug)),
+  /** Huddles the ticket hosts or takes part in. */
+  huddles: (slug: string, ticketId: string) => req<Huddle[]>("GET", `${hud(slug)}?ticket=${encodeURIComponent(ticketId)}`),
+  /** A huddle and its newest messages (`before`: the page before that seq; `since`: the ones after it). */
+  huddle: (slug: string, id: string, q: { before?: number; since?: number; limit?: number } = {}) =>
+    req<{ huddle: Huddle; you: string; messages: HuddleMessage[]; hasMore: boolean }>("GET",
+      `${hud(slug, id)}${query(q)}`),
+  /** template: a template's name (its roster when `roster` is empty, its budget unless given, its rules as the brief). */
+  startHuddle: (slug: string, ticketId: string, roster: RosterEntry[], maxParticipants?: number, maxCostUsd?: number, template?: string) =>
+    req<Huddle>("POST", hud(slug), { ticketId, roster, maxParticipants, maxCostUsd, template }),
+  setHuddleBrief: (slug: string, id: string, text: string) => req<Huddle>("PUT", `${hud(slug, id)}/brief`, { text }),
+  huddleTemplates: (slug: string) => req<HuddleTemplate[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/huddle-templates`),
+  saveHuddleTemplate: (slug: string, t: Omit<HuddleTemplate, keyof LayerInfo>, scope: Level) =>
+    req<HuddleTemplate>("POST", `/api/profiles/${encodeURIComponent(slug)}/huddle-templates`, { ...t, scope }),
+  /** Deletes a template at one level: it falls back to the level below, or goes away. */
+  deleteHuddleTemplate: (slug: string, name: string, scope: Level) =>
+    req<{ reset: boolean; templates: HuddleTemplate[] }>("DELETE", `/api/profiles/${encodeURIComponent(slug)}/huddle-templates/${encodeURIComponent(name)}?scope=${scope}`),
+  postHuddle: (slug: string, id: string, text: string) => req<HuddleMessage>("POST", `${hud(slug, id)}/messages`, { text }),
+  addHuddleParticipants: (slug: string, id: string, entry: RosterEntry) =>
+    req<{ added: HuddleParticipant[]; huddle: Huddle }>("POST", `${hud(slug, id)}/participants`, entry),
+  setHuddleMode: (slug: string, id: string, handle: string, mode: HuddleMode) =>
+    req<Huddle>("PATCH", `${hud(slug, id)}/participants/${encodeURIComponent(handle)}`, { mode }),
+  stopHuddleParticipant: (slug: string, id: string, handle: string) =>
+    req<Huddle>("POST", `${hud(slug, id)}/participants/${encodeURIComponent(handle)}/stop`),
+  /** A failed or stopped participant is idle again (and wakes now on a live huddle). */
+  restartHuddleParticipant: (slug: string, id: string, handle: string) =>
+    req<Huddle>("POST", `${hud(slug, id)}/participants/${encodeURIComponent(handle)}/restart`),
+  /** resume: addBudgetUsd raises the budget (needed once it is spent). */
+  huddleAction: (slug: string, id: string, action: "stop" | "resume" | "close", addBudgetUsd?: number) =>
+    req<Huddle>("POST", `${hud(slug, id)}/${action}`, addBudgetUsd ? { addBudgetUsd } : undefined),
+  /** A participant's session, read-only: newest steps last (`before`: older page; `since`: every step from that index). */
+  huddleSession: (slug: string, id: string, handle: string, q: { before?: number; since?: number; limit?: number } = {}) =>
+    req<ParticipantSession>("GET", `${hud(slug, id)}/participants/${encodeURIComponent(handle)}/session${query(q)}`),
+  huddleSessionTool: (slug: string, id: string, handle: string, toolUseId: string) =>
+    req<FullToolDetail>("GET", `${hud(slug, id)}/participants/${encodeURIComponent(handle)}/session/tool/${encodeURIComponent(toolUseId)}`),
+  /** Show the participant's transcript file in Finder. */
+  revealHuddleSession: (slug: string, id: string, handle: string) =>
+    req<{ ok: true; file: string }>("POST", `${hud(slug, id)}/participants/${encodeURIComponent(handle)}/session/reveal`),
+  /** The user viewed the huddle up to message seq: the "for you" count clears up to there. */
+  huddleSeen: (slug: string, id: string, seq: number) => req<Huddle>("POST", `${hud(slug, id)}/seen`, { seq }),
+  /** Change a pending learning (text, scope, where it goes) before saving it. */
+  editLearning: (slug: string, id: string, lid: string, patch: Partial<Pick<HuddleLearning, "text" | "scope" | "target">>) =>
+    req<HuddleLearning>("PATCH", `${hud(slug, id)}/learnings/${encodeURIComponent(lid)}`, patch),
+  saveLearning: (slug: string, id: string, lid: string, patch: Partial<Pick<HuddleLearning, "text" | "scope" | "target">> = {}) =>
+    req<HuddleLearning>("POST", `${hud(slug, id)}/learnings/${encodeURIComponent(lid)}/save`, patch),
+  discardLearning: (slug: string, id: string, lid: string) => req<HuddleLearning>("POST", `${hud(slug, id)}/learnings/${encodeURIComponent(lid)}/discard`, {}),
+  /** Every role's notes (general and this board's repo notes); cap: lines per file that go into instructions. */
+  huddleNotes: (slug: string) => req<{ notes: HuddleNotes; cap: number }>("GET", `/api/profiles/${encodeURIComponent(slug)}/huddle-notes`),
+  setHuddleNotes: (slug: string, role: string, scope: "general" | "repo", notes: HuddleNote[]) =>
+    req<HuddleNote[]>("PUT", `/api/profiles/${encodeURIComponent(slug)}/huddle-notes/${encodeURIComponent(role)}/${scope}`, { notes }),
+  inviteToHuddle: (slug: string, id: string, ticketId: string) => req<HuddleParticipant>("POST", `${hud(slug, id)}/invite`, { ticketId }),
+  huddleFindings: (slug: string, id: string, action: "add" | "resolve", arg: { text?: string; id?: string }) =>
+    req<HuddleFinding[]>("POST", `${hud(slug, id)}/findings`, { action, ...arg }),
   files: (slug: string, path: string) =>
     req<{ path: string; entries: FileEntry[] }>("GET", `/api/profiles/${encodeURIComponent(slug)}/files?path=${encodeURIComponent(path)}`),
   file: (slug: string, path: string) =>
@@ -606,6 +1048,9 @@ export const api = {
   sessions: (slug: string) => req<ClaudeSession[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/sessions`),
   codexSessions: (slug: string) => req<ClaudeSession[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/codex-sessions`),
   branchTicket: (slug: string, id: string) => req<{ ticket: Ticket; warning: string | null }>("POST", `${t(slug, id)}/branch`),
+  /** external: the session is open in a terminal the board can't close (nothing changed). */
+  freshSession: (slug: string, id: string) => req<{ ticket: Ticket; external: boolean }>("POST", `${t(slug, id)}/fresh-session`),
+  takeOver: (slug: string, id: string) => req<{ ticket: Ticket; external: boolean }>("POST", `${t(slug, id)}/take-over`),
   linkSession: (slug: string, id: string, sessionId: string | null) =>
     req<Ticket>("POST", `${t(slug, id)}/link-session`, { sessionId }),
   outputs: (slug: string, id: string) => req<OutputFile[]>("GET", `${t(slug, id)}/outputs`),
@@ -620,13 +1065,19 @@ export const api = {
     return r.text();
   },
   createTicket: (slug: string, input: {
-    title: string; body: string; status: Status; sessionId?: string; codexSessionId?: string; standalone?: boolean; access?: Ticket["access"]; isolated?: boolean; mode?: TicketMode; agent?: Ticket["agent"]; priority?: Ticket["priority"]; kind?: Ticket["kind"]; labels?: string[]; parentId?: string; planKey?: string; dependsOn?: string[]; needs?: string[];
+    title: string; body: string; status: Status; sessionId?: string; codexSessionId?: string; standalone?: boolean; access?: Ticket["access"]; isolated?: boolean; mode?: TicketMode; important?: boolean; agent?: Ticket["agent"]; priority?: Ticket["priority"]; kind?: Ticket["kind"]; labels?: string[]; parentId?: string; planKey?: string; dependsOn?: string[]; needs?: string[];
   }) => req<Ticket>("POST", t(slug), input),
   plan: (slug: string, id: string, action: "start" | "pause" | "resume" | "done" | "concurrency", maxConcurrent?: number) =>
     req<Ticket>("POST", `${t(slug, id)}/plan`, { action, maxConcurrent }),
-  updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "priority" | "kind" | "labels" | "agent" | "codexModel" | "codexEffort" | "access" | "readAt" | "standalone" | "needs">> & { expectedBody?: string }) =>
+  updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "important" | "runCapUsd" | "priority" | "kind" | "labels" | "agent" | "codexModel" | "codexEffort" | "access" | "readAt" | "standalone" | "needs">> & { expectedBody?: string }) =>
     req<Ticket>("PATCH", t(slug, id), patch),
   deleteTicket: (slug: string, id: string) => req<void>("DELETE", t(slug, id)),
+  /** Inbox Snooze: hide what the ticket waits for now for a day (or until its state changes). */
+  snooze: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/snooze`, {}),
+  unsnooze: (slug: string, id: string) => req<Ticket>("DELETE", `${t(slug, id)}/snooze`),
+  /** The user answered a teammate card (saved it, or dismissed it). */
+  answerTeammateCard: (slug: string, id: string, uuid: string, card: Omit<TeammateCardState, "at">) =>
+    req<Ticket>("PUT", `${t(slug, id)}/teammate-cards/${encodeURIComponent(uuid)}`, card),
   comments: (slug: string, id: string) => req<Comment[]>("GET", `${t(slug, id)}/comments`),
   addComment: (slug: string, id: string, text: string) => req<Comment>("POST", `${t(slug, id)}/comments`, { text }),
   diff: (slug: string, id: string, ignoreWhitespace: boolean) =>
@@ -637,6 +1088,7 @@ export const api = {
   sendQueued: (slug: string, id: string, msgId: string) => req<Ticket>("POST", `${t(slug, id)}/queued/${msgId}`),
   sendQueuedNow: (slug: string, id: string, msgId: string) => req<Ticket>("POST", `${t(slug, id)}/queued/${msgId}/now`),
   discardQueued: (slug: string, id: string, msgId: string) => req<Ticket>("DELETE", `${t(slug, id)}/queued/${msgId}`),
+  editQueued: (slug: string, id: string, msgId: string, text: string) => req<Ticket>("PATCH", `${t(slug, id)}/queued/${msgId}`, { text }),
   conversation: (slug: string, id: string, before?: number) =>
     req<{ entries: SessionEntry[]; start: number; total: number; title: string | null }>(
       "GET", `${t(slug, id)}/conversation${before !== undefined ? `?before=${before}` : ""}`),
@@ -648,6 +1100,8 @@ export const api = {
   unsubscribePush: (endpoint: string) => req<{ok:boolean}>("DELETE", "/api/notifications", {endpoint}),
   testPush: (endpoint: string) => req<{ok:boolean}>("POST", "/api/notifications/test", {endpoint}),
   workspaceActivity: (slug: string) => req<{id:string;title:string;at:string;changes:string[]}[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/activity`),
+  /** Skills and commands in the board's folder: the `/` picker of descriptions not tied to a ticket yet. */
+  boardCommands: (slug: string) => req<SlashCommand[]>("GET", `/api/profiles/${slug}/commands`),
   activity: (slug: string, id: string) => req<ActivityEntry[]>("GET", `${t(slug, id)}/activity`),
   /** Cost, tokens and ≈ share of the 5h plan window per run. */
   ticketUsage: (slug: string, id: string) => req<TicketUsage>("GET", `${t(slug, id)}/usage`),
@@ -687,6 +1141,19 @@ export const api = {
   answerPermission: (slug: string, id: string, askId: string, allow: boolean, always = false) =>
     req<Ticket>("POST", `${t(slug, id)}/permission`, { askId, allow, always }),
   checkPr: (slug: string, id: string) => req<{ state: string | null }>("POST", `${t(slug, id)}/check-pr`),
+  /** force: skip the server's 30s reuse of a fresh status. */
+  prRefresh: (slug: string, id: string, force = false) => req<{ pr: PrStatus | null; ticket: Ticket }>("POST", `${t(slug, id)}/pr/refresh`, { force }),
+  prSendFailures: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/pr/send-failures`),
+  prResolveConflicts: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/pr/resolve-conflicts`),
+  prMerge: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/pr/merge`),
+  /** Stalled run: stop it, keep waiting, or restart it in the same session. */
+  stall: (slug: string, id: string, action: "stop" | "wait" | "restart") => req<Ticket>("POST", `${t(slug, id)}/stall`, { action }),
+  /** Usage limit: send "continue" now. */
+  /** "Continue with +$Y" after a run stopped at its spending cap. */
+  capContinue: (slug: string, id: string, addUsd: number) => req<Ticket>("POST", `${t(slug, id)}/cap-continue`, { addUsd }),
+  limitContinue: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/limit`, { action: "continue" }),
+  /** Usage limit: turn the automatic continue at the reset on or off for this ticket. */
+  limitAuto: (slug: string, id: string, auto: boolean) => req<Ticket>("POST", `${t(slug, id)}/limit`, { auto }),
   planningCommand: (slug: string, id: string) => req<{ command: string }>("POST", `${t(slug, id)}/planning-command`),
   /** Raw image bytes; the server saves them and returns the URL to put in markdown. */
   uploadImage: async (file: Blob) => {

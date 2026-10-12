@@ -2,10 +2,11 @@ import { useMemo, useState } from "react";
 import type { Profile } from "./api";
 import { avatarColor, avatarLetter } from "./avatar";
 import { fuzzyMatch } from "./fuzzy";
+import { boardDigit } from "./keynav";
 import { CheckIcon } from "./icons";
 import { Modal } from "./Modal";
 
-const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+export const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 export const MOD = isMac ? "⌘" : "Ctrl";
 
 const GROUPS: { title: string; keys: [string[], string][] }[] = [
@@ -27,7 +28,9 @@ const GROUPS: { title: string; keys: [string[], string][] }[] = [
       [["Esc"], "Clear the search"],
       [["Ctrl", "`"], "Terminal & files panel"],
       [["C"], "Quick Claude chat (no ticket)"],
+      [["T"], "Team: teammates, templates, notes"],
       [["?"], "This list"],
+      [["Hold", MOD], "Show key hints on buttons"],
     ],
   },
   {
@@ -42,13 +45,26 @@ const GROUPS: { title: string; keys: [string[], string][] }[] = [
     ],
   },
   {
+    title: "Inbox",
+    keys: [
+      [["↑", "↓"], "Select an entry"],
+      [["Enter"], "Open the ticket (Answer / Open)"],
+      [["D"], "Mark done"],
+      [["S"], "Snooze for a day / unsnooze"],
+    ],
+  },
+  {
     title: "Ticket panel",
     keys: [
-      [["Alt", "↑", "↓"], "Previous / next ticket"],
-      [[MOD, "Shift", "Enter"], "Mark done (in Review)"],
+      [["↑", "↓", "K", "J"], "Previous / next ticket"],
+      [["Alt", "↑", "↓"], "Previous / next ticket, also while typing"],
+      [[MOD, "Shift", "Enter"], "Next step: apply proposal & start work / start work / mark done"],
       [["Enter"], "Send a chat message"],
       [["Shift", "Enter"], "New line"],
+      [["E"], "Edit the description"],
+      [["R"], "Refine with Claude (Backlog)"],
       [[MOD, "Enter"], "Save the description"],
+      [["Esc"], "Cancel the description edit"],
       [[MOD, "\\"], "Show / hide details"],
       [["Esc"], "Close (one layer at a time)"],
     ],
@@ -103,6 +119,13 @@ export function BoardSwitcher({ profiles, current, needYou, onPick, onClose }: {
           role="combobox" aria-expanded aria-controls="board-switcher-list" aria-activedescendant={shown[active] ? `bs-${shown[active].p.slug}` : undefined}
           onChange={(e) => { setQ(e.target.value); setActive(0); }}
           onKeyDown={(e) => {
+            // 1…9 with nothing typed yet: switch to that board (the number shown on its row), don't search for the digit.
+            const digit = !q && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey ? boardDigit(e.nativeEvent.code) : null;
+            if (digit !== null) {
+              e.preventDefault();
+              if (profiles[digit]) onPick(profiles[digit].slug);
+              return;
+            }
             if (e.key === "ArrowDown") { e.preventDefault(); setActive((a) => Math.min(shown.length - 1, a + 1)); }
             else if (e.key === "ArrowUp") { e.preventDefault(); setActive((a) => Math.max(0, a - 1)); }
             else if (e.key === "Enter") { e.preventDefault(); pick(active); }
@@ -131,6 +154,7 @@ export function BoardSwitcher({ profiles, current, needYou, onPick, onClose }: {
         <div className="muted small switcher-foot">
           <span><kbd>↑</kbd> <kbd>↓</kbd> pick</span>
           <span><kbd>Enter</kbd> open</span>
+          <span><kbd>1…9</kbd> go to that board</span>
           <span><kbd>[</kbd> <kbd>]</kbd> previous / next board anywhere</span>
         </div>
       </div>

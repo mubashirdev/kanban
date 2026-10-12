@@ -1,8 +1,8 @@
 import { codexArgs, startCodexRun } from "./codex-runner";
 import { ticketMetadata, type TicketMetadata } from "./ticket-metadata";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { extractFinalText, summarizeEvent } from "./activity";
 import { isSlashCommand } from "./commands";
 import { expandCodexCommand } from "./codex-commands";
@@ -10,23 +10,28 @@ import { commitAll, createPr, pushBranch } from "./git-actions";
 import { copyAttachments, deleteAttachments, localizeImages, referencedAttachments } from "./attachments";
 import type { Bus } from "./events";
 import { isSessionLive as psSessionLive, sessionTitle } from "./claude";
-import { addWorktree, isGitRepo, removeWorktree, resolveBaseBranch, worktreeDir } from "./git";
+import { addWorktree, branchesWithPrefix, branchExists, isGitRepo, listWorktrees, removeWorktree, repoKind, resolveBaseBranch, worktreeDir, type RepoKind } from "./git";
 import { MOVE_TO_PLANNING_RE, STAY_RE } from "./session";
 import { forkSessionFile } from "./fork";
 import { saveMockups } from "./mockups";
-import { userWaitReason } from "./attention";
+import { macBanner } from "./notify";
+import { type HostHuddle, ticketAttention, userWaitReason } from "./attention";
 import type { SessionSummary } from "./session";
-import { chatMessage, chatRules, planApprovedPrompt, sessionPrompt, firstRunPrompt, interruptedPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumePrompt, steerPrompt, type ChatMode, type PlanWake } from "./prompts";
+import { chatMessage, chatRules, planApprovedPrompt, sessionPrompt, firstRunPrompt, freshSessionPrompt, interruptedPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumePrompt, steerPrompt, type ChatMode, type PlanWake } from "./prompts";
 import {
   childrenOf, DEFAULT_MAX_CONCURRENT, findCycle, isComplete, normalizeNeeds, planActive, planProblem, planStep, planTable, resolveDeps, wakeupCap,
 } from "./plan";
 import { run as runCmd } from "./git";
 import { parseResult } from "./result";
+import { AUTO_CONTINUE_PER_DAY, clockTime, CONTINUE_TEXT, dayKey, limitMessage, parseReset } from "./limit";
 import { DraftTracker } from "./draft";
-import { buildArgs, describeAsk, permissionAnswer, startRun, type RunHandle } from "./runner";
+import { buildArgs, DEFAULT_STALL_MINUTES, describeAsk, permissionAnswer, startRun, type RunHandle } from "./runner";
+import { RETRY_DELAY_MS, RETRY_TEXT, transientError } from "./retry";
+import { commandText, rememberInit, useBundledFile } from "./slash";
 import { mcpConfig, resolveCodexBin } from "./agents";
+import type { OwnedSession } from "./shell";
 import type { Store } from "./store";
-import type { Interrupted, PermissionAsk, Plan, Profile, QueuedMessage, Status, Ticket, TicketMode } from "./types";
+import { autoHuddlesOn, runCapFor, workspaceOf, type Interrupted, type LimitHit, type PermissionAsk, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode } from "./types";
 import { CLEANUP_TIMEOUT_MS, prepareWorktree, runShell, withSetup, type SetupResult } from "./worktree-setup";
 import { nowIso, slugify } from "./util";
 import { shellQuote } from "./util";
@@ -38,19 +43,20 @@ export interface BoardOptions {
   sessionExists?: (sessionId: string) => boolean;
   /** Whether an interactive claude process currently has this session open. */
   isSessionLive?: (sessionId: string, title: string | null) => Promise<boolean>;
-  /** Tells the user something needs them while they're away (default: a macOS notification). */
+  /** The ticket's session open in one of the board's own terminals (the dock), which the board can close (Take over here). */
+  findOwnedSession?: (sessionId: string) => Promise<OwnedSession | null>;
+  /** Tells the user about board events that aren't "needs you", e.g. a plan done (default: a macOS banner, see notify.ts). */
   notify?: (title: string, body: string) => void;
   /** Child events that arrive within this window wake the planner once (default 3s). */
   planWakeDelayMs?: number;
   /** The ticket's Claude session as the board UI sees it (open questions, pending proposal); a plan skips children waiting on the user. */
   sessionSummary?: (sessionId: string) => SessionSummary | null;
-}
-
-/** macOS notification; silently nothing elsewhere or when osascript fails. */
-export function systemNotify(title: string, body: string): void {
-  if (process.platform !== "darwin") return;
-  const q = (s: string) => JSON.stringify(s.replace(/\s+/g, " ").slice(0, 240));
-  runCmd(["osascript", "-e", `display notification ${q(body)} with title ${q(title)}`], homedir()).catch(() => {});
+  /** The clock for usage-limit resets and the daily auto-continue cap (tests pass a fake one). */
+  now?: () => Date;
+  /** Pause before the one automatic retry after a passing API error (default RETRY_DELAY_MS; tests pass a short one). */
+  retryDelayMs?: number;
+  /** Stall watchdog time in ms, overriding the board's stallMinutes (tests). */
+  stallMs?: number;
 }
 
 interface ActiveRun {
@@ -69,7 +75,19 @@ interface ActiveRun {
    * user: answers a message the user typed in this ticket's chat, so the run may manage the ticket's own children
    * (see plannerRights); plan wake-ups, peer replies and messages from a planner's run don't.
    */
-  chat?: { text: string; mode: ChatMode; raw?: boolean; returnTo?: Status; quiet?: boolean; from?: Pick<Ticket, "status" | "outcome">; user?: boolean };
+  chat?: {
+    text: string; mode: ChatMode; raw?: boolean; returnTo?: Status; quiet?: boolean; from?: Pick<Ticket, "status" | "outcome">; user?: boolean;
+    /** text is a slash command (see QueuedMessage.slash). */
+    slash?: "prompt" | "local";
+    /** A wake for the ticket's own auto huddle (see QueuedMessage.hostWake): a full prompt, run as the ticket's work. */
+    hostWake?: boolean;
+  };
+  /** This message's run already got its one automatic retry after a passing API error. */
+  retried?: boolean;
+  /** The user chose Restart on a stalled run: once it is stopped, it resumes in the same session. */
+  restartRequested?: boolean;
+  /** This run started an auto huddle (start_huddle): one per run. */
+  autoHuddleStarted?: boolean;
   /** Queued messages (ticket.queued) written to this claude process, keyed by id, with the text it was given. */
   inFlight: Map<string, string>;
   /** Queued message this chat run was started with; it leaves the queue once Claude reads the prompt. */
@@ -90,8 +108,9 @@ function hasText(ev: any): boolean {
 function replayText(ev: any): string | null {
   if (ev?.type !== "user" || !ev.isReplay) return null;
   const c = ev.message?.content;
-  if (typeof c === "string") return c;
-  return Array.isArray(c) ? c.map((b: any) => (b?.type === "text" ? b.text : "")).join("") : null;
+  const text = typeof c === "string" ? c : Array.isArray(c) ? c.map((b: any) => (b?.type === "text" ? b.text : "")).join("") : null;
+  // A slash command comes back as Claude Code's command tags: match it with the `/name args` the board sent.
+  return text === null ? null : commandText(text) ?? text;
 }
 
 /** Backlog/Planning chats refine the ticket (read-only); everywhere else Claude acts on the message. */
@@ -100,7 +119,11 @@ export function chatModeFor(status: Status): ChatMode {
 }
 
 /** How a chat run handles a queued message: a peer message (from another ticket's Claude) is sent as-is, quietly. */
-function chatFor(t: Pick<Ticket, "status" | "outcome" | "standalone" | "access">, msg: { text: string; peer?: boolean; fromPlanner?: boolean }): NonNullable<ActiveRun["chat"]> {
+function chatFor(
+  t: Pick<Ticket, "status" | "outcome" | "standalone" | "access">, msg: { text: string; peer?: boolean; fromPlanner?: boolean; hostWake?: boolean },
+): NonNullable<ActiveRun["chat"]> {
+  // The ticket's auto huddle wakes it: unattended work on its own ticket, so it ends like a work run (result line, column).
+  if (msg.hostWake) return { text: msg.text, mode: "act", raw: true, hostWake: true };
   // A standalone session is a plain chat: the text goes as typed and the ticket never moves.
   if (t.standalone) return { text: msg.text, mode: t.access === "edit" ? "act" : "refine", raw: !isSlashCommand(msg.text), quiet: true };
   const mode = chatModeFor(t.status);
@@ -109,8 +132,24 @@ function chatFor(t: Pick<Ticket, "status" | "outcome" | "standalone" | "access">
 }
 
 /** Queued-message flags from Board.chat options. */
-function flags(o: { peer?: boolean; fromPlanner?: boolean }): Pick<QueuedMessage, "peer" | "fromPlanner"> {
-  return { ...(o.peer ? { peer: true } : {}), ...(o.fromPlanner ? { fromPlanner: true } : {}) };
+function flags(o: ChatOptions): Pick<QueuedMessage, "peer" | "fromPlanner" | "slash" | "hostWake"> {
+  return {
+    ...(o.peer ? { peer: true } : {}), ...(o.fromPlanner ? { fromPlanner: true } : {}), ...(o.slash ? { slash: o.slash } : {}),
+    ...(o.hostWake ? { hostWake: true } : {}),
+  };
+}
+
+/** Board.chat options; hostWake: the ticket's own auto huddle (or a free auto-huddle slot) wakes it. */
+export interface ChatOptions {
+  peer?: boolean;
+  fromPlanner?: boolean;
+  slash?: "prompt" | "local";
+  hostWake?: boolean;
+}
+
+/** What the card says while the ticket waits for its auto huddle. */
+export function autoHuddleActivity(a: NonNullable<Ticket["autoHuddle"]>): string {
+  return a.state === "waiting" ? "Waiting for huddle slot" : "Auto huddle: waiting for the review";
 }
 
 /** Holding a resource: Claude works on the ticket (In progress or a chat reply), or it is queued in Ready. */
@@ -127,6 +166,24 @@ function takesSlot(chat?: ActiveRun["chat"]): boolean {
 }
 
 const ACTIVITY_THROTTLE_MS = 1000;
+/** How long a board folder's cached version history (see Board.repoState) is trusted. */
+const REPO_TTL_MS = 10_000;
+/** A run that would edit the board's folder while another ticket does waits with this on its card. */
+export const FOLDER_WAIT = "waiting: another ticket is using the folder";
+
+/** Where a ticket's runs work (see Board.ensureSession). */
+export interface Session {
+  dir: string;
+  sessionId: string;
+  existed: boolean;
+  isGit: boolean;
+  /** The board folder's version history. */
+  repo: RepoKind;
+  /** The run edits the board's folder itself (no worktree, not a linked session). */
+  inPlace: boolean;
+}
+/** What a stalled run's session is told when the user restarts it. */
+const STALL_RESTART_TEXT = "Your previous run stopped responding and the user restarted it. Continue where you left off.";
 /** A requested restart waits this long for active runs to finish, then restarts anyway (recover() resumes them). */
 export const RESTART_MAX_WAIT_MS = 10 * 60_000;
 const DRAFT_THROTTLE_MS = 120;
@@ -147,6 +204,27 @@ export function claudeSessionExists(sessionId: string): boolean {
   return claudeSessionFile(sessionId) !== null;
 }
 
+/** Claude's answer to `--resume` with a session it has no transcript for. */
+export function sessionMissing(error: string, events: any[]): boolean {
+  const re = /No conversation found with session ID/i;
+  return re.test(error) || events.some((e) => e?.type === "result" && Array.isArray(e.errors) && e.errors.some((m: unknown) => typeof m === "string" && re.test(m)));
+}
+
+export const SESSION_OPEN_MSG = "This ticket's Claude session is still open in a terminal. Exit it there (Ctrl+D or /exit), then try again.";
+
+/** Run errors the board offers a one-click fix for: Start fresh session, or Take over here. */
+export type Recovery = "session_missing" | "session_open";
+
+export function recoveryFor(error: string | null | undefined): Recovery | null {
+  if (!error) return null;
+  if (sessionMissing(error, [])) return "session_missing";
+  if (error === SESSION_OPEN_MSG) return "session_open";
+  return null;
+}
+
+/** Board comments that aren't Claude's result (a fresh session's prompt skips them for "Last result"). */
+const BOARD_NOTE_RE = /^(Run failed|Could not start|Run stopped|Planner stopped|Started a fresh session|Took over the session|This ticket's Claude session is still open)/;
+
 export class ConflictError extends Error {}
 
 export class Board {
@@ -158,6 +236,10 @@ export class Board {
   private shuttingDown = false;
   /** A restart waits for active runs to finish: no new run starts until then (see requestRestart). */
   private restartPending = false;
+  /** Other work a restart waits for besides board runs (huddle agents mid-turn), see onRestartBusy. */
+  private restartBusy: (() => number)[] = [];
+  /** Each board's open huddles by host ticket (see onHostHuddles); none until Huddles registers. */
+  private hostHuddleStates: (slug: string) => Map<string, HostHuddle> = () => new Map();
   private sessionExists: (id: string) => boolean;
   private isSessionLive: (id: string, title: string | null) => Promise<boolean>;
   private notify: (title: string, body: string) => void;
@@ -168,7 +250,8 @@ export class Board {
     this.sessionSummary = opts.sessionSummary ?? (() => null);
     this.sessionExists = opts.sessionExists ?? claudeSessionExists;
     this.isSessionLive = opts.isSessionLive ?? psSessionLive;
-    this.notify = opts.notify ?? systemNotify;
+    this.notify = opts.notify ?? macBanner;
+    useBundledFile(join(store.root, "claude-commands.json"));
   }
 
   private key(slug: string, id: string) {
@@ -186,6 +269,11 @@ export class Board {
     const needs = [...(before?.needs ?? []), ...(t.needs ?? [])];
     if (needs.length && ("status" in patch || "runStartedAt" in patch || "needs" in patch)) this.resourceChanged(needs);
     return t;
+  }
+
+  /** Cache the ticket's PR status (prpoller.ts) and tell the UI. */
+  setPr(slug: string, id: string, pr: PrStatus): Ticket {
+    return this.patch(slug, id, { pr });
   }
 
   // ---- Exclusive resources (Ticket.needs): one ticket per resource at a time, across every board ----
@@ -248,6 +336,20 @@ export class Board {
     return userWaitReason(t, t.sessionId ? this.sessionSummary(t.sessionId) : null);
   }
 
+  /** The card still needs the user (questions, a proposal or new tickets to apply, a failed run), not just a look. */
+  waitsOnUser(slug: string, id: string): boolean {
+    const t = this.store.getTicket(slug, id);
+    if (!t) return false;
+    const a = ticketAttention(this.store, slug, t, t.sessionId ? this.sessionSummary(t.sessionId) : null, this.isRunning(slug, id),
+      this.hostHuddles(slug).get(id));
+    return !!a && a.kind !== "review";
+  }
+
+  /** Snooze the ticket from the Inbox until a time (null: unsnooze); key: snoozeKey of what it waits for now. */
+  setSnooze(slug: string, id: string, snooze: { until: string; key: string } | null): Ticket {
+    return this.patch(slug, id, { snooze });
+  }
+
   /** Runs holding a maxParallel slot (see takesSlot). */
   running(slug: string): number {
     let n = 0;
@@ -269,6 +371,11 @@ export class Board {
     return this.runs.has(this.key(slug, id));
   }
 
+  /** The ticket's current run is a quiet reply to another session's message (a peer run, e.g. a huddle's). */
+  isPeerRun(slug: string, id: string): boolean {
+    return !!this.runs.get(this.key(slug, id))?.chat?.quiet;
+  }
+
   dispatch(slug: string): void {
     if (this.restartPending || this.shuttingDown) return; // Ready tickets start after the restart
     const profile = this.store.getProfile(slug);
@@ -281,24 +388,28 @@ export class Board {
         this.cancelSlotWait(slug, t.id);
         continue;
       }
-      if (this.full(slug)) return;
+      const chat = next.peer || next.hostWake ? chatFor(t, next) : { ...chatFor(t, next), mode: "act" as const, from: t.slotWait!.from };
+      if (takesSlot(chat) && this.full(slug)) return;
+      if (chat.mode === "act" && this.folderBusy(slug, t)) continue;
       this.patch(slug, t.id, { slotWait: null });
-      this.start(slug, t.id, next.peer ? chatFor(t, next) : { ...chatFor(t, next), mode: "act", from: t.slotWait!.from }, next.id);
+      this.start(slug, t.id, chat, next.id);
     }
     const ready = idle.filter((t) => t.status === "ready").sort((a, b) => a.order - b.order);
     for (const t of ready) {
       if (this.full(slug)) break;
       // Its resource (e.g. the emulator) is in use: it keeps its place and the next ticket starts instead.
       if (t.needs?.length && this.heldResources(slug, t, false).length) continue;
+      // It would edit the board's folder in place while another ticket does: it waits its turn the same way.
+      if (this.folderBusy(slug, t)) continue;
       this.start(slug, t.id);
     }
   }
 
-  /** All slots are busy: the card waits in In Progress with its queued message(s) until dispatch() starts it. */
+  /** All slots are busy (or the folder is): the card waits in In Progress with its queued message(s) until dispatch() starts it. */
   private waitForSlot(slug: string, id: string): Ticket {
     const t = this.store.getTicket(slug, id)!;
     return this.patch(slug, id, {
-      status: "in_progress", outcome: null, error: null, lastActivity: "Waiting for a free slot",
+      status: "in_progress", outcome: null, error: null, lastActivity: this.full(slug) ? "Waiting for a free slot" : FOLDER_WAIT,
       slotWait: t.slotWait ?? { at: nowIso(), from: { status: t.status, outcome: t.outcome } },
     });
   }
@@ -316,9 +427,9 @@ export class Board {
   /**
    * Send a chat message: resumes the ticket's session right away, like typing in the terminal.
    * While Claude is working the message steers the run instead: Claude reads it at its next step.
-   * peer: the message comes from another ticket's Claude (see questions.ts) and is already a full prompt.
+   * peer: the message comes from another session (a huddle) and is already a full prompt.
    */
-  async chat(slug: string, id: string, text: string, opts: { peer?: boolean; fromPlanner?: boolean } = {}): Promise<Ticket> {
+  async chat(slug: string, id: string, text: string, opts: ChatOptions = {}): Promise<Ticket> {
     const t = this.store.getTicket(slug, id);
     if (!t) throw new Error(`ticket ${id} not found`);
     if (!text.trim()) throw new Error("message is empty");
@@ -329,8 +440,10 @@ export class Board {
       return this.clearConversation(slug, id);
     }
     // Stored quietly: the update that starts or queues this message announces it to the UI.
-    if (!opts.peer) this.store.updateTicket(slug, id, { lastPrompt: text.slice(0, 20_000) });
+    if (!opts.peer && !opts.hostWake) this.store.updateTicket(slug, id, { lastPrompt: text.slice(0, 20_000) });
     if (t.agent === "codex") text = expandCodexCommand(text);
+    // The user (or the board's automatic continue) picks the conversation up again: the limit wait is over.
+    if (t.limit && !opts.peer && !opts.hostWake) this.patch(slug, id, { limit: null });
     if (active) {
       if (active.stopRequested || this.shuttingDown) throw new ConflictError("Claude is stopping; send your message once it has stopped");
       // Saved on the ticket until Claude reads it, so closing the chat, Stop or a restart can't lose it.
@@ -345,7 +458,19 @@ export class Board {
       return this.patch(slug, id, { queued: [...(t.queued ?? []), msg] });
     }
     const chat = chatFor(t, { text, ...opts });
-    if (takesSlot(chat) && (t.slotWait || this.full(slug))) {
+    // A reply that may edit files (not a read-only Planning one) waits while another ticket edits the folder in place.
+    const folderBusy = chat.mode === "act" && this.folderBusy(slug, t);
+    if (!takesSlot(chat) && (folderBusy || t.slotWait)) {
+      // A reply to another session (a huddle) holds no slot: it waits on the ticket without moving the card.
+      const msg: QueuedMessage = { id: crypto.randomUUID(), text, at: nowIso(), state: "queued", ...flags(opts) };
+      this.patch(slug, id, {
+        queued: [...(t.queued ?? []), msg], lastActivity: FOLDER_WAIT,
+        slotWait: t.slotWait ?? { at: nowIso(), from: { status: t.status, outcome: t.outcome } },
+      });
+      this.dispatch(slug);
+      return this.store.getTicket(slug, id)!;
+    }
+    if (takesSlot(chat) && (t.slotWait || this.full(slug) || folderBusy)) {
       // Every run slot is busy: the reply waits on the ticket like a Ready ticket, but starts before them.
       const msg: QueuedMessage = { id: crypto.randomUUID(), text, at: nowIso(), state: "queued", ...flags(opts) };
       this.patch(slug, id, { queued: [...(t.queued ?? []), msg] });
@@ -393,7 +518,7 @@ export class Board {
     if (!msg) throw new Error("message not found");
     if (msg.state !== "unsent") throw new ConflictError("message is already on its way to Claude");
     this.dropQueued(slug, id, [msgId]);
-    return this.chat(slug, id, msg.text, { peer: msg.peer, fromPlanner: msg.fromPlanner });
+    return this.chat(slug, id, msg.text, { peer: msg.peer, fromPlanner: msg.fromPlanner, slash: msg.slash, hostWake: msg.hostWake });
   }
 
   /**
@@ -416,10 +541,30 @@ export class Board {
   }
 
   discardQueued(slug: string, id: string, msgId: string): Ticket {
+    const msg = this.held(slug, id, msgId);
+    const t = this.dropQueued(slug, id, [msgId]);
+    // The last reply waiting for a slot is gone: nothing is left to start, so the card goes back.
+    return t.slotWait && !this.waiting(slug, id).length ? this.cancelSlotWait(slug, id) : t;
+  }
+
+  /** Fix a message Claude hasn't received yet: it keeps its place in the queue. */
+  editQueued(slug: string, id: string, msgId: string, text: string): Ticket {
+    if (!text.trim()) throw new Error("message is empty");
+    const msg = this.held(slug, id, msgId);
+    const t = this.store.getTicket(slug, id)!;
+    return this.patch(slug, id, { queued: (t.queued ?? []).map((m) => (m.id === msg.id ? { ...m, text } : m)) });
+  }
+
+  /**
+   * A queued message the user can still change: left unsent by Stop, or waiting for a run slot or a restart.
+   * With a run going it was written to Claude's stdin at once (peer messages included), so it is delivered.
+   */
+  private held(slug: string, id: string, msgId: string): QueuedMessage {
     const msg = this.store.getTicket(slug, id)?.queued?.find((m) => m.id === msgId);
     if (!msg) throw new Error("message not found");
-    if (msg.state !== "unsent") throw new ConflictError("message is already on its way to Claude");
-    return this.dropQueued(slug, id, [msgId]);
+    if (msg.state === "unsent") return msg;
+    if (msg.peer || this.isRunning(slug, id)) throw new ConflictError("message is already on its way to Claude");
+    return msg;
   }
 
   private dropQueued(slug: string, id: string, ids: string[]): Ticket {
@@ -432,11 +577,11 @@ export class Board {
     if (run.inFlight.has(msg.id) || run.promptMsgId === msg.id) return true;
     // A command gets its own turn after the current reply, so its result can be
     // acknowledged independently (built-ins do not always replay input).
-    if (!msg.peer && isSlashCommand(msg.text)) return false;
+    if (!msg.peer && !msg.hostWake && isSlashCommand(msg.text)) return false;
     // Access was switched during this turn: the message gets its own turn with the new access.
     const t = this.store.getTicket(run.slug, run.id);
     if (t?.standalone && run.chat && run.chat.mode !== chatFor(t, msg).mode) return false;
-    const text = localizeImages(msg.peer || isSlashCommand(msg.text) ? msg.text : steerPrompt(msg.text), this.store.attachmentsDir);
+    const text = localizeImages(msg.peer || msg.hostWake ? msg.text : steerPrompt(msg.text), this.store.attachmentsDir);
     if (!run.handle?.send(text)) return false;
     run.inFlight.set(msg.id, text);
     return true;
@@ -462,7 +607,8 @@ export class Board {
     if (!t || t.status !== "planning" || t.refineStarted || this.isRunning(slug, id) || this.shuttingDown) return;
     if (t.error?.startsWith("corrupt")) return;
     // A linked session is already a conversation about work underway; an interview would be noise.
-    if (t.workdir || t.sessionStarted) return;
+    // A run stopped before Claude saved its session left nothing to talk over: interview as if new.
+    if (t.workdir || (t.sessionStarted && t.sessionId && this.sessionExists(t.sessionId))) return;
     if (this.restartPending) {
       this.patch(slug, id, { refineStarted: true, interrupted: { at: nowIso(), mode: "refine", prompt: { text: "" }, held: true } });
       return;
@@ -489,7 +635,7 @@ export class Board {
         // Tell the UI the run is over (earlier updates were sent while it was still registered).
         const now = this.store.getTicket(slug, id);
         if (now && !this.shuttingDown) {
-          if (now.runStartedAt || now.interrupted || now.waitingOn || now.permissionAsk) this.patch(slug, id, { runStartedAt: null, interrupted: null, waitingOn: null, permissionAsk: null });
+          if (now.runStartedAt || now.interrupted || now.waitingOn || now.permissionAsk || now.stalled) this.patch(slug, id, { runStartedAt: null, interrupted: null, waitingOn: null, permissionAsk: null, stalled: null });
           else this.emitTicket(slug, now);
         }
         // When the user moved the card, updateTicket() writes the new status and dispatches itself.
@@ -503,10 +649,10 @@ export class Board {
     const replying = `${t?.agent === "codex" ? "Codex" : "Claude"} is replying…`;
     this.patch(run.slug, run.id, run.chat?.quiet
       // A new message to a session clears its last failure; replies to other tickets leave the card as it was.
-      ? { error: null, lastActivity: replying, runStartedAt: nowIso(), waitingOn: null, ...(t?.standalone ? { outcome: null } : {}) }
+      ? { error: null, lastActivity: replying, runStartedAt: nowIso(), waitingOn: null, stalled: null, ...(t?.standalone ? { outcome: null } : {}) }
       : run.chat?.mode === "refine"
-      ? { error: null, lastActivity: replying, refineStarted: true, runStartedAt: nowIso(), waitingOn: null }
-      : { status: "in_progress", outcome: null, error: null, lastActivity: "Starting…", runStartedAt: nowIso(), waitingOn: null });
+      ? { error: null, lastActivity: replying, refineStarted: true, runStartedAt: nowIso(), waitingOn: null, stalled: null }
+      : { status: "in_progress", outcome: null, error: null, limit: null, capHit: null, lastActivity: "Starting…", runStartedAt: nowIso(), waitingOn: null, stalled: null });
   }
 
   /** One claude run, then a chat reply for each message that came in too late for it. */
@@ -530,6 +676,8 @@ export class Board {
         return;
       }
       run.chat = chat;
+      run.retried = false;
+      run.restartRequested = false;
       run.promptMsgId = next.id;
       run.inFlight = new Map();
       run.handle = null;
@@ -544,10 +692,16 @@ export class Board {
     return { status: run.targetStatus ?? run.chat?.returnTo ?? "review" };
   }
 
-  private async executeOnce(run: ActiveRun): Promise<void> {
+  /**
+   * healed: this is the one retry in a new session after Claude could not find the old one.
+   * resume: the board continues this run's own work in its session (a passing API error, a stall restart) with this
+   * text as the whole prompt; the run otherwise ends as the one it continues (result line, column, card). Without a
+   * saved session (it hung before Claude saved one) there is nothing to continue: the run starts over with its prompt.
+   */
+  private async executeOnce(run: ActiveRun, healed = false, resumeText?: string): Promise<void> {
     const { slug, id } = run;
     const startedAt = nowIso();
-    let session: { dir: string; sessionId: string; existed: boolean; isGit: boolean };
+    let session: Session;
     try {
       session = await this.ensureSession(slug, id);
     } catch (e) {
@@ -563,7 +717,7 @@ export class Board {
       const t0 = this.store.getTicket(slug, id)!;
       const title = t0.workdir ? sessionTitle(t0.workdir, session.sessionId) : null;
       if (await this.isSessionLive(session.sessionId, title)) {
-        const msg = "This ticket's Claude session is still open in a terminal. Exit it there (Ctrl+D or /exit), then try again.";
+        const msg = SESSION_OPEN_MSG;
         this.store.addComment(slug, id, "ai", msg);
         this.patch(slug, id, { ...this.endStatus(run), outcome: "blocked", error: msg, lastActivity: null });
         return;
@@ -576,6 +730,7 @@ export class Board {
     }
 
     const t = this.store.getTicket(slug, id)!;
+    const resume = session.existed ? resumeText : undefined;
     const refine = run.chat?.mode === "refine";
     // A reply to another ticket's Claude: not a run of this ticket's own work.
     const quiet = !!run.chat?.quiet;
@@ -585,17 +740,22 @@ export class Board {
     const outputDir = this.store.outputsDir(slug, id);
     const command = run.chat && !run.chat.raw && isSlashCommand(run.chat.text);
     const commandEntry = command ? { uuid: crypto.randomUUID(), at: nowIso(), role: "user" as const, kind: "text" as const, text: run.chat!.text, sessionId: session.sessionId } : null;
-    if (commandEntry) this.store.appendCommandEntry(slug, id, commandEntry);
-    const prompt = withSetup(localizeImages(run.chat?.raw || command
+    if (commandEntry && !resume) this.store.appendCommandEntry(slug, id, commandEntry);
+    // Start fresh session: a work run in a new session that picks up from the branch (until that session exists).
+    const fresh = !!t.freshSession && !run.chat;
+    const prompt = resume ?? withSetup(localizeImages(run.chat?.raw || command
       ? run.chat!.text
       : run.chat
       ? chatMessage(run.chat.text, run.chat.mode)
-      : t.runCount === 0
+      : fresh
+      ? this.freshPrompt(slug, t, session, outputDir)
+      : t.runCount === 0 || !session.existed
       ? firstRunPrompt(t, {
-        isGit: session.isGit, linked: !!t.workdir, comments: t.workdir ? newComments : [], outputDir,
+        repo: session.repo, inPlace: session.inPlace, home: { folder: profile.path, baseBranch: profile.baseBranch }, linked: !!t.workdir, comments: t.workdir || t.runCount > 0 ? newComments : [], outputDir,
         schedule: t.scheduleId ? { id: t.scheduleId, name: this.store.getSchedule(slug, t.scheduleId)?.name ?? null, board: slug } : undefined,
+        autoHuddles: autoHuddlesOn(profile), artifacts: !!profile.artifacts,
       })
-      : resumePrompt(t, newComments, outputDir), this.store.attachmentsDir), this.takeSetup(slug, id));
+      : resumePrompt(t, newComments, outputDir, autoHuddlesOn(profile), !!profile.artifacts, session.repo, session.inPlace, { folder: profile.path, baseBranch: profile.baseBranch }), this.store.attachmentsDir), this.takeSetup(slug, id));
 
     let lastWrite = 0;
     let pendingActivity: string | null = null;
@@ -608,8 +768,12 @@ export class Board {
       draftTimer = null;
       this.bus.emit({ type: "draft", profile: slug, id, text: draft.text });
     };
+    // The spending cap applies to the ticket's own work (not Planning chats or replies to other tickets).
+    const cap = refine || quiet ? null : runCapFor(t, profile);
+    if (!refine && !quiet && t.capNextUsd) this.patch(slug, id, { capNextUsd: null });
     // Marks where this run starts in the log and what it was (the Usage tab lists runs by kind).
-    this.store.appendActivity(slug, id, runNo, { type: "ckanban_run", kind: refine ? "planning" : quiet ? "reply" : run.chat ? "chat" : "work" });
+    // A resumed attempt (retry, stall restart) continues the same run in the log.
+    if (!resumeText) this.store.appendActivity(slug, id, runNo, { type: "ckanban_run", kind: refine ? "planning" : quiet ? "reply" : run.chat ? "chat" : "work" });
     const codex = t.agent === "codex";
     const writableRoots = [outputDir];
     // A worktree's commits land in the main repo's .git, so Codex's sandbox must be allowed to write there.
@@ -619,15 +783,17 @@ export class Board {
     }
     // A fork's first run copies the parent session; once the new session exists it is resumed like any other.
     const forkFrom = t.forkOf && !this.sessionExists(session.sessionId) ? t.forkOf : null;
-    const systemPrompt = t.standalone ? sessionPrompt(t.access ?? "read") : run.chat && !run.chat.raw ? chatRules(t, run.chat.mode, outputDir) : undefined;
+    const systemPrompt = t.standalone ? sessionPrompt(t.access ?? "read")
+      : run.chat && !run.chat.raw ? chatRules(t, run.chat.mode, outputDir, !!profile.artifacts, session.repo, session.inPlace) : undefined;
     const launch = codex ? startCodexRun : startRun;
     run.handle = launch({
       bin: codex ? this.opts.codexBin ?? resolveCodexBin() : this.opts.claudeBin,
       cwd: session.dir,
       args: codex
         ? codexArgs({ sessionId: t.codexSessionId, refine, model: t.codexModel ?? this.store.config().codexModel, effort: t.codexEffort ?? this.store.config().codexEffort, writableRoots, instructions: systemPrompt })
-        : buildArgs(session.sessionId, session.existed, (t.model === "default" ? null : t.model) ?? profile.model ?? this.store.config().claudeModel, refine ? "plan" : "bypassPermissions", mcpConfig(), systemPrompt, t.effort ?? this.store.config().claudeEffort, t.outputStyle, forkFrom),
+        : buildArgs(session.sessionId, session.existed, (t.model === "default" ? null : t.model) ?? profile.model ?? this.store.config().claudeModel, refine ? "plan" : "bypassPermissions", mcpConfig(), systemPrompt, t.effort ?? this.store.config().claudeEffort, t.outputStyle, forkFrom, cap),
       input: prompt,
+      planning: refine,
       // CKANBAN_TICKET marks board runs: the ckanban MCP/CLI refuses board changes there (no runs starting runs).
       env: { CKANBAN_OUTPUT_DIR: outputDir, CKANBAN_TICKET: `${slug}/${id}`, ...(t.effort ? { CLAUDE_CODE_EFFORT_LEVEL: t.effort } : {}) },
       onEvent: (ev) => {
@@ -653,6 +819,7 @@ export class Board {
           } else if (!draftTimer) draftTimer = setTimeout(emitDraft, DRAFT_THROTTLE_MS);
         }
         if (ev?.type === "stream_event") return;
+        rememberInit(session.dir, ev, { projects: [profile.path] });
         if (refine && ev?.type === "assistant") this.saveMockups(slug, id, outputDir, ev);
         if (showsInterrupted && !this.shuttingDown && hasText(ev)) {
           showsInterrupted = false;
@@ -682,6 +849,18 @@ export class Board {
         this.patch(slug, id, { permissionAsk: asks.values().next().value?.ask ?? null });
         return true;
       },
+      stallMs: this.stallMs(profile),
+      onStall: (stalled) => {
+        if (this.shuttingDown || !this.store.getTicket(slug, id)) return;
+        if (!stalled) {
+          if (this.store.getTicket(slug, id)?.stalled) this.patch(slug, id, { stalled: null });
+          return;
+        }
+        if (run.stopRequested) return;
+        const minutes = Math.max(1, Math.round(this.stallMs(profile) / 60_000));
+        // The Notifier sees the new "stalled" attention and tells the user (webhook / macOS banner).
+        this.patch(slug, id, { stalled: { at: nowIso(), minutes } });
+      },
       onWaiting: (tasks) => {
         if (run.stopRequested || this.shuttingDown) return;
         const what = !tasks ? null : tasks.length === 1 ? `Waiting for background task: ${tasks[0].description}` : `Waiting for ${tasks.length} background tasks`;
@@ -704,31 +883,81 @@ export class Board {
       .filter((e) => e?.type === "result" && typeof e.result === "string")
       .map((e) => parseResult(e.result))
       .findLast((r) => r !== null) ?? null;
+    // Stopped before Claude got going: there is no session to resume, so the next run starts a new one.
+    const started = session.existed || this.sessionExists(session.sessionId)
+      || out.events.some((e) => (e?.type === "system" && e.subtype === "init") || e?.type === "assistant");
     const base: Partial<Ticket> = {
       ...this.endStatus(run),
-      ...(t.agent === "codex" ? {} : {sessionStarted: true}),
+      stalled: null,
+      ...(codex ? {} : { sessionStarted: started }),
       ...(forkFrom && out.code === 0 ? { forkOf: null } : {}),
+      ...(fresh && started ? { freshSession: false } : {}),
       ...(refine || quiet ? {} : { lastRunAt: startedAt, runCount: runNo }),
       lastActivity: pendingActivity ?? this.store.getTicket(slug, id)?.lastActivity ?? null,
     };
 
+    // Restart on a stalled run: the stuck process is gone, now the same session picks the work up again.
+    if (run.handle.stopped && run.restartRequested && !run.stopRequested) {
+      run.restartRequested = false;
+      this.store.addComment(slug, id, "ai", "Restarted the stalled run: it continues in the same session.");
+      this.patch(slug, id, { sessionStarted: started, stalled: null, lastActivity: "Restarting…" });
+      return this.executeOnce(run, healed, STALL_RESTART_TEXT);
+    }
     if (run.handle.stopped) {
       this.store.addComment(slug, id, "ai", "Run stopped by user.");
-      this.patch(slug, id, { ...base, outcome: "stopped", error: null, lastActivity: null });
+      this.patch(slug, id, { ...base, outcome: "stopped", error: null, lastActivity: null, ...this.dropAutoWait(slug, id) });
+      return;
+    }
+    if (cap !== null && out.events.some((e) => e?.type === "result" && e.subtype === "error_max_budget_usd")) {
+      this.capReached(slug, id, base, cap);
+      return;
+    }
+    // The account hit its usage limit: not a failure of the work, it continues once the limit resets.
+    const limited = quiet || result ? null : limitMessage(out.events, out.code !== 0 ? out.stderr : "");
+    if (limited) {
+      this.limitHit(slug, id, base, limited);
       return;
     }
     if (out.code !== 0) {
       const error = out.stderr.trim() || finalText.trim() || `claude exited with code ${out.code}`;
-      this.store.addComment(slug, id, "ai", `Run failed (exit ${out.code}): ${error.split("\n").slice(-3).join("\n")}`);
-      this.patch(slug, id, { ...base, outcome: "failed", error });
+      // Claude can't find the session (stopped before it was saved, cleaned up, or saved for another folder):
+      // retry once in a new session instead of failing every run from now on.
+      if (!healed && !this.store.getTicket(slug, id)?.workdir && sessionMissing(error, out.events)) {
+        console.log(`ticket ${slug}/${id}: session ${session.sessionId} not found, starting a new one`);
+        this.patch(slug, id, { sessionId: crypto.randomUUID(), sessionStarted: false, error: null });
+        return this.executeOnce(run, true);
+      }
+      // A passing API problem (overloaded, a 5xx, a dropped connection): resume the same session once after a pause.
+      const transient = run.retried || run.stopRequested ? null : transientError(out.events, out.stderr);
+      if (transient) {
+        run.retried = true;
+        const delay = this.opts.retryDelayMs ?? RETRY_DELAY_MS;
+        const line = transient.split("\n").findLast((l) => l.trim())?.trim().slice(0, 200) ?? transient;
+        this.store.addComment(slug, id, "ai", `Run hit a temporary API error (${line}). Retrying once in ${Math.max(1, Math.round(delay / 1000))}s in the same session.`);
+        this.patch(slug, id, { sessionStarted: started, error: null, lastActivity: "Temporary API error, retrying shortly…" });
+        await Bun.sleep(delay);
+        if (this.shuttingDown) return;
+        if (run.stopRequested) {
+          this.store.addComment(slug, id, "ai", "Run stopped by user.");
+          this.patch(slug, id, { ...base, outcome: "stopped", error: null, lastActivity: null, ...this.dropAutoWait(slug, id) });
+          return;
+        }
+        return this.executeOnce(run, healed, RETRY_TEXT);
+      }
+      // Claude reports a lost session only in its result event: keep it in the error so the UI offers Start fresh session.
+      const shown = sessionMissing(error, out.events) && !sessionMissing(error, []) ? `No conversation found with session ID: ${session.sessionId}` : error;
+      this.store.addComment(slug, id, "ai", `Run failed (exit ${out.code}): ${shown.split("\n").slice(-3).join("\n")}`);
+      this.patch(slug, id, { ...base, outcome: "failed", error: shown });
       return;
     }
     if (refine || quiet) {
       this.patch(slug, id, { ...base, lastActivity: null, error: null });
       return;
     }
+    const body = finalText.replace(/^.*CKANBAN_RESULT:.*$/gm, "").replace(MOVE_TO_PLANNING_RE, "").trim();
     // A Review/Done message that only asked for planning: show the ticket where it really is.
     if (run.chat?.mode === "act" && !run.targetStatus && result?.status !== "blocked" && MOVE_TO_PLANNING_RE.test(finalText)) {
+      this.store.addComment(slug, id, "ai", result?.summary || body || "(no output)");
       this.patch(slug, id, {
         ...base, status: "planning",
         outcome: null, error: null, refineStarted: true, lastActivity: null,
@@ -742,18 +971,140 @@ export class Board {
       return;
     }
     const current = this.store.getTicket(slug, id)!;
-    const body = finalText.replace(/^.*CKANBAN_RESULT:.*$/gm, "").trim();
     // Questions must reach the user verbatim; otherwise the short summary is enough.
     const summary = (result?.status === "questions" ? body : result?.summary) || body || "(no output)";
     this.store.addComment(slug, id, "ai", summary);
+    // Its auto huddle reviews the work (or it waits for the slot): the card stays In Progress until the huddle wakes it.
+    const auto = current.autoHuddle;
+    if (auto && !run.targetStatus && result?.status !== "blocked" && result?.status !== "questions") {
+      this.patch(slug, id, {
+        ...base, status: "in_progress", outcome: null, error: null, lastActivity: autoHuddleActivity(auto),
+        prUrl: result?.prUrl ?? current.prUrl,
+      });
+      return;
+    }
     this.patch(slug, id, {
       ...base,
       outcome: result?.status === "questions" ? "needs_input" : result?.status ?? "done",
       ...(result?.status === "questions" ? { interviewed: true } : {}),
       // A planner wake-up reports its children's PRs; the planner keeps its own.
-      prUrl: run.chat?.raw ? current.prUrl : result?.prUrl ?? current.prUrl,
+      prUrl: run.chat?.raw && !run.chat.hostWake ? current.prUrl : result?.prUrl ?? current.prUrl,
       error: null,
     });
+  }
+
+  /** The watchdog time for this board's runs in ms (0: off). */
+  private stallMs(profile: Profile): number {
+    if (this.opts.stallMs !== undefined) return this.opts.stallMs;
+    const m = profile.stallMinutes ?? DEFAULT_STALL_MINUTES;
+    return m > 0 ? m * 60_000 : 0;
+  }
+
+  /**
+   * The Inbox's answer to a stalled run. stop: as Stop. wait: clear the flag, the watchdog counts again. restart: stop the
+   * stuck process and resume the same session.
+   */
+  stallAction(slug: string, id: string, action: "stop" | "wait" | "restart"): Ticket {
+    const t = this.store.getTicket(slug, id);
+    if (!t) throw new Error(`ticket ${id} not found`);
+    const run = this.runs.get(this.key(slug, id));
+    if (!run?.handle) {
+      if (t.stalled) return this.patch(slug, id, { stalled: null });
+      throw new Error("this ticket has no running run");
+    }
+    // A stale card (or a second click) must not stop or restart a run that is working again.
+    if (!t.stalled || run.restartRequested) throw new Error("this run is not stalled anymore");
+    if (action === "stop") {
+      this.stopRun(run);
+    } else if (action === "wait") {
+      run.handle.keepWaiting();
+      this.store.addComment(slug, id, "ai", "Kept waiting on the stalled run.");
+      if (t.stalled) this.patch(slug, id, { stalled: null });
+    } else {
+      run.restartRequested = true;
+      this.patch(slug, id, { lastActivity: "Restarting…" });
+      run.handle.stop();
+    }
+    return this.store.getTicket(slug, id)!;
+  }
+
+  private now(): Date {
+    return this.opts.now?.() ?? new Date();
+  }
+
+  /** A run stopped at its spending cap: blocked until the user continues it with more budget (continueAfterCap). */
+  private capReached(slug: string, id: string, base: Partial<Ticket>, cap: number): void {
+    const msg = `Stopped at $${cap.toFixed(2)} cap`;
+    this.store.addComment(slug, id, "ai", `${msg}: this run spent its budget before it finished. Continue it with more budget, or change the ticket's cap in its ⋯ menu.`);
+    this.patch(slug, id, { ...base, outcome: "blocked", error: msg, capHit: { capUsd: cap, at: nowIso() } });
+  }
+
+  /** "Continue with +$Y" after a run stopped at its cap: "continue" in the same session, with a cap of addUsd for that run. */
+  async continueAfterCap(slug: string, id: string, addUsd: number): Promise<Ticket> {
+    const t = this.store.getTicket(slug, id);
+    if (!t) throw new Error(`ticket ${id} not found`);
+    if (!(Number.isFinite(addUsd) && addUsd > 0)) throw new Error("addUsd must be a positive amount");
+    if (this.isRunning(slug, id)) throw new Error("this ticket is already running");
+    this.patch(slug, id, { capNextUsd: addUsd });
+    try {
+      return await this.chat(slug, id, CONTINUE_TEXT);
+    } catch (e) {
+      this.patch(slug, id, { capNextUsd: null });
+      throw e;
+    }
+  }
+
+  /** A run ended on the usage limit: wait for the reset, then continue on its own unless turned off or capped. */
+  private limitHit(slug: string, id: string, base: Partial<Ticket>, message: string): void {
+    const t = this.store.getTicket(slug, id)!;
+    const now = this.now();
+    const resetAt = parseReset(message, now);
+    const used = t.autoContinued?.day === dayKey(now) ? t.autoContinued.count : 0;
+    const capped = used >= AUTO_CONTINUE_PER_DAY;
+    const auto = t.autoContinue !== false && !capped;
+    const limit: LimitHit = { resetAt: resetAt.toISOString(), auto, at: now.toISOString(), message, ...(capped && t.autoContinue !== false ? { capped: true } : {}) };
+    const when = clockTime(resetAt, now);
+    const next = auto ? `It continues automatically at ${when}.`
+      : limit.capped ? `It resets at ${when}; it already continued automatically ${AUTO_CONTINUE_PER_DAY} times today, so continue it yourself.`
+      : `It resets at ${when}.`;
+    this.store.addComment(slug, id, "ai", `Usage limit hit: ${message}\n${next}`);
+    this.patch(slug, id, { ...base, outcome: "limit", error: message, limit });
+  }
+
+  /**
+   * Continue a ticket that hit the usage limit: "continue" to the same session through the normal chat path (run
+   * slots, restart hold). auto: the board's own continue at the reset; it counts toward the daily cap.
+   */
+  async continueAfterLimit(slug: string, id: string, opts: { auto?: boolean } = {}): Promise<Ticket> {
+    const t = this.store.getTicket(slug, id);
+    if (!t) throw new Error(`ticket ${id} not found`);
+    if (opts.auto) {
+      if (t.outcome !== "limit" || !t.limit?.auto || this.isRunning(slug, id)) return t;
+      const day = dayKey(this.now());
+      const count = (t.autoContinued?.day === day ? t.autoContinued.count : 0) + 1;
+      this.patch(slug, id, { autoContinued: { day, count } });
+      this.store.addComment(slug, id, "ai", "The usage limit has reset: sent \"continue\".");
+    }
+    return this.chat(slug, id, CONTINUE_TEXT);
+  }
+
+  /** "Don't auto-continue" / "Auto-continue": for the current wait and later limit hits of this ticket. */
+  setAutoContinue(slug: string, id: string, auto: boolean): Ticket {
+    const t = this.store.getTicket(slug, id);
+    if (!t) throw new Error(`ticket ${id} not found`);
+    const limit = t.limit ? { ...t.limit, auto, capped: undefined } : t.limit;
+    const out = this.patch(slug, id, { autoContinue: auto, ...(limit ? { limit } : {}) });
+    if (t.parentId) this.advancePlans(slug);
+    return out;
+  }
+
+  /** Tickets waiting for a usage limit to reset whose automatic continue is due (see LimitWatcher). */
+  dueContinues(slug: string, delayMs: number): string[] {
+    const now = this.now().getTime();
+    return this.store.listTickets(slug)
+      .filter((t) => t.outcome === "limit" && t.limit?.auto && !this.isRunning(slug, t.id) && t.status !== "done"
+        && new Date(t.limit.resetAt).getTime() + delayMs <= now)
+      .map((t) => t.id);
   }
 
   /** Planning replies carry mockups as blocks (plan mode can't write files); save them for the Outputs tab. */
@@ -771,8 +1122,97 @@ export class Board {
 
   private sessionLocks = new Map<string, Promise<unknown>>();
 
+  /** Each board folder's version history as last seen, by folder path (see repoState); re-checked after REPO_TTL_MS. */
+  private repos = new Map<string, { kind: RepoKind; at: number }>();
+  private repoChecks = new Set<string>();
+
+  /**
+   * The board folder's version history, from the cache (undefined until first checked). A stale or missing entry is
+   * re-checked in the background; a change re-runs dispatch, so tickets held back by an unknown state start then.
+   */
+  repoState(slug: string): RepoKind | undefined {
+    const c = this.repos.get(this.store.getProfile(slug)?.path ?? "");
+    if (!c || Date.now() - c.at > REPO_TTL_MS) void this.checkRepo(slug);
+    return c?.kind;
+  }
+
+  /** Before the first check (just after a restart): guessed from the folder's .git (config names an origin or not). */
+  private guessRepo(slug: string): RepoKind {
+    const path = this.store.getProfile(slug)?.path;
+    if (!path || !existsSync(join(path, ".git"))) return "plain";
+    try {
+      return readFileSync(join(path, ".git", "config"), "utf8").includes('[remote "origin"]') ? "remote" : "local";
+    } catch {
+      return "remote";
+    }
+  }
+
+  /** The board folder has commits (so huddle reviewers get snapshots of committed code); true until known. */
+  committed(slug: string): boolean {
+    const k = this.repoState(slug);
+    return k === undefined || k === "local" || k === "remote";
+  }
+
+  private async checkRepo(slug: string): Promise<void> {
+    const profile = this.store.getProfile(slug);
+    if (!profile || this.repoChecks.has(profile.path)) return;
+    this.repoChecks.add(profile.path);
+    try {
+      this.noteRepo(slug, await repoKind(profile.path));
+    } finally {
+      this.repoChecks.delete(profile.path);
+    }
+  }
+
+  /** Records what the folder is now (e.g. version history was just turned on); a change re-runs dispatch. */
+  noteRepo(slug: string, kind: RepoKind): void {
+    const path = this.store.getProfile(slug)?.path;
+    if (!path) return;
+    const prev = this.repos.get(path)?.kind;
+    this.repos.set(path, { kind, at: Date.now() });
+    if (prev !== kind && !this.shuttingDown) this.dispatch(slug);
+  }
+
+  /**
+   * The ticket's runs edit the board's folder itself rather than a copy of their own: a plain folder or a repo with
+   * no commits (no worktree can be made), or a ticket that already ran there. Null: not known yet (the folder's
+   * version history is still being checked). Linked sessions (workdir) are the user's own and don't count.
+   * Such tickets run one at a time per board (see folderBusy), as do new tickets on a board set to work in the folder.
+   */
+  runsInFolder(slug: string, t: Ticket): boolean | null {
+    if (t.workdir || t.worktree || t.branch) return false;
+    if (t.sessionStarted || t.runCount > 0) return true;
+    if (workspaceOf(this.store.getProfile(slug)) === "folder") return true;
+    const kind = this.repoState(slug);
+    return kind === undefined ? null : kind === "plain" || kind === "empty";
+  }
+
+  /**
+   * Another ticket on the board is editing the folder `t` would edit in place: its run (not a read-only Planning
+   * chat) is going, or its auto huddle reviews the work there. An unknown side counts as in place, so nothing starts
+   * on a guess; the version-history check re-runs dispatch.
+   */
+  folderBusy(slug: string, t: Ticket): boolean {
+    if (this.runsInFolder(slug, t) === false) return false;
+    for (const r of this.runs.values()) {
+      if (r.slug !== slug || r.id === t.id || r.chat?.mode === "refine") continue;
+      const o = this.store.getTicket(slug, r.id);
+      if (o && this.runsInFolder(slug, o) !== false) return true;
+    }
+    // Only boards whose tickets edit the folder get here, so listing them stays rare.
+    return this.store.listTickets(slug).some((o) => o.id !== t.id && !!o.autoHuddle && !this.isRunning(slug, o.id) && this.runsInFolder(slug, o) !== false);
+  }
+
+  /** For the card: it would start now (Ready, a reply waiting for a slot, a running plan's next child) but the folder is in use. */
+  folderWait(slug: string, t: Ticket): boolean {
+    if (this.isRunning(slug, t.id)) return false;
+    const parent = t.parentId ? this.store.getTicket(slug, t.parentId) : null;
+    const next = t.status === "ready" || !!t.slotWait || (t.status === "backlog" && planActive(parent?.plan));
+    return next && this.folderBusy(slug, t);
+  }
+
   /** Serialized per ticket: a run and a "copy command" click must not both create the worktree. */
-  ensureSession(slug: string, id: string): Promise<{ dir: string; sessionId: string; existed: boolean; isGit: boolean }> {
+  ensureSession(slug: string, id: string): Promise<Session> {
     const key = this.key(slug, id);
     const prev = this.sessionLocks.get(key) ?? Promise.resolve();
     const next = prev.catch(() => {}).then(() => this.ensureSessionNow(slug, id));
@@ -783,21 +1223,32 @@ export class Board {
     return next;
   }
 
-  private async ensureSessionNow(slug: string, id: string): Promise<{ dir: string; sessionId: string; existed: boolean; isGit: boolean }> {
+  private async ensureSessionNow(slug: string, id: string): Promise<Session> {
     const profile = this.store.getProfile(slug);
-    if (!profile) throw new Error(`profile ${slug} not found`);
-    if (!existsSync(profile.path)) throw new Error(`profile path does not exist: ${profile.path}`);
+    if (!profile) throw new Error(`board ${slug} not found`);
+    if (!existsSync(profile.path)) throw new Error(`board folder does not exist: ${profile.path}`);
     let t = this.store.getTicket(slug, id);
     if (!t) throw new Error(`ticket ${id} not found`);
-    const isGit = await isGitRepo(profile.path);
+    const repo = await repoKind(profile.path);
+    this.noteRepo(slug, repo);
+    const isGit = repo !== "plain";
     const patch: Partial<Ticket> = {};
     if (t.workdir && !existsSync(t.workdir)) throw new Error(`linked session folder no longer exists: ${t.workdir}`);
     // A ticket that already ran in the folder itself stays there: its Claude session belongs to that folder.
-    const ranInPlace = !t.worktree && (!!t.sessionStarted || t.runCount > 0 || !!t.codexSessionId);
+    // One with a branch had a worktree (removed on Done): it gets it back at the same path, so its session resumes.
+    const ranInPlace = !t.worktree && !t.branch && (!!t.sessionStarted || t.runCount > 0 || !!t.codexSessionId);
+    // Board set to "Work in the project folder": new tickets run there; one that already has a worktree keeps it.
+    const folderMode = workspaceOf(profile) === "folder" && !t.worktree && !t.branch;
     // Standalone sessions work in the repo folder itself, like an agent opened in a terminal there, unless isolated.
-    if (isGit && (!t.standalone || t.isolated) && !t.workdir && !ranInPlace && (!t.worktree || !existsSync(t.worktree))) {
+    if (isGit && (!t.standalone || t.isolated) && !t.workdir && !ranInPlace && !folderMode && (!t.worktree || !existsSync(t.worktree))) {
       const dir = worktreeDir(profile, id);
-      const branch = t.branch ?? `ck/${id}-${slugify(t.title)}`;
+      let branch = t.branch ?? `ck/${id}-${slugify(t.title)}`;
+      if (t.branch && !existsSync(dir) && !(await branchExists(profile.path, t.branch))) {
+        // Claude may have renamed the branch in its worktree: take the ticket's newest one, else start over from base.
+        const renamed = (await branchesWithPrefix(profile.path, `ck/${id}-`))[0];
+        if (renamed) branch = renamed;
+        else patch.notice = `Branch "${t.branch}" was not found, so this ticket's worktree starts again from the base branch.`;
+      }
       const base = existsSync(dir) ? profile.baseBranch : await resolveBaseBranch(profile.path, profile.baseBranch);
       if (base === null) {
         // Fresh `git init` with no commits: nothing to branch from, so run in the folder rather than fail.
@@ -822,15 +1273,24 @@ export class Board {
     }
     // A worktree made elsewhere (branchTicket) may still be setting up.
     await this.setups.get(this.key(slug, id))?.done;
+    // In place on a repo with commits: the folder's HEAD at the first run is what the Changes tab diffs against.
+    if (!t.workdir && !t.worktree && !patch.worktree && !t.baseSha && (repo === "local" || repo === "remote")) {
+      const head = await runCmd(["git", "rev-parse", "HEAD"], profile.path);
+      if (head.code === 0 && head.stdout.trim()) patch.baseSha = head.stdout.trim();
+    }
     if (!t.sessionId) patch.sessionId = crypto.randomUUID();
     if (Object.keys(patch).length) t = this.patch(slug, id, patch);
     const sessionId = t.sessionId!;
     return {
       dir: t.workdir ?? t.worktree ?? profile.path,
       sessionId,
-      // /clear sets sessionStarted to false: the new id is fresh, whatever the older hints say.
-      existed: !!t.sessionStarted || this.sessionExists(sessionId) || (t.sessionStarted !== false && ((!t.agent && t.runCount > 0) || !!t.workdir)),
+      // Only a saved session can be resumed (a run stopped in its first second leaves none); a linked one is the user's.
+      // Only a saved session can be resumed (a run stopped in its first second leaves none); a linked one is the user's.
+      // /clear sets sessionStarted to false: the new id is fresh.
+      existed: (t.sessionStarted !== false && !!t.workdir && !t.freshSession) || this.sessionExists(sessionId),
       isGit,
+      repo,
+      inPlace: !t.workdir && !t.worktree,
     };
   }
 
@@ -904,7 +1364,7 @@ export class Board {
   async updateTicket(
     slug: string,
     id: string,
-    patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "dependsOn" | "model" | "effort" | "outputStyle" | "priority" | "kind" | "labels" | "agent" | "codexModel" | "codexEffort" | "access" | "readAt" | "standalone" | "needs">> & {
+    patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "dependsOn" | "model" | "effort" | "outputStyle" | "priority" | "kind" | "labels" | "agent" | "codexModel" | "codexEffort" | "access" | "readAt" | "standalone" | "needs" | "important" | "runCapUsd">> & {
       expectedBody?: string;
       /** null: take the ticket out of its plan (only clearing is allowed here; adoptTickets sets it). */
       parentId?: null;
@@ -947,7 +1407,9 @@ export class Board {
     if (patch.order !== undefined) clean.order = patch.order;
     if (patch.mode !== undefined) clean.mode = patch.mode;
     if (patch.notice !== undefined) clean.notice = patch.notice;
+    if (patch.runCapUsd !== undefined) clean.runCapUsd = patch.runCapUsd;
     if (patch.needs !== undefined) clean.needs = normalizeNeeds(patch.needs);
+    if (patch.important !== undefined) clean.important = !!patch.important;
     if (patch.parentId === null && current.parentId) {
       const plannerId = current.parentId;
       const me = current;
@@ -985,6 +1447,10 @@ export class Board {
     }
     // The store places the ticket in its new column unless the patch carries a drop position.
     if (status && status !== current.status) clean.status = status;
+    // Moved by hand: the user takes it from here, no automatic continue, and the card no longer waits for an auto huddle.
+    if (clean.status && current.limit) clean.limit = null;
+    if (clean.status && current.autoHuddle) clean.autoHuddle = null;
+    if (clean.status && current.snooze) clean.snooze = null;
     let t = this.patch(slug, id, clean);
 
     if (clean.status === "done") t = await this.cleanupWorktree(slug, t);
@@ -1049,6 +1515,36 @@ export class Board {
     return out;
   }
 
+  /**
+   * The ticket's current run works unattended on its own ticket (a Ready / In Progress run, a plan child, a schedule
+   * run, or its auto huddle waking it), not a Planning chat, a reply to the user's message or to another ticket.
+   */
+  unattendedRun(slug: string, id: string): boolean {
+    const r = this.runs.get(this.key(slug, id));
+    if (!r || r.stopRequested) return false;
+    if (!r.chat) return true;
+    return !!r.chat.hostWake;
+  }
+
+  /** start_huddle in this run: false when the run already started an auto huddle (one per run). */
+  claimAutoHuddle(slug: string, id: string): boolean {
+    const r = this.runs.get(this.key(slug, id));
+    if (!r || r.autoHuddleStarted) return false;
+    r.autoHuddleStarted = true;
+    return true;
+  }
+
+  /** Set or clear the ticket's auto huddle state (Huddles drives it). */
+  setAutoHuddle(slug: string, id: string, autoHuddle: Ticket["autoHuddle"], extra: Partial<Ticket> = {}): Ticket | null {
+    if (!this.store.getTicket(slug, id)) return null;
+    return this.patch(slug, id, { autoHuddle, ...extra });
+  }
+
+  /** A stopped ticket no longer waits for an auto-huddle slot (a live auto huddle carries on; the user closes it). */
+  private dropAutoWait(slug: string, id: string): Partial<Ticket> {
+    return this.store.getTicket(slug, id)?.autoHuddle?.state === "waiting" ? { autoHuddle: null } : {};
+  }
+
   /** The ticket's current run answers a message the user typed in its chat (see ActiveRun.chat.user). */
   userChatRun(slug: string, id: string): boolean {
     return !!this.runs.get(this.key(slug, id))?.chat?.user;
@@ -1056,13 +1552,23 @@ export class Board {
 
   /**
    * The planner ticket a run belongs to, if that run may manage the ticket's own children: any run of a running
-   * plan (wake-ups), or a reply to the user's chat message while the plan isn't done (or there is none yet).
+   * plan (wake-ups), or a reply to the user's chat message in any plan state, so the user can still tidy up a finished
+   * plan's children (e.g. mark them done). Restarting a done plan stays refused (see plan_control in http.ts).
    */
   plannerRights(slug: string, runTicketId: string): Ticket | null {
     const t = this.store.getTicket(slug, runTicketId);
     if (!t) return null;
     if (planActive(t.plan)) return t;
-    return t.plan?.state !== "done" && this.userChatRun(slug, runTicketId) ? t : null;
+    return this.userChatRun(slug, runTicketId) ? t : null;
+  }
+
+  /**
+   * The ticket whose Planning chat (refine mode) is answering a message the user typed: that reply may manage
+   * other tickets on the board for the user (see plannerFor in http.ts). Plan wake-ups and peer replies don't count.
+   */
+  userRequestRights(slug: string, runTicketId: string): Ticket | null {
+    const chat = this.runs.get(this.key(slug, runTicketId))?.chat;
+    return chat?.mode === "refine" && chat.user ? this.store.getTicket(slug, runTicketId) ?? null : null;
   }
 
   /**
@@ -1153,6 +1659,12 @@ export class Board {
     // The planner's last wake-up has finished: its outcome decides whether we go on.
     if (plan.awaiting && !plannerBusy) {
       const o = planner.outcome;
+      // Waiting for a usage limit to reset: the planner's automatic continue picks the wake-up up again.
+      if (o === "limit" && planner.limit?.auto) return false;
+      if (o === "limit") {
+        this.stuck(slug, planner, plan, "the planner's run hit the usage limit");
+        return false;
+      }
       if (o === "blocked" || o === "needs_input" || o === "failed" || o === "stopped") {
         this.stuck(slug, planner, plan, o === "needs_input" ? "the planner has questions for you" : `the planner's run ${o === "blocked" ? "is blocked" : o}`);
         return false;
@@ -1220,7 +1732,7 @@ export class Board {
 
   /** Resume the planner's session with what happened; several events arrive as one message. */
   private wake(slug: string, planner: Ticket, plan: Plan, kind: PlanWake, events: string[], kids: Ticket[]) {
-    const text = orchestratorPrompt(planner, { kind, events, table: planTable(kids), board: slug, outputDir: this.store.outputsDir(slug, planner.id) });
+    const text = orchestratorPrompt(planner, { kind, events, table: planTable(kids), board: slug, outputDir: this.store.outputsDir(slug, planner.id), repo: this.repoState(slug) ?? this.guessRepo(slug) });
     this.patch(slug, planner.id, { plan: { ...plan, inbox: [], awaiting: kind, wakeups: plan.wakeups + 1 } });
     // Back to where it was (In progress only if a restart cut a wake-up off).
     const returnTo = planner.status === "in_progress" ? "review" : planner.status;
@@ -1235,8 +1747,8 @@ export class Board {
 
   private stuck(slug: string, planner: Ticket, plan: Plan, reason: string) {
     this.patch(slug, planner.id, { plan: { ...plan, state: "stuck", awaiting: null, reason } });
+    // The stuck planner now needs the user (attention.ts): the Notifier tells them.
     this.store.addComment(slug, planner.id, "ai", `Plan stuck: ${reason}. Fix what's needed, then press Resume plan.`);
-    this.notify(`Plan stuck: ${planner.title}`, reason);
   }
 
   private async cleanupWorktree(slug: string, t: Ticket): Promise<Ticket> {
@@ -1246,6 +1758,43 @@ export class Board {
     if (r.removed) return this.patch(slug, t.id, { worktree: null });
     this.store.addComment(slug, t.id, "ai", `Worktree kept at ${t.worktree}: ${r.reason}`);
     return t;
+  }
+
+  /**
+   * Removes worktrees left behind by Done or deleted tickets (run once at startup; never throws).
+   * Only the board's own worktree folder is looked at; ones with uncommitted changes are kept and logged.
+   */
+  async sweepWorktrees(): Promise<void> {
+    for (const profile of this.store.listProfiles()) {
+      try {
+        if (!(await isGitRepo(profile.path))) continue;
+        const root = dirname(worktreeDir(profile, "x"));
+        if (!existsSync(root)) continue;
+        const realRoot = realpathSync(root);
+        let swept = 0;
+        const kept: string[] = [];
+        for (const dir of await listWorktrees(profile.path)) {
+          if (dirname(dir) !== realRoot && dirname(dir) !== root) continue;
+          const id = basename(dir);
+          const t = this.store.getTicket(profile.slug, id);
+          const key = this.key(profile.slug, id);
+          const busy = this.isRunning(profile.slug, id) || this.setups.has(key) || this.sessionLocks.has(key);
+          if (t && (t.status !== "done" || busy)) continue;
+          const r = await this.removeTicketWorktree(profile, dir);
+          if (!r.removed) {
+            kept.push(`${id} (${r.reason})`);
+            continue;
+          }
+          swept++;
+          if (t?.worktree) this.patch(profile.slug, id, { worktree: null });
+        }
+        if (swept || kept.length) {
+          console.log(`profile ${profile.slug}: swept ${swept} orphan worktree${swept === 1 ? "" : "s"}, kept ${kept.length} with changes${kept.length ? `: ${kept.join(", ")}` : ""}`);
+        }
+      } catch (e) {
+        console.error(`profile ${profile.slug}: worktree sweep failed: ${(e as Error).message}`);
+      }
+    }
   }
 
   async deleteTicket(slug: string, id: string): Promise<void> {
@@ -1353,6 +1902,12 @@ export class Board {
         await addWorktree(profile.path, dir, branch, base);
         worktree = dir;
         Object.assign(patch, { worktree: dir, branch });
+      } else {
+        // The source works in the project folder itself: so does the branch, with the same Changes base.
+        if (src.baseSha) patch.baseSha = src.baseSha;
+        warnings.push((await isGitRepo(profile.path))
+          ? "The original works in the project folder, so the branch edits the same files; they run one at a time."
+          : "This folder has no version history, so the branch edits the same files as the original; they run one at a time.");
       }
       const fromCwd = src.workdir ?? src.worktree ?? (src.branch ? worktreeDir(profile, src.id) : profile.path);
       const toCwd = patch.workdir ?? worktree ?? profile.path;
@@ -1370,6 +1925,67 @@ export class Board {
       this.store.deleteTicket(slug, t.id);
       throw e;
     }
+  }
+
+  // ---- One-click recovery from a lost or busy session ----
+
+  /** The first prompt of a fresh session: ticket, last result, recent comments, and where to look for the work so far. */
+  private freshPrompt(slug: string, t: Ticket, session: Pick<Session, "repo" | "inPlace">, outputDir: string): string {
+    const comments = this.store.listComments(slug, t.id);
+    const last = comments.findLast((c) => c.author === "ai" && !BOARD_NOTE_RE.test(c.text));
+    const recent = comments.filter((c) => !BOARD_NOTE_RE.test(c.text) && c !== last).slice(-10);
+    const profile = this.store.getProfile(slug);
+    return freshSessionPrompt(t, {
+      repo: session.repo, inPlace: session.inPlace, home: profile ? { folder: profile.path, baseBranch: profile.baseBranch } : undefined, linked: !!t.workdir, baseBranch: profile?.baseBranch || "main",
+      lastResult: last?.text ?? null, comments: recent, outputDir, autoHuddles: autoHuddlesOn(profile), artifacts: !!profile?.artifacts,
+    });
+  }
+
+  /** Queues the ticket's work run: it starts now if a slot is free (dispatch), otherwise when one frees up. */
+  private requeue(slug: string, id: string): Ticket {
+    this.patch(slug, id, { status: "ready", outcome: null, error: null });
+    this.dispatch(slug);
+    return this.store.getTicket(slug, id)!;
+  }
+
+  private recoverable(slug: string, id: string): Ticket {
+    const t = this.store.getTicket(slug, id);
+    if (!t) throw new Error(`ticket ${id} not found`);
+    if (t.error?.startsWith("corrupt")) throw new Error("ticket file is corrupt");
+    if (this.isRunning(slug, id)) throw new ConflictError("Claude is already working on this ticket");
+    return t;
+  }
+
+  /**
+   * Start fresh session: drops the ticket's Claude session (its conversation can't be resumed) but keeps the
+   * worktree and branch, then queues a work run whose prompt tells Claude to continue from the branch's state.
+   */
+  startFresh(slug: string, id: string): Ticket {
+    this.recoverable(slug, id);
+    this.patch(slug, id, { sessionId: crypto.randomUUID(), sessionStarted: false, freshSession: true });
+    this.store.addComment(slug, id, "ai", "Started a fresh session: the previous conversation is gone, so Claude continues from the ticket, its last result and the branch as it is now.");
+    return this.requeue(slug, id);
+  }
+
+  /**
+   * Take over here: the ticket's session is open in a terminal. If that's the board's own (dock) terminal, it is
+   * closed and the run resumes here; one in an external terminal can't be closed (external: the UI offers
+   * Start fresh session instead).
+   */
+  async takeOver(slug: string, id: string): Promise<{ ticket: Ticket; external: boolean }> {
+    const t = this.recoverable(slug, id);
+    if (t.sessionId) {
+      const owned = await this.opts.findOwnedSession?.(t.sessionId) ?? null;
+      if (owned) {
+        if (!(await owned.close())) throw new Error("Couldn't close the session in the board's terminal. Exit it there (Ctrl+D or /exit), then try again.");
+        this.store.addComment(slug, id, "ai", "Took over the session: closed it in the board's terminal and resumed the run here.");
+        return { ticket: this.requeue(slug, id), external: false };
+      }
+      const title = t.workdir ? sessionTitle(t.workdir, t.sessionId) : null;
+      if (await this.isSessionLive(t.sessionId, title)) return { ticket: t, external: true };
+    }
+    this.store.addComment(slug, id, "ai", "Took over the session: it was no longer open in a terminal, so the run resumed here.");
+    return { ticket: this.requeue(slug, id), external: false };
   }
 
   addComment(slug: string, id: string, text: string) {
@@ -1414,10 +2030,10 @@ export class Board {
       this.cancelSlotWait(slug, id);
       return true;
     }
-    // In Progress with no run behind it (e.g. the daemon lost it): clear the card instead of leaving it stuck.
+    // In Progress with no run behind it (e.g. the daemon lost it, or it waits for its auto huddle): clear the card.
     if (t?.status !== "in_progress") return false;
-    this.store.addComment(slug, id, "ai", "Run stopped by user.");
-    this.patch(slug, id, { status: "review", outcome: "stopped", error: null, lastActivity: null });
+    this.store.addComment(slug, id, "ai", t.autoHuddle ? "Stopped by user while waiting for its auto huddle." : "Run stopped by user.");
+    this.patch(slug, id, { status: "review", outcome: "stopped", error: null, lastActivity: null, ...(t.autoHuddle ? { autoHuddle: null } : {}) });
     return true;
   }
 
@@ -1452,12 +2068,32 @@ export class Board {
     this.patch(r.slug, r.id, { interrupted: i, lastActivity: null, runStartedAt: null });
   }
 
+  /** Count more active work a restart waits for (e.g. huddle agents mid-turn). */
+  /** Huddles tells the board about its host tickets' huddles, which change whether those tickets need the user. */
+  onHostHuddles(f: (slug: string) => Map<string, HostHuddle>): void {
+    this.hostHuddleStates = f;
+  }
+
+  /** Open huddles by host ticket on a board. */
+  hostHuddles(slug: string): Map<string, HostHuddle> {
+    return this.hostHuddleStates(slug);
+  }
+
+  onRestartBusy(busy: () => number): void {
+    this.restartBusy.push(busy);
+  }
+
+  /** Board runs plus other active work a restart waits for. */
+  private activeWork(): number {
+    return this.runs.size + this.restartBusy.reduce((n, f) => n + f(), 0);
+  }
+
   /**
    * Restart once no run is active. Until then nothing new starts: Ready tickets wait, chat messages queue and
    * Planning interviews are held; recover() starts them after the restart. After maxWaitMs it restarts anyway.
    */
   requestRestart(onIdle: () => void, maxWaitMs = RESTART_MAX_WAIT_MS): { running: number; alreadyPending: boolean } {
-    const running = this.runs.size;
+    const running = this.activeWork();
     if (this.restartPending) return { running, alreadyPending: true };
     this.restartPending = true;
     this.emitRestart();
@@ -1465,8 +2101,9 @@ export class Board {
       const deadline = Date.now() + maxWaitMs;
       // Always yield first, so the caller's HTTP response goes out before the daemon exits.
       do await Bun.sleep(200);
-      while (this.runs.size && Date.now() < deadline);
-      if (this.runs.size) console.log(`restart: ${this.runs.size} run(s) still active after ${Math.round(maxWaitMs / 1000)}s; restarting anyway`);
+      while (this.activeWork() && Date.now() < deadline);
+      const left = this.activeWork();
+      if (left) console.log(`restart: ${left} run(s) still active after ${Math.round(maxWaitMs / 1000)}s; restarting anyway`);
       onIdle();
     })();
     return { running, alreadyPending: false };
@@ -1478,7 +2115,12 @@ export class Board {
 
   /** pending: a restart holds new runs; waiting: active runs it waits for. */
   restartState(): { pending: boolean; waiting: number } {
-    return { pending: this.restartPending, waiting: this.runs.size };
+    return { pending: this.restartPending, waiting: this.activeWork() };
+  }
+
+  /** Other active work (see onRestartBusy) changed: update the pending restart's count. */
+  restartWorkChanged(): void {
+    if (this.restartPending) this.emitRestart();
   }
 
   private emitRestart(): void {
@@ -1489,7 +2131,8 @@ export class Board {
     for (const p of this.store.listProfiles()) {
       for (const t of this.store.listTickets(p.slug)) {
         // Replies waiting for a slot keep waiting: dispatch() below starts them first.
-        if (t.status !== "in_progress" || t.slotWait || this.isRunning(p.slug, t.id)) continue;
+        // Tickets waiting for their auto huddle stay put: the huddle (or a freed slot) wakes them.
+        if (t.status !== "in_progress" || t.slotWait || t.autoHuddle || this.isRunning(p.slug, t.id)) continue;
         if (t.plan?.awaiting && planActive(t.plan)) {
           // A planner wake-up was cut off: wake it again with the children's current state.
           this.store.addComment(p.slug, t.id, "ai", "Planner interrupted by daemon restart; waking it again.");

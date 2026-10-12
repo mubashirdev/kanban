@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type ClaudeProject, type Profile, type SetupDetection } from "./api";
+import { api, type ClaudeProject, type Profile, type RepoKind, type SetupDetection, type Workspace } from "./api";
+import { capInputText, parseCap } from "./capText";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Modal } from "./Modal";
 import { Select } from "./Select";
 import { timeAgo } from "./time";
+import { VersionHistoryOffer } from "./VersionHistoryOffer";
 
 const MODELS = ["opus", "sonnet", "haiku"];
 const DEFAULT_MAX_PARALLEL = 5;
@@ -14,9 +16,11 @@ function folderName(path: string): string {
   return path.replace(/\/+$/, "").split("/").pop() ?? "";
 }
 
-export function ProfileDialog({ profile, onClose, onSaved, onDeleted }: {
+export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam }: {
   profile: Profile | null;
   onClose: () => void;
+  /** Close and open the dock's Team tab (teammates and templates live there). */
+  onOpenTeam?: () => void;
   onSaved: (p: Profile) => void;
   onDeleted: () => void;
 }) {
@@ -29,6 +33,19 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted }: {
   const maxParallelError = /^\d+$/.test(maxParallelText.trim()) && maxParallel >= 1 && maxParallel <= 20 ? null : "A whole number from 1 to 20";
   const [saving, setSaving] = useState(false);
   const [model, setModel] = useState(profile?.model ?? "");
+  const [autoHuddles, setAutoHuddles] = useState(profile?.autoHuddles !== false);
+  const [capText, setCapText] = useState(capInputText(profile?.runCapUsd));
+  const cap = parseCap(capText);
+  const capError = cap === undefined ? "An amount in $, e.g. 5 (empty: no cap)" : null;
+  const [artifacts, setArtifacts] = useState(!!profile?.artifacts);
+  const [workspace, setWorkspace] = useState<Workspace>(profile?.workspace ?? "worktree");
+  // The folder's version history (VersionHistoryOffer checks it): without commits there is nothing to make copies from.
+  const [repo, setRepo] = useState<RepoKind | null>(null);
+  const noHistory = repo === "plain" || repo === "empty";
+  const shownWorkspace: Workspace = noHistory ? "folder" : workspace;
+  const [stallText, setStallText] = useState(String(profile?.stallMinutes ?? 20));
+  const stallMinutes = Number(stallText);
+  const stallError = /^\d+$/.test(stallText.trim()) && stallMinutes <= 1440 ? null : "Minutes from 0 (off) to 1440";
   const [claudeModel, setClaudeModel] = useState<string | null>(null);
   const [recent, setRecent] = useState<ClaudeProject[] | null>(null);
   const [filter, setFilter] = useState("");
@@ -78,17 +95,17 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted }: {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (saving || maxParallelError) return;
+    if (saving || maxParallelError || capError || (profile && stallError)) return;
     setSaving(true);
     try {
       const p = profile
         ? await api.updateProfile(profile.slug, {
-          name, path, maxParallel, model: model || null,
+          name, path, maxParallel, model: model || null, autoHuddles, runCapUsd: cap || null, artifacts, stallMinutes, workspace,
           // A file typed but not yet added with Enter still counts.
           copyFiles: newFile.trim() && !copyFiles.includes(newFile.trim()) ? [...copyFiles, newFile.trim()] : copyFiles,
           setupCommand: setupCommand.trim(), cleanupCommand: cleanupCommand.trim(), setupDetected: detected,
         })
-        : await api.createProfile({ name, path, maxParallel, model: model || undefined });
+        : await api.createProfile({ name, path, maxParallel, model: model || undefined, workspace });
       onSaved(p);
     } catch (e: any) {
       setErr(e.message);
@@ -126,7 +143,7 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted }: {
   const customModel = model && !MODELS.includes(model) ? model : null;
 
   return (
-    <Modal title={profile ? `Profile: ${profile.name}` : "New profile"} onClose={onClose} wide={isNew}>
+    <Modal title={profile ? `Board settings · ${profile.name}` : "New board"} onClose={onClose} wide={isNew} focusDialog={!isNew}>
       <form className="form" onSubmit={submit}>
         <div className="field">
           <div className="field-label">Folder</div>
@@ -175,8 +192,34 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted }: {
               aria-label="Folder path" />
             <button type="button" className="btn" onClick={browse} disabled={picking}>{picking ? "Choosing…" : "Browse…"}</button>
           </div>
-          <span className="muted small">Git repo: each ticket gets its own worktree + branch and a PR. Plain folder: Claude works in place.</span>
+          <VersionHistoryOffer path={path} onRepo={setRepo} />
         </div>
+
+        <fieldset className="ws-cards">
+          <legend>Workspace</legend>
+          <label className={`ws-card ${shownWorkspace === "worktree" ? "on" : ""} ${noHistory ? "off" : ""}`}
+            title={noHistory ? "Turn on version history above to use this" : undefined}>
+            <input type="radio" name="workspace" checked={shownWorkspace === "worktree"} disabled={noHistory} onChange={() => setWorkspace("worktree")} />
+            <span>
+              <span>Worktree per ticket <span className="muted small">(default)</span></span>
+              <span className="muted small">
+                {noHistory
+                  ? "Needs version history: turn it on above. Each ticket then gets its own copy of the folder, and tickets run in parallel."
+                  : "Each ticket gets its own branch and copy of the folder (a git worktree), so tickets run in parallel."}
+              </span>
+            </span>
+          </label>
+          <label className={`ws-card ${shownWorkspace === "folder" ? "on" : ""}`}>
+            <input type="radio" name="workspace" checked={shownWorkspace === "folder"} onChange={() => setWorkspace("folder")} />
+            <span>
+              <span>Work in the project folder</span>
+              <span className="muted small">
+                Claude edits your folder directly, with no branches. Tickets run one at a time so they don't clash.
+                {profile && " Changing this affects new tickets only; tickets that already have their own copy keep it."}
+              </span>
+            </span>
+          </label>
+        </fieldset>
 
         <label>
           Name
@@ -207,6 +250,41 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted }: {
 
         {profile && (
           <>
+            <label className="check-row board-switch">
+              <input type="checkbox" checked={autoHuddles} onChange={(e) => setAutoHuddles(e.target.checked)} />
+              <span>
+                Auto huddles
+                <span className="muted small">
+                  When you're away, Claude starts a review huddle on its own before landing ⭐ important or risky work ($20 cap, one at a time per board).
+                </span>
+              </span>
+            </label>
+            <label className="check-row board-switch">
+              <input type="checkbox" checked={artifacts} onChange={(e) => setArtifacts(e.target.checked)} />
+              <span>
+                claude.ai artifacts
+                <span className="muted small">
+                  Teach Claude to publish and read claude.ai artifacts from runs and Planning chats. Off keeps every prompt shorter.
+                </span>
+              </span>
+            </label>
+            <label className="cap-field">
+              Spending cap per run
+              <span className="muted small">
+                Each work run stops once it has spent this much (API-equivalent $) and waits in the Inbox for you to continue it. Empty: no cap. Tickets can override it in their ⋯ menu.
+              </span>
+              <input inputMode="decimal" value={capText} onChange={(e) => setCapText(e.target.value)} placeholder="No cap, e.g. 5"
+                aria-invalid={!!capError} aria-describedby={capError ? "cap-error" : undefined} />
+              {capError && <span id="cap-error" className="field-error">{capError}</span>}
+            </label>
+            <label>
+              Flag a run as stalled after (minutes without output)
+              <input type="number" min={0} max={1440} step={1} value={stallText} onChange={(e) => setStallText(e.target.value)}
+                aria-invalid={!!stallError} aria-describedby={stallError ? "stall-error" : "stall-hint"} />
+              {stallError
+                ? <span id="stall-error" className="field-error">{stallError}</span>
+                : <span id="stall-hint" className="muted small">A silent run lands in the Inbox with Stop / Keep waiting / Restart; nothing is killed. Runs waiting on background tasks don't count. 0: off.</span>}
+            </label>
             <div className="form-section">
               <span>Worktree setup</span>
               <button type="button" className="btn small ghost link" onClick={detectAgain} disabled={detecting}>
@@ -252,17 +330,20 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted }: {
                 placeholder="e.g. docker compose down" />
               <span className="muted small setup-hint">Runs in the worktree before the board removes it.</span>
             </label>
+            <span className="muted small">
+              Teammates and templates moved to the Team tab{onOpenTeam && <> · <button type="button" className="link-btn" onClick={onOpenTeam}>Open Team</button></>}
+            </span>
           </>
         )}
 
         {err && <div className="form-error">{err}</div>}
         <div className="form-actions">
           {profile && (
-            <button type="button" className="btn ghost danger" onClick={() => setConfirmDelete(true)}>Delete profile</button>
+            <button type="button" className="btn ghost danger" onClick={() => setConfirmDelete(true)}>Delete board</button>
           )}
           <div className="spacer" />
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary" disabled={saving || !name.trim() || !path.trim() || !!maxParallelError}>
+          <button type="submit" className="btn primary" disabled={saving || !name.trim() || !path.trim() || !!maxParallelError || !!capError || (!!profile && !!stallError)}>
             {saving ? (profile ? "Saving…" : "Creating…") : profile ? "Save" : "Create board"}
           </button>
         </div>

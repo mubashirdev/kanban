@@ -1,18 +1,30 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, subscribe, type ClaudeCommand, type DefaultModels, type Effort, type NewTicketDraft, type OutputFile, type SessionEntry, type Ticket } from "./api";
+import { api, subscribe, type ClaudeCommand, type DefaultModels, type Effort, type Huddle, type Level, type NewTicketDraft, type OutputFile, type QueuedMessage, type SessionEntry, type TeammateProposal, type Ticket } from "./api";
+import { HuddleCard } from "./HuddleCard";
+import { HuddleDigest } from "./HuddleDigest";
+import { usePresets } from "./HuddleRoster";
+import type { TeamRequest } from "./Team";
+import { TeammateCard } from "./TeammateCard";
 import { autoGrow } from "./autoGrow";
 import { branchTicket } from "./branch";
 import { BranchCard } from "./BranchCard";
+import { DeleteCard } from "./DeleteCard";
 import { ArrowDownIcon, ArrowUpIcon, BranchIcon, CloseIcon, FileCodeIcon, FileTextIcon, ImageIcon, MicIcon, PlusIcon, ShieldAlertIcon, ShieldIcon, SlashIcon, SlidersIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
+import { ImagePickButton } from "./ImagePickButton";
 import { NewTicketsCard } from "./NewTicketsCard";
+import { KeyHint } from "./KeyHint";
 import { ProposalCard } from "./ProposalCard";
 import { QuestionsForm } from "./QuestionsForm";
+import { RecoveryBanner } from "./RecoveryBanner";
 import { SetupRow } from "./SetupRow";
 import { filesByReply } from "./fileCards";
+import { handoff as handoffOf, liveView, saved, type Handoff } from "./liveReply";
 import { baseName, copyFile, downloadFile } from "./share";
 import { draftKey, formKey, takeFirstMessage } from "./drafts";
-import { clock, fullTime, timeAgo, useNow } from "./time";
+import { clock, fullTime, timeAgo } from "./time";
+import { useNow } from "./useNow";
+import { canStartFromProposal } from "./keynav";
 import { toast } from "./toast";
 import { Markdown } from "./Transcript";
 import { usePersistentState } from "./usePersistentState";
@@ -71,6 +83,7 @@ function WaitingCard({ tasks }: { tasks: NonNullable<Ticket["waitingOn"]> }) {
   );
 }
 
+/** tools: a run of tool calls folded into one line. */
 type Block = { kind: "entry"; e: SessionEntry; index: number } | { kind: "tools"; items: SessionEntry[] };
 
 /** Copied history of a branched ticket: entries from before the branch point (at = the branch time). */
@@ -89,36 +102,8 @@ function group(entries: SessionEntry[], splitAt?: string): Block[] {
   return out;
 }
 
-/** What to show of a half-written reply: hide board blocks (questions/proposal JSON) and the result line. */
-function liveView(text: string): { text: string; preparing: string | null } {
-  const cut = text.indexOf("<ckanban-");
-  const visible = (cut >= 0 ? text.slice(0, cut) : text).replace(/^CKANBAN_RESULT.*$/gm, "").trim();
-  if (cut < 0) return { text: visible, preparing: null };
-  const rest = text.slice(cut);
-  return {
-    text: visible,
-    preparing: rest.startsWith("<ckanban-questions") ? "Preparing questions…"
-      : rest.startsWith("<ckanban-mockup") ? "Drawing mockup…"
-      : rest.startsWith("<ckanban-tickets") ? "Preparing tickets…"
-      : rest.startsWith("<ckanban-ticket") ? "Preparing ticket proposal…" : null,
-  };
-}
-
-/** Reply text compared loosely: no result line, whitespace collapsed. */
-const flat = (s: string) => s.replace(/^.*CKANBAN_RESULT.*$/gm, "").replace(/\s+/g, " ").trim();
-
-/** A finished live reply kept on screen until the conversation shows its saved copy. */
-type Handoff = { text: string; flat: string; at: number; count: number };
 const HANDOFF_RETRY_MS = 500;
 const HANDOFF_MAX_MS = 5000;
-
-/** Whether the loaded entries contain the saved copy of a finished live reply. */
-function saved(entries: SessionEntry[], h: Handoff): boolean {
-  // Only board blocks (questions, proposal…): nothing to compare, so wait for any new entry.
-  if (!h.flat) return entries.length > h.count;
-  const recent = entries.filter((e) => e.role === "assistant" && e.kind === "text" && !e.peer).slice(-30);
-  return flat(recent.map((e) => e.text).join(" ")).includes(h.flat);
-}
 
 const UNREADABLE = { questions: "questions", proposal: "ticket proposal", tickets: "proposed tickets" } as const;
 
@@ -166,7 +151,10 @@ export function useStop(slug: string, ticket: Ticket, working: boolean, onError:
   return { stopping, stop };
 }
 
-export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onError }: {
+/** A queued peer message that carries huddle messages (see the server's huddleMainPrompt). */
+const HUDDLE_TAG = /<ckanban-context[^>]* huddle="/;
+
+export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onError, onPendingProposal, huddle = null, onOpenHuddle, onOpenTeam }: {
   slug: string;
   ticket: Ticket;
   /** The board's tickets, to tell which proposed new tickets already exist. */
@@ -175,6 +163,14 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   /** Show a file of the ticket's outputs folder (path relative to it) in the Outputs tab. */
   onOpenOutput?: (name: string) => void;
   onError: (m: string) => void;
+  /** The newest proposal card not applied yet, as its Apply action (null when none): ⌘⇧Enter in the panel applies it. */
+  /** The newest unapplied proposal's apply; start: also move the ticket to Ready. */
+  onPendingProposal?: (apply: ((start: boolean) => Promise<void>) | null) => void;
+  /** The ticket's huddle, to tell whether a proposed one was started. */
+  huddle?: Huddle | null;
+  onOpenHuddle?: () => void;
+  /** Open the dock's Team tab: a proposed teammate's editor (Edit first) or a saved one (Open in Team). */
+  onOpenTeam?: (r: TeamRequest) => void;
 }) {
   const [page, setPage] = useState<{ entries: SessionEntry[]; start: number } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -297,7 +293,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       if (e.text) setLive(e.text);
       else if (e.final) {
         // Message finished: show all of it until the saved copy is loaded, then swap without a gap.
-        const h = { text: e.final, flat: flat(liveView(e.final).text), at: Date.now(), count: entriesRef.current.length };
+        const h = handoffOf(e.final, entriesRef.current.length);
         setHandoff((hs) => [...hs, h]);
         setLive("");
         loadTail().catch(() => {});
@@ -317,11 +313,37 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     if (!running) loadTail().catch(() => {}).finally(() => setLive(""));
   }, [running]);
 
+  // A message Claude hasn't received yet (not sent after Stop, or waiting for a slot or a restart): the user can
+  // still edit or discard it. With Claude running it was handed over at once.
+  const editable = (q: QueuedMessage) => q.state === "unsent" || (!q.peer && !running);
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  const discarded = useRef(new Set<string>());
+  const cancelEdit = () => {
+    setEditing(null);
+    composer.current?.focus();
+  };
+  const saveEdit = async () => {
+    if (!editing?.text.trim()) return;
+    try {
+      await api.editQueued(slug, ticket.id, editing.id, editing.text.trim());
+      cancelEdit();
+    } catch (e: any) {
+      onError(e.message);
+    }
+  };
+  const discard = (msgId: string) => {
+    discarded.current.add(msgId);
+    api.discardQueued(slug, ticket.id, msgId).catch((e) => {
+      discarded.current.delete(msgId);
+      onError(e.message);
+    });
+  };
+
   // Claude read a queued message: keep its bubble until the session file shows it, so it doesn't blink out.
   const prevQueued = useRef(queued);
   useEffect(() => {
     // Peer messages show up in the session as another ticket's message, not as the user's bubble.
-    const read = prevQueued.current.filter((q) => q.state === "queued" && !q.peer && !queued.some((n) => n.id === q.id)).map((q) => q.text);
+    const read = prevQueued.current.filter((q) => q.state === "queued" && !q.peer && !discarded.current.has(q.id) && !queued.some((n) => n.id === q.id)).map((q) => q.text);
     prevQueued.current = queued;
     if (read.length) setPending((ps) => [...ps, ...read.map((text) => ({ text, steer: false }))]);
   }, [ticket.queued]);
@@ -452,8 +474,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     if (!preserveDraft) setDraft("");
     try {
       const r = await api.chat(slug, ticket.id, t);
-      // Steering: the server queue now shows it.
-      if (r.queued?.some((q) => q.text === t)) setPending((ps) => ps.filter((p) => p.text !== t));
+      // Steering: the server queue now shows it. /clear and /model: the board ran them, nothing reaches the session.
+      if (r.queued?.some((q) => q.text === t) || /^\/(clear|new)\s*$/.test(t)) setPending((ps) => ps.filter((p) => p.text !== t));
     } catch (e: any) {
       setPending((ps) => ps.filter((p) => p.text !== t));
       if (!preserveDraft) setDraft(t);
@@ -492,15 +514,6 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     /\?\s*$/.test(lastText.text.replace(/^.*CKANBAN_RESULT:.*$/m, "").trim().split("\n").filter(Boolean).pop() ?? "");
   const quickReplies = asked ? ["Yes, go ahead", "No", "Tell me more", ...(/\bcommit/i.test(lastText!.text) ? ["Commit"] : [])] : [];
 
-  /** Who a ticket-to-ticket message is from or to, linking to that ticket when it still exists. */
-  const peerLabel = (dir: "in" | "out", ticketId: string | null) => {
-    const other = ticketId ? tickets.find((t) => t.id === ticketId) : undefined;
-    const name = other ? other.title : ticketId ?? "another ticket";
-    const link = other
-      ? <button className="link-btn" onClick={() => onOpenTicket(other.id)} title={other.id}>{name}</button>
-      : <span>{name}</span>;
-    return dir === "in" ? <>From {link}'s Claude</> : <>Claude to {link}</>;
-  };
   const childFor = (d: { title: string }) => tickets.find((t) => t.parentId === ticket.id && t.title === d.title);
   const createChild = async (d: NewTicketDraft) => {
     try {
@@ -515,13 +528,23 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     }
   };
 
-  const applyProposal = async (p: { title: string; description: string }) => {
+  // Proposals applied with "Apply & start work" here, so their card says the ticket moved on.
+  const [startedProposals, setStartedProposals] = useState<ReadonlySet<string>>(new Set());
+  const canStart = canStartFromProposal({ status: ticket.status, working: ticket.status === "in_progress" || running });
+  const applyProposal = async (p: { title: string; description: string }, start?: { uuid: string }) => {
     const before = { title: ticket.title, body: ticket.body };
     try {
+      // One update, so the ticket never sits in Ready with the old text.
       await api.updateTicket(slug, ticket.id, {
         ...(p.title ? { title: p.title } : {}),
         ...(p.description ? { body: p.description } : {}),
+        ...(start ? { status: "ready" as const } : {}),
       });
+      // No Undo once it starts: Claude may already be working from the new text.
+      if (start) {
+        setStartedProposals((s) => new Set(s).add(start.uuid));
+        return void toast("Applied to the ticket and moved to Ready", { tone: "ok" });
+      }
       toast("Applied to the ticket", {
         tone: "ok",
         action: {
@@ -534,10 +557,35 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     }
   };
 
+  // Teammate cards: the board's teammates tell a new one from a change; reloaded after each save.
+  const [presetsVersion, setPresetsVersion] = useState(0);
+  const presets = usePresets(slug, presetsVersion);
+  const saveTeammate = async (uuid: string, p: TeammateProposal, scope: Level) => {
+    try {
+      const { why: _w, ...fields } = p;
+      const saved = await api.saveHuddlePreset(slug, fields, scope);
+      await api.answerTeammateCard(slug, ticket.id, uuid, { state: "saved", name: saved.name, scope });
+      setPresetsVersion((n) => n + 1);
+    } catch (err: any) {
+      onError(err.message);
+    }
+  };
+  const dismissTeammate = (uuid: string) => api.answerTeammateCard(slug, ticket.id, uuid, { state: "dismissed" }).then(() => {}, (err) => onError(err.message));
+
+  const pendingProposal = entries.findLast((e) => e.proposal && !isApplied(e.proposal));
+  const applyPendingRef = useRef((_start: boolean) => Promise.resolve());
+  applyPendingRef.current = (start) => (pendingProposal?.proposal
+    ? applyProposal(pendingProposal.proposal, start && canStart ? { uuid: pendingProposal.uuid } : undefined)
+    : Promise.resolve());
+  useEffect(() => {
+    onPendingProposal?.(pendingProposal ? (start) => applyPendingRef.current(start) : null);
+  }, [pendingProposal?.uuid]);
+  useEffect(() => () => onPendingProposal?.(null), []);
+
   /** One block of the conversation; old = copied history of a branched ticket (shown dimmed). */
   const renderBlock = (b: Block, old: boolean) => {
     const el = renderEntry(b, old);
-    if (b.kind === "tools" || !b.e.setup) return el;
+    if (b.kind !== "entry" || !b.e.setup) return el;
     return <Fragment key={b.e.uuid}><SetupRow setup={b.e.setup} old={old} />{el}</Fragment>;
   };
   const renderEntry = (b: Block, old: boolean) => {
@@ -553,15 +601,10 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           if (e.kind === "board") {
             return <div key={e.uuid} className={`chat-note${old ? " inherited" : ""}`}>{e.text}{e.at && <span title={fullTime(e.at)}> · {timeAgo(e.at)}</span>}</div>;
           }
-          if (e.peer) {
+          if (e.huddleId) {
             return (
-              <div key={e.uuid} className={`conv-msg peer ${e.peer.dir}${old ? " inherited" : ""}`}>
-                <div className="conv-head">
-                  <b>{peerLabel(e.peer.dir, e.peer.ticketId)}</b>
-                  {e.at && <time className="muted small" dateTime={e.at} title={fullTime(e.at)}>{timeAgo(e.at)}</time>}
-                </div>
-                <Markdown text={e.text} />
-              </div>
+              <HuddleDigest key={e.uuid} text={e.text} old={old} onOpen={onOpenHuddle}
+                meta={e.at && <time className="muted small" dateTime={e.at} title={fullTime(e.at)}>{timeAgo(e.at)}</time>} />
             );
           }
           return (
@@ -579,7 +622,10 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                   storageKey={formKey(slug, ticket.id, e.uuid)} />
               )}
               {e.proposal && (
-                <ProposalCard proposal={e.proposal} applied={isApplied(e.proposal)} onApply={() => applyProposal(e.proposal!)} />
+                <ProposalCard proposal={e.proposal} applied={isApplied(e.proposal)} started={startedProposals.has(e.uuid)}
+                  onApply={() => applyProposal(e.proposal!)}
+                  onApplyStart={canStart ? () => applyProposal(e.proposal!, { uuid: e.uuid }) : undefined}
+                  keyHint={e === pendingProposal} />
               )}
               {e.newTickets && (
                 <NewTicketsCard drafts={e.newTickets} created={childFor} onCreate={createChild} onOpen={onOpenTicket} />
@@ -588,6 +634,20 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                 <BranchCard reason={e.branch.reason} here={old} running={running} onOpen={onOpenTicket}
                   branch={tickets.find((t) => t.branchedFrom === ticket.id && !!t.branchPoint && t.branchPoint.at > e.at)}
                   onBranch={() => branchTicket(slug, ticket, onOpenTicket).then(() => {}, (err) => onError(err.message))} />
+              )}
+              {e.deletion && (
+                <DeleteCard slug={slug} ticket={ticket} tickets={tickets} uuid={e.uuid} ids={e.deletion.ids} reason={e.deletion.reason} onError={onError} />
+              )}
+              {e.teammate && (
+                <TeammateCard proposal={e.teammate} presets={presets} answered={ticket.teammateCards?.[e.uuid]}
+                  onSave={(scope) => saveTeammate(e.uuid, e.teammate!, scope)}
+                  onEdit={onOpenTeam && ((scope, draft, isNew) => onOpenTeam({ action: "edit", draft, isNew, scope, card: { ticketId: ticket.id, uuid: e.uuid } }))}
+                  onDismiss={() => dismissTeammate(e.uuid)}
+                  onOpenTeam={onOpenTeam && ((name) => onOpenTeam({ action: "open", name }))} />
+              )}
+              {e.huddle && (
+                <HuddleCard slug={slug} ticket={ticket} tickets={tickets} uuid={e.uuid} at={e.at} roster={e.huddle.roster} reason={e.huddle.reason} template={e.huddle.template}
+                  huddle={huddle} old={old} onOpen={() => onOpenHuddle?.()} onError={onError} />
               )}
               {e.mockups && (
                 <div className="chat-mockups">
@@ -637,7 +697,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const otherTasks = (ticket.waitingOn ?? []).filter((t) => !helperIds.has(t.id));
   const waitingHelpers = (ticket.waitingOn?.length ?? 0) - otherTasks.length;
   // Divider before the first block after the branch point (after all of them while nothing new was said yet).
-  const firstNew = bp ? blocks.findIndex((b) => !before(b.kind === "tools" ? b.items[0] : b.e, bp.at)) : -1;
+  const firstNew = bp ? blocks.findIndex((b) => !before(b.kind === "entry" ? b.e : b.items[0], bp.at)) : -1;
   const dividerAt = !bp || page === null || page.start > 0 && firstNew === 0 ? -1 : firstNew < 0 ? blocks.length : firstNew;
   const divider = bp && (
     <div key={`branch-${bp.at}`} className="branch-divider" role="separator">
@@ -694,7 +754,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           </div>
         )}
         {blocks.map((b, i) => {
-          const first = b.kind === "tools" ? b.items[0] : b.e;
+          const first = b.kind === "entry" ? b.e : b.items[0];
           return <Fragment key={first.uuid}>{i === dividerAt && divider}{renderBlock(b, before(first, bp?.at))}</Fragment>;
         })}
         {dividerAt === blocks.length && divider}
@@ -741,13 +801,9 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             <Markdown text={p.text} />
           </div>
         ))}
-        {queued.filter((q) => q.peer).map((q) => (
-          <div key={q.id} className="conv-msg peer in pending">
-            <div className="conv-head">
-              <b>{peerLabel("in", q.text.match(/<ckanban-context[^>]* from="([^"]*)"/)?.[1] ?? null)}</b>
-              <span className="muted small">{q.state === "queued" ? codex ? "queued · Codex reads this in its next turn" : "queued · Claude reads this at its next step" : `not sent · ${agentName} was stopped before reading it`}</span>
-            </div>
-            <Markdown text={q.text.split("<ckanban-context")[0].trim()} />
+        {queued.filter((q) => q.peer && HUDDLE_TAG.test(q.text)).map((q) => (
+          <HuddleDigest key={q.id} text={q.text.split("<ckanban-context")[0].trim()} pending onOpen={onOpenHuddle}
+            meta={<span className="muted small">{q.state === "queued" ? "queued · Claude reads this at its next step" : "not sent · Claude was stopped before reading it"}</span>}>
             {q.state === "unsent" && (
               <div className="queued-actions">
                 <button className="btn primary small" disabled={stopping}
@@ -756,32 +812,54 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                   onClick={() => api.discardQueued(slug, ticket.id, q.id).catch((e) => onError(e.message))}>Discard</button>
               </div>
             )}
-          </div>
+          </HuddleDigest>
         ))}
         {queued.filter((q) => !q.peer).map((q) => (
-          <div key={q.id} className={`conv-msg user pending${q.state === "unsent" ? " unsent" : ""}`}>
+          <div key={q.id} className={`conv-msg user pending${editable(q) ? " unsent" : ""}${editing?.id === q.id && editable(q) ? " editing" : ""}`}>
             <div className="conv-head">
               <b>You</b>
               <span className="muted small">{q.state === "queued" ? codex ? "queued · Codex reads this in its next turn" : "queued · Claude reads this at its next step" : `not sent · ${agentName} was stopped before reading it`}</span>
             </div>
-            <Markdown text={q.text} />
-            {q.state === "queued" && running && (
-              <div className="queued-actions">
-                <button className="btn small" disabled={stopping}
-                  onClick={() => api.sendQueuedNow(slug, ticket.id, q.id).catch((e) => onError(e.message))}>Send now</button>
-              </div>
-            )}
-            {q.state === "unsent" && (
-              <div className="queued-actions">
-                <button className="btn primary small" disabled={stopping}
-                  onClick={() => api.sendQueued(slug, ticket.id, q.id).catch((e) => onError(e.message))}>Send</button>
-                <button className="btn ghost small"
-                  onClick={() => api.discardQueued(slug, ticket.id, q.id).catch((e) => onError(e.message))}>Discard</button>
-              </div>
+            {editing?.id === q.id && editable(q) ? (
+              <>
+                <textarea className="queued-edit" rows={3} autoFocus value={editing.text}
+                  onChange={(e) => setEditing({ id: q.id, text: e.target.value })}
+                  onFocus={(e) => e.target.setSelectionRange(e.target.value.length, e.target.value.length)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      cancelEdit();
+                    } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                      e.preventDefault();
+                      saveEdit();
+                    }
+                  }} />
+                <div className="queued-actions">
+                  <button className="btn primary small" disabled={!editing.text.trim()} onClick={saveEdit}>Save</button>
+                  <button className="btn ghost small" onClick={cancelEdit}>Cancel</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <Markdown text={q.text} />
+                <div className="queued-actions">
+                  {q.state === "queued" && running && (
+                    <button className="btn small" disabled={stopping}
+                      onClick={() => api.sendQueuedNow(slug, ticket.id, q.id).catch((e) => onError(e.message))}>Send now</button>
+                  )}
+                  {editable(q) && <button className="btn small" onClick={() => setEditing({ id: q.id, text: q.text })}>Edit</button>}
+                  {q.state === "unsent" && (
+                    <button className="btn primary small" disabled={stopping}
+                      onClick={() => api.sendQueued(slug, ticket.id, q.id).catch((e) => onError(e.message))}>Send</button>
+                  )}
+                  {editable(q) && <button className="btn ghost small" onClick={() => discard(q.id)}>Discard</button>}
+                </div>
+              </>
             )}
           </div>
         ))}
-        {!running && ticket.error && !ticket.error.startsWith("corrupt") && (
+        {!running && ticket.recovery && <RecoveryBanner slug={slug} ticket={ticket} onError={onError} />}
+        {!running && !ticket.recovery && ticket.error && !ticket.error.startsWith("corrupt") && (
           <div className="banner error inline run-error" role="alert">
             <b>{agentName} stopped with an error</b>
             <pre>{ticket.error}</pre>

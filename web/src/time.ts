@@ -1,28 +1,4 @@
-import { useSyncExternalStore } from "react";
-
-// One shared ticker for every relative time on screen ("5m ago" keeps moving without a reload).
-let now = Date.now();
-const subs = new Set<() => void>();
-let timer: ReturnType<typeof setInterval> | null = null;
-function subscribeNow(fn: () => void) {
-  subs.add(fn);
-  timer ??= setInterval(() => {
-    now = Date.now();
-    subs.forEach((f) => f());
-  }, 30_000);
-  return () => {
-    subs.delete(fn);
-    if (!subs.size && timer) {
-      clearInterval(timer);
-      timer = null;
-    }
-  };
-}
-
-/** Re-renders the caller every 30s; use around timeAgo(). */
-export function useNow(): number {
-  return useSyncExternalStore(subscribeNow, () => now);
-}
+// Plain time helpers, no React, so tests can import them (the ticking hook is in useNow.ts).
 
 /** Time since `iso` as a running clock: "4:07", or "1:02:09" past an hour. */
 export function clock(iso: string, now: number): string {
@@ -45,6 +21,19 @@ export function timeAgo(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
+/** Waits older than this are marked in the Inbox. */
+export const OLD_WAIT_MS = 8 * 3600_000;
+
+/** How long something has waited since `iso`, coarse: "just now", "12m", "9h", "1d 4h". */
+export function waitedFor(iso: string, at = Date.now()): string {
+  const m = Math.max(0, Math.floor((at - new Date(iso).getTime()) / 60_000));
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return h % 24 ? `${Math.floor(h / 24)}d ${h % 24}h` : `${Math.floor(h / 24)}d`;
+}
+
 /** Short running time since `iso`: "45s", "3m", "1h 5m". */
 export function elapsed(iso: string, at = Date.now()): string {
   const s = Math.max(0, Math.floor((at - new Date(iso).getTime()) / 1000));
@@ -52,6 +41,14 @@ export function elapsed(iso: string, at = Date.now()): string {
   if (s < 3600) return `${Math.floor(s / 60)}m`;
   const m = Math.floor((s % 3600) / 60);
   return m ? `${Math.floor(s / 3600)}h ${m}m` : `${Math.floor(s / 3600)}h`;
+}
+
+/** Duration with seconds for live timers: "48s", "2m 14s", "1h 5m". */
+export function duration(fromIso: string, to = Date.now()): string {
+  const s = Math.max(0, Math.floor((to - new Date(fromIso).getTime()) / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
 export function timeUntil(iso: string): string {

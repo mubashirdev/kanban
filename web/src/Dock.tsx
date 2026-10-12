@@ -1,14 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type Profile, type QuickChat } from "./api";
+import { api, type Huddle, type Profile, type QuickChat } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FilesView } from "./FilesView";
+import { TeamTab, type HuddleSeed, type TeamRequest } from "./Team";
+import { brakeLabel, guestTickets, huddleCost, huddleTitle, members, quietLabel, roundTag, sortHuddles } from "./huddle";
 import { CloseIcon, RefreshIcon } from "./icons";
 import { TerminalView } from "./TerminalView";
+import { fullTime, timeAgo } from "./time";
+import { useNow } from "./useNow";
 import { toast } from "./toast";
 import { useFocusTrap, useLayer } from "./layers";
+import { costText } from "./usage";
 import { PHONE, useMediaQuery } from "./useMediaQuery";
 
-export type DockTab = "terminal" | "files" | "claude";
+export type DockTab = "terminal" | "files" | "claude" | "huddles" | "team";
 const TAB_KEY = "ckanban.dock.tab";
 const HEIGHT_KEY = "ckanban.dock.height";
 const MIN_HEIGHT = 140;
@@ -26,7 +31,7 @@ function store(key: string, value: string) {
   } catch {}
 }
 
-const TABS: [DockTab, string][] = [["terminal", "Terminal"], ["files", "Files"], ["claude", "Claude"]];
+const TABS: [DockTab, string][] = [["terminal", "Terminal"], ["files", "Files"], ["claude", "Claude"], ["huddles", "Huddles"], ["team", "Team"]];
 const isTab = (v: string | null): v is DockTab => TABS.some(([t]) => t === v);
 
 const clampHeight = (h: number) => Math.round(Math.max(MIN_HEIGHT, Math.min(window.innerHeight - 120, h)));
@@ -36,18 +41,27 @@ const clampHeight = (h: number) => Math.round(Math.max(MIN_HEIGHT, Math.min(wind
  * quick Claude chat (interactive `claude`, no ticket). Closing it only hides it; the shell and the chat
  * keep running on the server and reattach next time.
  */
-export default function Dock({ profile, pty, onClose, command, onCommandSent, tabRequest, onTabChange, onOpenTicket }: {
+export default function Dock({ profile, pty, onClose, command, onCommandSent, tabRequest, onTabChange, onOpenTicket, huddles = [], onOpenHuddle, openTicket = null, onStartHuddle }: {
   profile: Profile;
   pty: boolean;
   onClose: () => void;
   /** Typed into the shell and run (e.g. from Connections); `n` changes for each new request. */
   command?: { text: string; n: number } | null;
   onCommandSent?: () => void;
-  /** Switch to this tab (e.g. from a shortcut); `n` changes for each new request. */
-  tabRequest?: { tab: DockTab; n: number } | null;
+  /** Switch to this tab (e.g. from a shortcut); `n` changes for each new request. team: what the Team tab shows. */
+  tabRequest?: { tab: DockTab; n: number; team?: TeamRequest } | null;
   /** The visible tab, so the header buttons can show which one is open. */
   onTabChange?: (tab: DockTab) => void;
   onOpenTicket?: (id: string) => void;
+  /** The board's huddles (kept live by the App), for the Huddles tab. */
+  huddles?: Huddle[];
+  /** Open a ticket's Huddle tab. */
+  /** Open a ticket's Huddle tab; with huddleId, on that huddle (an earlier round). */
+  onOpenHuddle?: (ticketId: string, huddleId?: string) => void;
+  /** The ticket open in the drawer (the Team tab's Start huddle goes there). */
+  openTicket?: { id: string; title: string } | null;
+  /** The Team tab's Start huddle: a roster with a teammate, or a template. */
+  onStartHuddle?: (seed: HuddleSeed) => void;
 }) {
   const compact = useMediaQuery(`${PHONE}, (max-height: 500px)`);
   const dockRef = useRef<HTMLElement>(null);
@@ -69,6 +83,12 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
   const [chat, setChat] = useState<QuickChat | null>(null);
   const [makingTicket, setMakingTicket] = useState(false);
   const drag = useRef<{ y: number; h: number } | null>(null);
+  const liveCount = huddles.filter((h) => h.status === "live").length;
+  // The Team tab stays mounted once shown, so its editor and selection survive switching tabs.
+  const [teamSeen, setTeamSeen] = useState(false);
+  useEffect(() => {
+    if (tab === "team") setTeamSeen(true);
+  }, [tab]);
 
   useEffect(() => {
     store(TAB_KEY, tab);
@@ -149,7 +169,7 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
   };
 
   return (
-    <section ref={dockRef} className="dock" style={{ height }} aria-label="Terminal and files"
+    <section ref={dockRef} className="dock" style={{ height }} aria-label="Terminal, files and team"
       role={compact ? "dialog" : undefined} aria-modal={compact ? true : undefined} tabIndex={-1}>
       <div className="dock-resize" role="separator" aria-orientation="horizontal" aria-label="Resize panel" tabIndex={0}
         aria-valuenow={height} aria-valuemin={MIN_HEIGHT}
@@ -159,7 +179,10 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
         <div className="tabs" role="tablist" aria-label="Panel">
           {TABS.map(([id, label]) => (
             <button key={id} id={`dock-tab-${id}`} role="tab" aria-controls={`dock-pane-${id}`} tabIndex={tab === id ? 0 : -1}
-              aria-selected={tab === id} className={tab === id ? "active" : ""} onClick={() => setTab(id)} onKeyDown={(e) => onTabKey(e, id)}>{label}</button>
+              aria-selected={tab === id} className={tab === id ? "active" : ""} onClick={() => setTab(id)} onKeyDown={(e) => onTabKey(e, id)}>
+              {label}
+              {id === "huddles" && liveCount > 0 && <span className="tab-count ok" title={`${liveCount} live`}>{liveCount} live</span>}
+            </button>
           ))}
         </div>
         <div className="dock-context">
@@ -211,6 +234,16 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
         <div className="dock-pane" id="dock-pane-files" role="tabpanel" aria-labelledby="dock-tab-files" hidden={tab !== "files"}>
           {(tab === "files" || visited.has("files")) && <FilesView key={profile.slug} slug={profile.slug} refreshSignal={refresh} />}
         </div>
+        <div className="dock-pane" id="dock-pane-huddles" role="tabpanel" aria-labelledby="dock-tab-huddles" hidden={tab !== "huddles"}>
+          {tab === "huddles" && <HuddleList huddles={huddles} onOpen={onOpenHuddle} />}
+        </div>
+        <div className="dock-pane" id="dock-pane-team" role="tabpanel" aria-labelledby="dock-tab-team" hidden={tab !== "team"}>
+          {teamSeen && (
+            <TeamTab key={profile.slug} slug={profile.slug} boardName={profile.name} active={tab === "team"} openTicket={openTicket} onOpenHuddle={onOpenHuddle}
+              request={tabRequest?.tab === "team" && tabRequest.team ? { ...tabRequest.team, n: tabRequest.n } : null}
+              onStartHuddle={(seed) => onStartHuddle?.(seed)} />
+          )}
+        </div>
       </div>
       {confirmNewChat && (
         <ConfirmDialog title="Start a new chat?" confirmLabel="New chat" busyLabel="Starting…"
@@ -225,6 +258,49 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
         </ConfirmDialog>
       )}
     </section>
+  );
+}
+
+/** The Huddles tab: live and recent huddles on this board; a row opens that huddle in its host ticket's Huddle tab. */
+function HuddleList({ huddles, onOpen }: { huddles: Huddle[]; onOpen?: (ticketId: string, huddleId: string) => void }) {
+  const now = useNow();
+  const list = sortHuddles(huddles);
+  if (!list.length) {
+    return <div className="dock-huddles"><div className="empty">No huddles on this board yet. Start one from a ticket's Huddle tab.</div></div>;
+  }
+  return (
+    <div className="dock-huddles" role="list">
+      {list.map((h) => {
+        const agents = members(h).length;
+        const tickets = 1 + guestTickets(h).length;
+        const brake = brakeLabel(h);
+        const quiet = quietLabel(h, now);
+        const failed = members(h).filter((p) => p.status === "failed").length;
+        const forYou = h.status === "closed" ? 0 : h.forYou ?? 0;
+        const host = h.hostTitle ?? h.hostTicket;
+        const round = roundTag(huddles, h);
+        return (
+          <button key={h.id} role="listitem" className={`huddle-row ${h.status}${brake ? " brake" : quiet ? " quiet" : ""}`} onClick={() => onOpen?.(h.hostTicket, h.id)}
+            title={`Open ${round ? `${round.toLowerCase()} of ` : ""}the huddle of ${host}: ${huddleTitle(h)} · started ${fullTime(h.createdAt)}`}>
+            <span className="hr-dot" aria-label={brake ?? (quiet ? "quiet" : h.status)} />
+            <span className="hr-title">{host}{round && <span className="hr-round"> · {round}</span>}</span>
+            <span className="hr-flags">
+              {brake && <span className="hr-brake">Huddle · {brake}</span>}
+              {quiet && <span className="hr-quiet">all quiet · {quiet}</span>}
+              {failed > 0 && <span className="hb-failed">{failed} failed</span>}
+              {forYou > 0 && <span className="for-you-pill">{forYou} for you</span>}
+            </span>
+            <span className="hr-meta">
+              {agents} {agents === 1 ? "agent" : "agents"} · {h.status === "closed" ? "closed" : `${tickets} ${tickets === 1 ? "ticket" : "tickets"}`}
+            </span>
+            <time className="hr-meta" dateTime={h.updatedAt} title={`Last activity ${fullTime(h.updatedAt)} · ${h.seq} ${h.seq === 1 ? "message" : "messages"}`}>
+              {h.status === "live" ? `last msg ${timeAgo(h.updatedAt)}` : timeAgo(h.updatedAt)}
+            </time>
+            <span className="hr-meta" title="What the huddle's agents have spent">{costText(huddleCost(h))}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

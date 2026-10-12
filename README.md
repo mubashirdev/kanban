@@ -34,6 +34,18 @@ Local kanban board for [Claude Code](https://claude.com/claude-code). Drop a tic
 
 Columns: Backlog → Planning → Ready → In Progress → Review → Done.
 
+## What it does
+
+- 🤖 **Tickets run by headless Claude.** Move a card to Ready and a `claude -p` session works it in its own git worktree and branch, up to 5 at once per board.
+- 💬 **Planning chat.** Claude interviews you with a clickable question form, draws HTML mockups for UI work and proposes a clear ticket. *Apply & start work* is one click.
+- 🗺️ **Plans.** Split a big ticket into child tickets that run unattended in dependency order; Claude is only woken when one needs it.
+- 🗣️ **Huddles.** A team of Claude teammates (reviewer, QA, researcher, UX critic, facilitator, ...) discuss one ticket in a shared room, tag each other and pin findings, with a budget you set. While you're away, Claude starts a review huddle on its own before landing ⭐ Important or risky work.
+- ✅ **Review with PR checks.** See the diff, comment on lines, watch the PR's checks on the card, send failures back to Claude, or **Merge & done**.
+- 👥 **Team tab.** Your teammates, their prompts and the notes they've learned, for every board or just one.
+- ⌘ **`⌘K` everywhere.** Jump to any ticket on any board by title, description, result or PR number, or run any action.
+
+All data lives in plain files under `~/.claude-kanban/`.
+
 ## Install (macOS)
 
 You need [Claude Code](https://claude.com/claude-code) installed and logged in, plus `git`. For PRs, also install `gh` and run `gh auth login`.
@@ -72,6 +84,7 @@ Tickets that were **In Progress** when the Mac shut down or the service restarte
 ckanban update      # get the latest release (the board also shows a banner when one is out)
 ckanban restart     # restart the background service once active runs finish (--now: at once)
 ckanban open        # open the board
+ckanban remote on   # open the board from your phone over Tailscale (off / status too)
 ckanban uninstall   # stop and remove the service (your boards in ~/.claude-kanban stay)
 ```
 
@@ -194,12 +207,12 @@ Run from source as the daemon: `bun src/cli.ts install`.
 
 ### Releasing
 
-Bump `version` in `package.json`, then:
+Move the `## Unreleased` notes in [CHANGELOG.md](CHANGELOG.md) under `## [X.Y.Z] - <date>`, bump `version` in `package.json`, commit, then:
 
 ```bash
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
-GitHub Actions runs the tests, builds `ckanban-darwin-arm64` / `ckanban-darwin-x64` with the UI embedded, and publishes a GitHub Release. Users get it with `ckanban update`.
+GitHub Actions takes the release notes from that CHANGELOG section, runs the tests, builds `ckanban-darwin-arm64` / `ckanban-darwin-x64` with the UI embedded, and publishes a GitHub Release. Users get it with `ckanban update`.
 
 Design: `docs/superpowers/specs/2026-09-29-claude-kanban-design.md`.

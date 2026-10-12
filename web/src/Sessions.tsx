@@ -11,7 +11,8 @@ import { useLayer } from "./layers";
 import { Modal } from "./Modal";
 import { ReviewPanel } from "./ReviewPanel";
 import { sessionLabel } from "./SessionPicker";
-import { timeAgo, useNow } from "./time";
+import { timeAgo } from "./time";
+import { useNow } from "./useNow";
 import { toast } from "./toast";
 import { usePersistentState } from "./usePersistentState";
 

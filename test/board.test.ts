@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Board } from "../src/server/board";
+import { listCommands } from "../src/server/slash";
+import { Board, ConflictError, recoveryFor, SESSION_OPEN_MSG } from "../src/server/board";
 import { Bus } from "../src/server/events";
-import { run } from "../src/server/git";
+import { run, worktreeDir } from "../src/server/git";
 import { Store } from "../src/server/store";
 import type { Profile } from "../src/server/types";
 import { makeRepo, tempDir } from "./helpers";
@@ -126,6 +127,8 @@ beforeEach(() => {
   board = new Board(store, bus, { claudeBin: FAKE, isSessionLive: async (id) => liveSessions.has(id) });
   argsFile = join(tempDir("ck-args-"), "args.jsonl");
   process.env.FAKE_ARGS_FILE = argsFile;
+  // Fake claude saves its sessions here, so runs can resume them.
+  process.env.CLAUDE_CONFIG_DIR = tempDir("ck-claude-");
   process.env.FAKE_MODE = "ok";
   process.env.FAKE_PR = "https://github.com/x/y/pull/7";
 });
@@ -134,6 +137,7 @@ afterEach(async () => {
   // shutdown(), not stopAll(): stopping frees a slot and would start the next queued (slow) ticket.
   await board.shutdown();
   delete process.env.FAKE_MODE;
+  delete process.env.CLAUDE_CONFIG_DIR;
   delete process.env.FAKE_PR;
   delete process.env.FAKE_ARGS_FILE;
 }, 10000);
@@ -281,6 +285,72 @@ test("stop on an in_progress ticket with no live run clears it", async () => {
   expect(store.listComments("p", t.id).some((c) => c.text === "Run stopped by user.")).toBe(true);
 });
 
+test("a run stopped before its session was saved doesn't break the next runs", async () => {
+  await setup();
+  process.env.FAKE_MODE = "slow";
+  process.env.FAKE_NO_SAVE = "1";
+  try {
+    const t = await board.createTicket("p", { title: "x", body: "", status: "ready", mode: "interview" });
+    await Bun.sleep(500);
+    board.stop("p", t.id);
+    await board.whenIdle();
+  } finally {
+    delete process.env.FAKE_NO_SAVE;
+  }
+  process.env.FAKE_MODE = "ok";
+  const t = store.listTickets("p")[0];
+  // Moving the card to Planning starts the interview, in a new session.
+  await board.updateTicket("p", t.id, { status: "planning" });
+  await board.whenIdle();
+  const calls = readArgs();
+  expect(calls.length).toBe(2);
+  expect(calls[1].args).toContain("--session-id");
+  expect(calls[1].args).not.toContain("--resume");
+  expect(calls[1].args[calls[1].args.indexOf("--permission-mode") + 1]).toBe("plan");
+  const got = store.getTicket("p", t.id)!;
+  expect(got.error).toBeNull();
+  expect(got.status).toBe("planning");
+  // That session was saved, so the next message resumes it.
+  await board.chat("p", t.id, "more");
+  await board.whenIdle();
+  expect(readArgs()[2].args).toContain("--resume");
+}, 15000);
+
+test("a ticket stuck on a missing session heals: the next run starts a new session", async () => {
+  await setup();
+  const t = store.createTicket("p", { title: "x", body: "", status: "review" });
+  // Saved by an older version: marked started, but Claude never saved the session.
+  store.updateTicket("p", t.id, { sessionId: crypto.randomUUID(), sessionStarted: true, runCount: 1, error: "No conversation found with session ID: x", outcome: "failed" });
+  await board.chat("p", t.id, "go on");
+  await board.whenIdle();
+  const calls = readArgs();
+  expect(calls.length).toBe(1);
+  expect(calls[0].args).toContain("--session-id");
+  expect(calls[0].args).not.toContain("--resume");
+  const got = store.getTicket("p", t.id)!;
+  expect(got.error).toBeNull();
+  expect(store.listComments("p", t.id).some((c) => c.text.startsWith("Run failed"))).toBe(false);
+});
+
+test("Claude not finding a session it should have: retried once in a new session", async () => {
+  await setup();
+  const t = await board.createTicket("p", { title: "x", body: "", status: "ready" });
+  await board.whenIdle();
+  const old = store.getTicket("p", t.id)!.sessionId;
+  process.env.FAKE_MODE = "nosession";
+  await board.chat("p", t.id, "go on");
+  await board.whenIdle();
+  const calls = readArgs();
+  expect(calls.length).toBe(3);
+  expect(calls[1].args).toContain("--resume");
+  expect(calls[2].args).toContain("--session-id");
+  const got = store.getTicket("p", t.id)!;
+  expect(got.sessionId).not.toBe(old);
+  expect(calls[2].args).toContain(got.sessionId!);
+  expect(got.error).toBeNull();
+  expect(store.listComments("p", t.id).some((c) => c.text.startsWith("Run failed"))).toBe(false);
+});
+
 test("stop with nothing running is a no-op", async () => {
   await setup();
   const t = store.createTicket("p", { title: "x", body: "", status: "backlog" });
@@ -307,8 +377,157 @@ test("non-git profile runs in profile path without worktree", async () => {
   expect(got.worktree).toBeNull();
   expect(readArgs()[0].cwd).toBe(p.path);
   const prompt = readArgs()[0].prompt;
-  expect(prompt).toContain("NOT a git repository");
+  expect(prompt).toContain("no version history");
+  expect(prompt).not.toContain('report status "blocked"');
 });
+
+test("tickets that edit the folder in place run one at a time; a waiting card says why", async () => {
+  await setup({ git: false, maxParallel: 3 });
+  process.env.FAKE_MODE = "slow";
+  const a = await board.createTicket("p", { title: "a", body: "", status: "ready" });
+  const b = await board.createTicket("p", { title: "b", body: "", status: "ready" });
+  for (let i = 0; i < 100 && readArgs().length < 1; i++) await Bun.sleep(50);
+  await Bun.sleep(300);
+  expect(board.isRunning("p", a.id)).toBe(true);
+  expect(board.isRunning("p", b.id)).toBe(false);
+  expect(board.folderWait("p", store.getTicket("p", b.id)!)).toBe(true);
+  expect(board.folderWait("p", store.getTicket("p", a.id)!)).toBe(false);
+  process.env.FAKE_MODE = "ok";
+  board.stop("p", a.id);
+  await board.whenIdle();
+  expect(store.getTicket("p", b.id)!.outcome).toBe("done");
+  const calls = readArgs();
+  expect(calls.length).toBe(2);
+  expect(calls[1].cwd).toBe(calls[0].cwd);
+}, 20000);
+
+test("a reply that would edit the folder while another ticket does waits for it", async () => {
+  await setup({ git: false, maxParallel: 3 });
+  const a = await board.createTicket("p", { title: "a", body: "", status: "ready" });
+  await board.whenIdle();
+  process.env.FAKE_MODE = "slow";
+  const b = await board.createTicket("p", { title: "b", body: "", status: "ready" });
+  await Bun.sleep(500);
+  expect(board.isRunning("p", b.id)).toBe(true);
+  const waiting = await board.chat("p", a.id, "one more change");
+  expect(board.isRunning("p", a.id)).toBe(false);
+  expect(waiting.lastActivity).toBe("waiting: another ticket is using the folder");
+  expect(board.folderWait("p", waiting)).toBe(true);
+  process.env.FAKE_MODE = "ok";
+  board.stop("p", b.id);
+  await board.whenIdle();
+  expect(readArgs().at(-1)!.prompt).toContain("one more change");
+}, 20000);
+
+test("a reply to another session (a huddle) also waits for the folder, without moving the card", async () => {
+  await setup({ git: false, maxParallel: 3 });
+  const a = await board.createTicket("p", { title: "a", body: "", status: "ready" });
+  await board.whenIdle();
+  process.env.FAKE_MODE = "slow";
+  const b = await board.createTicket("p", { title: "b", body: "", status: "ready" });
+  await Bun.sleep(500);
+  expect(board.isRunning("p", b.id)).toBe(true);
+  const waiting = await board.chat("p", a.id, "message from a huddle", { peer: true });
+  expect(board.isRunning("p", a.id)).toBe(false);
+  expect(waiting.status).toBe("review");
+  expect(board.folderWait("p", waiting)).toBe(true);
+  process.env.FAKE_MODE = "ok";
+  board.stop("p", b.id);
+  await board.whenIdle();
+  expect(readArgs().at(-1)!.prompt).toContain("message from a huddle");
+  expect(store.getTicket("p", a.id)!.status).toBe("review");
+  expect(store.getTicket("p", a.id)!.slotWait ?? null).toBeNull();
+}, 20000);
+
+test("a board with no Workspace setting gives each ticket a worktree", async () => {
+  const p = await setup();
+  expect(p.workspace).toBeUndefined();
+  const t = await board.createTicket("p", { title: "Default", body: "", status: "ready" });
+  await board.whenIdle();
+  const got = store.getTicket("p", t.id)!;
+  expect(got.worktree).toBe(worktreeDir(p, t.id));
+  expect(got.branch).toStartWith(`ck/${t.id}-`);
+  expect(readArgs()[0].cwd).toBe(got.worktree!);
+});
+
+test("Work in the project folder: no worktree or branch, the folder's HEAD is recorded, no branch or PR instructions", async () => {
+  const p = await setup();
+  store.saveProfile({ ...p, workspace: "folder" });
+  const head = (await run(["git", "rev-parse", "HEAD"], p.path)).stdout.trim();
+  const t = await board.createTicket("p", { title: "In folder", body: "", status: "ready" });
+  await board.whenIdle();
+  const got = store.getTicket("p", t.id)!;
+  expect(got.worktree).toBeNull();
+  expect(got.branch).toBeNull();
+  expect(got.baseSha).toBe(head);
+  expect(existsSync(worktreeDir(p, t.id))).toBe(false);
+  expect((await run(["git", "branch", "--list", "ck/*"], p.path)).stdout.trim()).toBe("");
+  const { cwd, prompt } = readArgs()[0];
+  expect(cwd).toBe(p.path);
+  expect(prompt).toContain("Don't create or switch branches");
+  expect(prompt).toContain("to the current branch");
+  expect(prompt).toContain("uncommitted changes you didn't make");
+  expect(prompt).not.toContain("gh pr create");
+  expect(prompt).not.toContain("push the branch");
+  expect(prompt).not.toContain("feature branch");
+  expect(prompt).not.toContain("merge --no-edit");
+});
+
+test("Work in the project folder runs tickets one at a time", async () => {
+  const p = await setup({ maxParallel: 3 });
+  store.saveProfile({ ...p, workspace: "folder" });
+  process.env.FAKE_MODE = "slow";
+  const a = await board.createTicket("p", { title: "a", body: "", status: "ready" });
+  const b = await board.createTicket("p", { title: "b", body: "", status: "ready" });
+  for (let i = 0; i < 100 && readArgs().length < 1; i++) await Bun.sleep(50);
+  await Bun.sleep(300);
+  expect(board.isRunning("p", a.id)).toBe(true);
+  expect(board.isRunning("p", b.id)).toBe(false);
+  expect(board.folderWait("p", store.getTicket("p", b.id)!)).toBe(true);
+  process.env.FAKE_MODE = "ok";
+  board.stop("p", a.id);
+  await board.whenIdle();
+  expect(store.getTicket("p", b.id)!.outcome).toBe("done");
+  expect(readArgs().map((c) => c.cwd)).toEqual([p.path, p.path]);
+}, 20000);
+
+test("switching Workspace affects new tickets only: existing worktrees stay, switching back brings worktrees back", async () => {
+  const p = await setup({ maxParallel: 3 });
+  const a = await board.createTicket("p", { title: "a", body: "", status: "ready" });
+  await board.whenIdle();
+  const wt = store.getTicket("p", a.id)!.worktree!;
+  expect(wt).toBe(worktreeDir(p, a.id));
+  store.saveProfile({ ...p, workspace: "folder" });
+  // The worktree ticket isn't one that edits the folder, so it doesn't hold folder tickets back.
+  expect(board.runsInFolder("p", store.getTicket("p", a.id)!)).toBe(false);
+  await board.chat("p", a.id, "one more change");
+  await board.whenIdle();
+  expect(readArgs().at(-1)!.cwd).toBe(wt);
+  expect(store.getTicket("p", a.id)!.worktree).toBe(wt);
+  const b = await board.createTicket("p", { title: "b", body: "", status: "ready" });
+  await board.whenIdle();
+  expect(store.getTicket("p", b.id)!.worktree).toBeNull();
+  expect(readArgs().at(-1)!.cwd).toBe(p.path);
+  store.saveProfile({ ...p, workspace: "worktree" });
+  const c = await board.createTicket("p", { title: "c", body: "", status: "ready" });
+  await board.whenIdle();
+  expect(store.getTicket("p", c.id)!.worktree).toBe(worktreeDir(p, c.id));
+  // b already worked in the folder: its session belongs there, so it stays.
+  await board.chat("p", b.id, "again");
+  await board.whenIdle();
+  expect(readArgs().at(-1)!.cwd).toBe(p.path);
+  expect(store.getTicket("p", b.id)!.worktree).toBeNull();
+}, 20000);
+
+test("tickets with worktrees of their own still run side by side", async () => {
+  await setup({ maxParallel: 3 });
+  process.env.FAKE_MODE = "slow";
+  const a = await board.createTicket("p", { title: "a", body: "", status: "ready" });
+  const b = await board.createTicket("p", { title: "b", body: "", status: "ready" });
+  await Bun.sleep(1500);
+  expect(board.isRunning("p", a.id) && board.isRunning("p", b.id)).toBe(true);
+  expect(board.folderWait("p", store.getTicket("p", b.id)!)).toBe(false);
+}, 20000);
 
 test("repo with no commits runs in the folder with a notice, then worktrees once it has a commit", async () => {
   const p = await setup({ git: false });
@@ -378,6 +597,116 @@ test("moving to done removes clean worktree", async () => {
   await board.whenIdle();
   const wt = store.getTicket("p", t.id)!.worktree!;
   await board.updateTicket("p", t.id, { status: "done" });
+  expect(existsSync(wt)).toBe(false);
+  expect(store.getTicket("p", t.id)!.worktree).toBeNull();
+});
+
+async function doneAndBack(id: string) {
+  await board.updateTicket("p", id, { status: "done" });
+  expect(store.getTicket("p", id)!.worktree).toBeNull();
+  await board.updateTicket("p", id, { status: "ready" });
+  await board.whenIdle();
+}
+
+test("a ticket moved back from done gets its worktree back on its branch and resumes its session", async () => {
+  const p = await setup();
+  const t = await board.createTicket("p", { title: "Reopen", body: "", status: "ready" });
+  await board.whenIdle();
+  const first = store.getTicket("p", t.id)!;
+  await doneAndBack(t.id);
+  const got = store.getTicket("p", t.id)!;
+  expect(got.worktree).toBe(worktreeDir(p, t.id));
+  expect(existsSync(got.worktree!)).toBe(true);
+  expect(got.branch).toBe(first.branch);
+  expect((await run(["git", "branch", "--show-current"], got.worktree!)).stdout.trim()).toBe(first.branch!);
+  const call = readArgs().at(-1)!;
+  expect(call.cwd).toBe(got.worktree!);
+  expect(call.args).toContain("--resume");
+  expect(call.args).toContain(first.sessionId!);
+  expect(got.outcome).toBe("done");
+});
+
+test("a reopened ticket whose branch was renamed takes the renamed branch", async () => {
+  const p = await setup();
+  const t = await board.createTicket("p", { title: "Rename", body: "", status: "ready" });
+  await board.whenIdle();
+  const first = store.getTicket("p", t.id)!;
+  await board.updateTicket("p", t.id, { status: "done" });
+  await run(["git", "branch", "-m", first.branch!, `ck/${t.id}-renamed`], p.path);
+  await board.updateTicket("p", t.id, { status: "ready" });
+  await board.whenIdle();
+  const got = store.getTicket("p", t.id)!;
+  expect(got.branch).toBe(`ck/${t.id}-renamed`);
+  expect(got.worktree).toBe(worktreeDir(p, t.id));
+  expect(got.notice ?? null).toBeNull();
+});
+
+test("a reopened ticket whose branch is gone starts again from base with a notice", async () => {
+  const p = await setup();
+  const t = await board.createTicket("p", { title: "Gone", body: "", status: "ready" });
+  await board.whenIdle();
+  const first = store.getTicket("p", t.id)!;
+  await board.updateTicket("p", t.id, { status: "done" });
+  await run(["git", "branch", "-D", first.branch!], p.path);
+  await board.updateTicket("p", t.id, { status: "ready" });
+  await board.whenIdle();
+  const got = store.getTicket("p", t.id)!;
+  expect(got.worktree).toBe(worktreeDir(p, t.id));
+  expect(got.branch).toBe(first.branch);
+  expect(got.notice).toContain("was not found");
+  expect(readArgs().at(-1)!.cwd).toBe(got.worktree!);
+});
+
+test("a ticket that ran in the project folder keeps running there", async () => {
+  const p = await setup();
+  const t = await board.createTicket("p", { title: "In place", body: "", status: "backlog" });
+  store.updateTicket("p", t.id, { runCount: 1, sessionStarted: true });
+  await board.updateTicket("p", t.id, { status: "ready" });
+  await board.whenIdle();
+  const got = store.getTicket("p", t.id)!;
+  expect(got.worktree).toBeNull();
+  expect(readArgs().at(-1)!.cwd).toBe(p.path);
+});
+
+test("startup sweep removes worktrees of done and deleted tickets, keeps dirty and active ones", async () => {
+  const p = await setup({ maxParallel: 4 });
+  const mk = async (title: string) => {
+    const t = await board.createTicket("p", { title, body: "", status: "ready" });
+    await board.whenIdle();
+    return store.getTicket("p", t.id)!;
+  };
+  const done = await mk("Done");
+  const dirty = await mk("Dirty");
+  const review = await mk("Review");
+  const deleted = await mk("Deleted");
+  // Orphans: Done tickets whose folder outlived the cleanup, and a folder whose ticket is gone.
+  store.updateTicket("p", done.id, { status: "done", worktree: null });
+  writeFileSync(join(dirty.worktree!, "wip.txt"), "wip\n");
+  store.updateTicket("p", dirty.id, { status: "done" });
+  store.deleteTicket("p", deleted.id);
+  // A worktree outside the board's folder is never touched.
+  const outside = join(tempDir("ck-outside-"), "wt");
+  await run(["git", "worktree", "add", "-q", "-b", "other", outside, "main"], p.path);
+
+  await board.sweepWorktrees();
+  expect(existsSync(done.worktree!)).toBe(false);
+  expect(existsSync(deleted.worktree!)).toBe(false);
+  expect(existsSync(dirty.worktree!)).toBe(true);
+  expect(store.getTicket("p", dirty.id)!.worktree).toBe(dirty.worktree);
+  expect(existsSync(review.worktree!)).toBe(true);
+  expect(existsSync(outside)).toBe(true);
+  // Branches stay: they are the undo.
+  expect((await run(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${done.branch}`], p.path)).code).toBe(0);
+  expect((await run(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${deleted.branch}`], p.path)).code).toBe(0);
+}, 20000);
+
+test("startup sweep clears the worktree of a done ticket once it is clean", async () => {
+  await setup();
+  const t = await board.createTicket("p", { title: "Later", body: "", status: "ready" });
+  await board.whenIdle();
+  const wt = store.getTicket("p", t.id)!.worktree!;
+  store.updateTicket("p", t.id, { status: "done" });
+  await board.sweepWorktrees();
   expect(existsSync(wt)).toBe(false);
   expect(store.getTicket("p", t.id)!.worktree).toBeNull();
 });
@@ -793,6 +1122,65 @@ test("Stop on a reply waiting for a slot puts the card back and keeps the messag
   expect(readArgs().some((c) => c.prompt?.startsWith("go on with it"))).toBe(false);
 }, 15000);
 
+test("a reply waiting for a slot can be edited; Claude gets the edited text", async () => {
+  await setup({ maxParallel: 1 });
+  process.env.FAKE_MODE = "slow";
+  const a = await board.createTicket("p", { title: "a", body: "", status: "ready" });
+  const r = await board.createTicket("p", { title: "r", body: "", status: "review" });
+  await Bun.sleep(300);
+  await board.chat("p", r.id, "go on with it");
+  const [msg] = store.getTicket("p", r.id)!.queued!;
+  expect(() => board.editQueued("p", r.id, msg.id, "  ")).toThrow(/empty/);
+  board.editQueued("p", r.id, msg.id, "go on, and add a test");
+  expect(store.getTicket("p", r.id)!.queued).toMatchObject([{ id: msg.id, text: "go on, and add a test", state: "queued" }]);
+
+  board.stop("p", a.id);
+  await Bun.sleep(1000);
+  expect(board.isRunning("p", r.id)).toBe(true);
+  expect(readArgs().at(-1)!.prompt.startsWith("go on, and add a test")).toBe(true);
+  // Now it is Claude's prompt: too late to change it.
+  expect(() => board.editQueued("p", r.id, msg.id, "other")).toThrow();
+}, 15000);
+
+test("discarding the only reply waiting for a slot puts the card back", async () => {
+  await setup({ maxParallel: 1 });
+  process.env.FAKE_MODE = "slow";
+  await board.createTicket("p", { title: "a", body: "", status: "ready" });
+  const r = await board.createTicket("p", { title: "r", body: "", status: "review" });
+  await Bun.sleep(300);
+  await board.chat("p", r.id, "go on with it");
+  const [msg] = store.getTicket("p", r.id)!.queued!;
+  const got = board.discardQueued("p", r.id, msg.id);
+  expect(got).toMatchObject({ status: "review", slotWait: null, queued: [] });
+}, 15000);
+
+test("a message steered into a running Claude can't be edited; an unsent one can", async () => {
+  await setup();
+  process.env.FAKE_MODE = "slow";
+  const t = await board.createTicket("p", { title: "x", body: "", status: "ready" });
+  await Bun.sleep(400);
+  await board.chat("p", t.id, "first");
+  const [msg] = store.getTicket("p", t.id)!.queued!;
+  expect(() => board.editQueued("p", t.id, msg.id, "changed")).toThrow(ConflictError);
+  expect(() => board.discardQueued("p", t.id, msg.id)).toThrow(ConflictError);
+  board.stop("p", t.id);
+  await board.whenIdle();
+  expect(store.getTicket("p", t.id)!.queued).toMatchObject([{ id: msg.id, state: "unsent" }]);
+  board.editQueued("p", t.id, msg.id, "first, fixed");
+  process.env.FAKE_MODE = "ok";
+  await board.sendQueued("p", t.id, msg.id);
+  await board.whenIdle();
+  expect(readArgs().at(-1)!.prompt.startsWith("first, fixed")).toBe(true);
+  expect(() => board.editQueued("p", t.id, "nope", "x")).toThrow(/not found/);
+}, 15000);
+
+test("a peer message waiting for a slot can't be edited", async () => {
+  await setup();
+  const t = await board.createTicket("p", { title: "x", body: "", status: "review" });
+  store.updateTicket("p", t.id, { queued: [{ id: "m1", text: "from a peer", at: new Date().toISOString(), state: "queued", peer: true }] });
+  expect(() => board.editQueued("p", t.id, "m1", "changed")).toThrow(ConflictError);
+});
+
 test("after a restart, waiting replies still respect maxParallel", async () => {
   await setup({ maxParallel: 1 });
   process.env.FAKE_MODE = "slow";
@@ -916,6 +1304,8 @@ test("planning-only message in Review: Claude marks it and the card moves to Pla
   const got = store.getTicket("p", t.id)!;
   expect(got.status).toBe("planning");
   expect(got.outcome).toBeNull();
+  // The reply's summary is still recorded, like any other reply.
+  expect(store.listComments("p", t.id).at(-1)).toMatchObject({ author: "ai", text: "fake done" });
   const prompt = systemPrompt(readArgs()[1]);
   expect(prompt).toContain('<ckanban-move to="planning"/>');
 });
@@ -1231,7 +1621,7 @@ test("branchTicket of a ticket that ran in place stays in the project folder", a
     const s = store.getTicket("p", src.id)!;
     fakeSession(configDir, p.path, s.sessionId!, "hi");
     const { ticket: b, warning } = await board.branchTicket("p", src.id);
-    expect(warning).toBeNull();
+    expect(warning).toContain("no version history");
     expect(b.worktree).toBeNull();
     expect(b.branch).toBeNull();
     expect(existsSync(join(configDir, "projects", p.path.replace(/[^a-zA-Z0-9]/g, "-"), `${b.sessionId}.jsonl`))).toBe(true);
@@ -1312,4 +1702,187 @@ test("cleanup command runs in the worktree before it is removed", async () => {
   await board.updateTicket("p", t.id, { status: "done" });
   expect(existsSync(wt)).toBe(false);
   expect(readFileSync(marker, "utf8").trim()).toBe(wt);
+});
+
+/** A user skill in the fake Claude config dir: `/echoargs` then runs as a slash command. */
+function userSkill(name: string) {
+  const dir = join(process.env.CLAUDE_CONFIG_DIR!, "skills", name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: Echo\n---\nSay $ARGUMENTS`);
+}
+
+test("bundled Claude Code skills from a run's init event are kept for every ticket", async () => {
+  await setup();
+  process.env.FAKE_INIT_SKILLS = "simplify,code-review";
+  try {
+    await board.createTicket("p", { title: "x", body: "", status: "ready" });
+    await board.whenIdle();
+    const other = await board.createTicket("p", { title: "y", body: "", status: "backlog" });
+    expect(listCommands(store.getProfile("p")!.path, { fresh: true }).find((c) => c.name === "simplify")).toMatchObject({ kind: "skill", source: "claude" });
+    // Saved, so a new board (a daemon restart) still has them.
+    expect(JSON.parse(readFileSync(join(store.root, "claude-commands.json"), "utf8")).bundledSkills).toEqual(["code-review", "simplify"]);
+  } finally {
+    delete process.env.FAKE_INIT_SKILLS;
+  }
+});
+
+// ---- One-click recovery: Start fresh session / Take over here ----
+
+test("recoveryFor: lost session and open-in-terminal errors get a fix, others don't", () => {
+  expect(recoveryFor("No conversation found with session ID: abc")).toBe("session_missing");
+  expect(recoveryFor(SESSION_OPEN_MSG)).toBe("session_open");
+  expect(recoveryFor("claude exited with code 1")).toBeNull();
+  expect(recoveryFor(null)).toBeNull();
+});
+
+test("a linked ticket's lost session shows Start fresh session, which runs a new session in the same folder", async () => {
+  const p = await setup();
+  const t = await board.createTicket("p", { title: "x", body: "the task", status: "review" });
+  const old = "11111111-2222-3333-4444-555555555555";
+  await board.linkSession("p", t.id, old);
+  store.addComment("p", t.id, "user", "please also do Y");
+  process.env.FAKE_MODE = "nosession";
+  await board.updateTicket("p", t.id, { status: "ready" });
+  await board.whenIdle();
+  let got = store.getTicket("p", t.id)!;
+  expect(got.outcome).toBe("failed");
+  expect(recoveryFor(got.error)).toBe("session_missing");
+
+  process.env.FAKE_MODE = "ok";
+  board.startFresh("p", t.id);
+  await board.whenIdle();
+  got = store.getTicket("p", t.id)!;
+  expect(got.sessionId).not.toBe(old);
+  expect(got.workdir).toBe(p.path);
+  expect(got.freshSession).toBe(false);
+  expect(got.outcome).toBe("done");
+  expect(got.error).toBeNull();
+  const call = readArgs().at(-1)!;
+  expect(call.args).toContain("--session-id");
+  expect(call.args).toContain(got.sessionId!);
+  expect(call.cwd).toBe(p.path);
+  expect(call.prompt).toContain("new Claude session");
+  expect(call.prompt).toContain("the task");
+  expect(call.prompt).toContain("please also do Y");
+  expect(call.prompt).toContain("git log --oneline main..HEAD");
+  expect(store.listComments("p", t.id).some((c) => c.author === "ai" && c.text.startsWith("Started a fresh session"))).toBe(true);
+});
+
+test("Start fresh session keeps the worktree and branch and hands Claude the last result", async () => {
+  await setup();
+  const t = await board.createTicket("p", { title: "x", body: "", status: "ready" });
+  await board.whenIdle();
+  const before = store.getTicket("p", t.id)!;
+  store.updateTicket("p", t.id, { error: "No conversation found with session ID: x", outcome: "failed" });
+  board.startFresh("p", t.id);
+  await board.whenIdle();
+  const got = store.getTicket("p", t.id)!;
+  expect(got.worktree).toBe(before.worktree);
+  expect(got.branch).toBe(before.branch);
+  expect(got.sessionId).not.toBe(before.sessionId);
+  const call = readArgs().at(-1)!;
+  expect(call.cwd).toBe(before.worktree!);
+  expect(call.args).toContain("--session-id");
+  expect(call.prompt).toContain("# Last result\nfake done");
+  // The next run resumes the new session like any other.
+  await board.chat("p", t.id, "more");
+  await board.whenIdle();
+  expect(readArgs().at(-1)!.args).toContain("--resume");
+}, 15000);
+
+test("Take over here closes the session in the board's terminal and the run resumes", async () => {
+  let closed = 0;
+  board = new Board(store, bus, {
+    claudeBin: FAKE,
+    isSessionLive: async (s) => liveSessions.has(s),
+    findOwnedSession: async (s) => (liveSessions.has(s) ? { pid: 1, close: async () => (closed++, liveSessions.delete(s), true) } : null),
+  });
+  await setup();
+  const t = await board.createTicket("p", { title: "x", body: "", status: "ready" });
+  await board.whenIdle();
+  const id = store.getTicket("p", t.id)!.sessionId!;
+  liveSessions.add(id);
+  await board.updateTicket("p", t.id, { status: "ready" });
+  await board.whenIdle();
+  expect(recoveryFor(store.getTicket("p", t.id)!.error)).toBe("session_open");
+  expect(readArgs().length).toBe(1);
+
+  const r = await board.takeOver("p", t.id);
+  expect(r.external).toBe(false);
+  await board.whenIdle();
+  expect(closed).toBe(1);
+  const got = store.getTicket("p", t.id)!;
+  expect(got.outcome).toBe("done");
+  expect(got.sessionId).toBe(id);
+  expect(readArgs().at(-1)!.args).toContain("--resume");
+  expect(store.listComments("p", t.id).some((c) => c.text.startsWith("Took over the session: closed it"))).toBe(true);
+});
+
+test("Take over here can't close an external terminal: nothing changes and the UI offers a fresh session", async () => {
+  const id = "11111111-2222-3333-4444-555555555555";
+  board = new Board(store, bus, { claudeBin: FAKE, isSessionLive: async (s) => liveSessions.has(s), findOwnedSession: async () => null });
+  await setup();
+  const t = await board.createTicket("p", { title: "x", body: "", status: "review" });
+  await board.linkSession("p", t.id, id);
+  liveSessions.add(id);
+  await board.updateTicket("p", t.id, { status: "ready" });
+  await board.whenIdle();
+  const r = await board.takeOver("p", t.id);
+  expect(r.external).toBe(true);
+  await board.whenIdle();
+  expect(readArgs().length).toBe(0);
+  const got = store.getTicket("p", t.id)!;
+  expect(got.status).toBe("review");
+  expect(recoveryFor(got.error)).toBe("session_open");
+  // Start fresh session works around it: a new session, so the open terminal doesn't block the run.
+  board.startFresh("p", t.id);
+  await board.whenIdle();
+  expect(store.getTicket("p", t.id)!.outcome).toBe("done");
+  expect(readArgs().at(-1)!.args).toContain("--session-id");
+});
+
+test("recovery actions refuse while Claude is working on the ticket", async () => {
+  await setup();
+  process.env.FAKE_MODE = "slow";
+  const t = await board.createTicket("p", { title: "x", body: "", status: "ready" });
+  await Bun.sleep(50);
+  expect(() => board.startFresh("p", t.id)).toThrow(ConflictError);
+  await expect(board.takeOver("p", t.id)).rejects.toThrow(ConflictError);
+});
+
+test("a run stops at its spending cap, waits blocked, and Continue with +$Y resumes it with that cap", async () => {
+  const p = await setup();
+  store.saveProfile({ ...p, runCapUsd: 0.05 });
+  process.env.FAKE_MODE = "budget";
+  const t = await board.createTicket("p", { title: "Capped", body: "desc", status: "ready" });
+  await board.whenIdle();
+  let got = store.getTicket("p", t.id)!;
+  expect(readArgs()[0].args.join(" ")).toContain("--max-budget-usd 0.05");
+  expect(got).toMatchObject({ status: "review", outcome: "blocked", error: "Stopped at $0.05 cap", capHit: { capUsd: 0.05 } });
+  expect(store.listComments("p", t.id).at(-1)!.text).toStartWith("Stopped at $0.05 cap");
+
+  process.env.FAKE_MODE = "ok";
+  await board.continueAfterCap("p", t.id, 0.5);
+  await board.whenIdle();
+  got = store.getTicket("p", t.id)!;
+  const call = readArgs().at(-1)!;
+  expect(call.args).toContain("--resume");
+  expect(call.args.join(" ")).toContain("--max-budget-usd 0.5");
+  expect(got).toMatchObject({ outcome: "done", capHit: null, capNextUsd: null });
+  await expect(board.continueAfterCap("p", t.id, 0)).rejects.toThrow("positive");
+});
+
+test("a ticket's own cap overrides the board's; 0 runs without one", async () => {
+  const p = await setup();
+  store.saveProfile({ ...p, runCapUsd: 5 });
+  const a = await board.createTicket("p", { title: "Own cap", body: "desc", status: "backlog" });
+  await board.updateTicket("p", a.id, { runCapUsd: 2 });
+  await board.updateTicket("p", a.id, { status: "ready" });
+  await board.whenIdle();
+  expect(readArgs().at(-1)!.args.join(" ")).toContain("--max-budget-usd 2");
+  const b = await board.createTicket("p", { title: "No cap", body: "desc", status: "backlog" });
+  await board.updateTicket("p", b.id, { runCapUsd: 0 });
+  await board.updateTicket("p", b.id, { status: "ready" });
+  await board.whenIdle();
+  expect(readArgs().at(-1)!.args).not.toContain("--max-budget-usd");
 });

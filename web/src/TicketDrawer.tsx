@@ -1,22 +1,31 @@
 import { ReviewPanel } from "./ReviewPanel";
 import { TicketMetadata } from "./TicketMetadata";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, COLUMNS, safeHref, startWorkTarget, subscribe, type ClaudeSession, type Profile, type Status, type Ticket } from "./api";
 import { outcomeBadge } from "./Card";
+import { CapActions } from "./CapActions";
+import { capLabel, capWait } from "./capText";
+import { LimitActions } from "./LimitActions";
+import { StallActions, stallWait } from "./StallActions";
+import { limitHint, limitLabel, limitWait } from "./limitText";
 import { branchTicket } from "./branch";
 import { BugReportDialog } from "./BugReportDialog";
 import { Changes, useTicketDiff } from "./Changes";
 import { Chat, useStop } from "./Chat";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { DescriptionEditor, useDescriptionCommands } from "./DescriptionEditor";
 import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronUpIcon, CloseIcon, ExternalIcon, FileTextIcon, LinkIcon, SparkIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
 import { useFocusTrap, useLayer } from "./layers";
-import { complete, PlanPanel, PlanSummary } from "./PlanPanel";
+import { isTyping, nextStep, panelStep } from "./keynav";
+import { KeyHint } from "./KeyHint";
+import { MOD } from "./Shortcuts";
+import { complete, PlanFinished, planFinished, PlanPanel, PlanSummary } from "./PlanPanel";
 import { Outputs } from "./Outputs";
+import { PrBox } from "./PrBox";
 import { Select } from "./Select";
 import { useShareNotices } from "./share";
 import { SessionPicker, sessionLabel } from "./SessionPicker";
-import { useSnippetPicker } from "./SnippetPicker";
 import { TicketMenu } from "./TicketMenu";
 import { toast } from "./toast";
 import { missingPctReason, UsagePanel, usageChipText, useTicketUsage } from "./UsagePanel";
@@ -24,6 +33,10 @@ import { approxPct } from "./usage";
 import { Markdown } from "./Transcript";
 import { useMediaQuery } from "./useMediaQuery";
 import { NeedsField } from "./Needs";
+import { useHuddle, members } from "./huddle";
+import { HuddlePanel } from "./HuddlePanel";
+import type { HuddleSeed, TeamRequest } from "./Team";
+import { StarToggle } from "./StarToggle";
 
 // v2: widths saved under the old 80% default are dropped once so the new default shows.
 const WIDTH_KEY = "ckanban.panelWidth.v2";
@@ -31,6 +44,8 @@ const MIN_WIDTH = 640;
 
 /** Backdrop left visible beside the panel, so clicking it can always close the panel. */
 const BACKDROP_MIN = 64;
+/** Artifact and share link chips in the header; the rest are behind "+N more" (the Outputs tab). */
+const LINK_CHIPS = 3;
 
 const defaultWidth = () => Math.round(Math.min(1120, window.innerWidth * 0.72));
 
@@ -184,7 +199,7 @@ function usePanelWidth(fit: number) {
 }
 
 /** Ticket view: details on the left, the chat with Claude filling the right side. */
-export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, nav, slideIn = true, initialTab = "chat" }: {
+export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, nav, slideIn = true, initialTab = "chat", tabRequest, huddleSeed, onOpenTeam }: {
   profile: Profile;
   ticket: Ticket;
   /** The board's tickets, for the planner/child links. */
@@ -196,6 +211,12 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   /** Slide in when opened; off when stepping from the neighbouring ticket. */
   slideIn?: boolean;
   initialTab?: "chat" | "review";
+  /** Show this tab (e.g. a card's huddle badge); `n` changes for each new request. */
+  tabRequest?: { tab: "huddle"; n: number; huddleId?: string } | null;
+  /** The Team tab's Start huddle: fill this roster in on the Huddle tab; `n` changes for each new request. */
+  huddleSeed?: { seed: HuddleSeed; n: number } | null;
+  /** Open the dock's Team tab on a teammate or a proposal to edit (teammate cards). */
+  onOpenTeam?: (r: TeamRequest) => void;
 }) {
   // Errors from actions in this ticket show here, next to what failed, not in the page's top strip.
   const [panelError, setPanelError] = useState<string | null>(null);
@@ -211,17 +232,30 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const [body, setBody] = useState(ticket.body);
   const [editing, setEditing] = useState(false);
   const images = useImagePaste(setBody);
+  const descCommands = useDescriptionCommands(slug);
   const bodyInput = useRef<HTMLTextAreaElement>(null);
-  const snippets = useSnippetPicker({ slug, ref: bodyInput, setValue: setBody });
   // Body the current edit started from; the server rejects the save if the file changed meanwhile.
   const [baseBody, setBaseBody] = useState(ticket.body);
-  const [tabPick, setTabPick] = useState<"chat" | "plan" | "changes" | "outputs" | "review" | "usage">(initialTab);
-  const setTab = (next: "chat" | "plan" | "changes" | "outputs" | "review" | "usage") => {
+  type DrawerTab = "chat" | "plan" | "changes" | "huddle" | "outputs" | "review" | "usage";
+  const [tabPick, setTabPick] = useState<DrawerTab>(tabRequest?.tab ?? initialTab);
+  const setTab = (next: DrawerTab) => {
     setTabPick(next);
     if (window.matchMedia("(max-width: 900px)").matches) setDetailsOpenState(false);
   };
-  // The Plan tab exists only while the ticket has children; Changes only while it has a worktree.
-  const tab = (tabPick === "plan" && !children.length) || (tabPick === "changes" && !ticket.worktree) ? "chat" : tabPick;
+  // The huddle round picked in the Huddle tab (null: the default one); kept while the drawer stays on this ticket.
+  const [huddlePick, setHuddlePick] = useState<string | null>(tabRequest?.huddleId ?? null);
+  useEffect(() => {
+    if (!tabRequest) return;
+    setTab(tabRequest.tab);
+    // A card badge or Start huddle shows the current round; a dock row its own.
+    setHuddlePick(tabRequest.huddleId ?? null);
+  }, [tabRequest?.n]);
+  const huddleState = useHuddle(slug, ticket.id, huddlePick);
+  const huddle = huddleState.latest;
+  // The Plan tab exists only while the ticket has children; Changes while it has a worktree, or it ran in the board's
+  // folder itself: its changes since the first run there, or (no version history) why they can't be shown.
+  const inFolder = !ticket.worktree && !ticket.workdir && !ticket.branch && (ticket.runCount > 0 || !!ticket.sessionStarted || !!ticket.baseSha);
+  const tab = (tabPick === "plan" && !children.length) || (tabPick === "changes" && !ticket.worktree && !inFolder) ? "chat" : tabPick;
   const diffState = useTicketDiff(slug, ticket);
   const [outputCount, setOutputCount] = useState(0);
   const ticketUsage = useTicketUsage(slug, ticket.id);
@@ -232,7 +266,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const [outputFocus, setOutputFocus] = useState<string | null>(null);
   const [titleSave, setTitleSave] = useState<"saving" | "saved" | null>(null);
   const panelRef = useRef<HTMLElement>(null);
-  useLayer(onClose, { skipInInputs: true });
+  const isTopLayer = useLayer(onClose, { skipInInputs: true });
   useFocusTrap(panelRef, true);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [reportingBug, setReportingBug] = useState(false);
@@ -281,15 +315,23 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
     if (title !== ticket.title) saveTitle();
     nav.go(id);
   };
-  const stepRef = useRef(step);
-  stepRef.current = step;
+  // Latest prev/next for the key handler below, which is bound once.
+  const stepRef = useRef((_to: "prev" | "next") => {});
+  stepRef.current = (to) => step(nav?.[to]);
+  // Plain-key shortcuts (↑↓ J K, E) only when the panel itself has the keyboard: not typing, no menu, popup or dialog above it.
+  const panelKeys = (e: KeyboardEvent) => !e.isComposing && !e.defaultPrevented && !isTyping(e) && isTopLayer() && !document.querySelector(".overlay");
+  const panelKeysRef = useRef(panelKeys);
+  panelKeysRef.current = panelKeys;
   useEffect(() => {
-    // Alt+↑ / Alt+↓ open the previous / next ticket, also while typing.
+    // Alt+↑ / Alt+↓ open the previous / next ticket, also while typing; plain ↑/↓ and K/J when not typing.
     const onKey = (e: KeyboardEvent) => {
-      if (!e.altKey || e.metaKey || e.ctrlKey || e.shiftKey || e.isComposing) return;
-      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      if (e.isComposing) return;
+      let dir: "prev" | "next" | null = null;
+      if (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) dir = e.key === "ArrowUp" ? "prev" : "next";
+      else if (panelKeysRef.current(e)) dir = panelStep(e);
+      if (!dir) return;
       e.preventDefault();
-      stepRef.current(e.key === "ArrowUp" ? nav?.prev : nav?.next);
+      stepRef.current(dir);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -302,9 +344,10 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   // Opens fitted to the sidebar plus the chat's reading column; dragging can make it wider.
   const panel = usePanelWidth((detailsOpen ? side.pref : 0) + CHAT_ROOM);
   const { dragging, handle } = panel;
-  const width = tab === "changes" && !panel.custom ? clampWidth(CHANGES_WIDTH) : panel.width;
+  const width = (tab === "changes" || tab === "huddle") && !panel.custom ? clampWidth(CHANGES_WIDTH) : panel.width;
   const [descScrolled, setDescScrolled] = useState(false);
 
+  const links = (ticket.links ?? []).filter((l) => safeHref(l.url));
   const loadOutputs = () => api.outputs(slug, ticket.id).then((o) => setOutputCount(o.length)).catch(() => {});
 
   useEffect(() => {
@@ -366,23 +409,66 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
       .then((t) => { setBaseBody(t.body); setEditing(false); })
       .catch((e) => onError(e.message));
   };
-  const setStatus = (status: Status) => act(() => api.updateTicket(slug, ticket.id, { status }));
-  const markDoneRef = useRef(() => {});
-  markDoneRef.current = () => { if (ticket.status === "review") setStatus("done"); };
+  // Marked Done: on to the next ticket of the column the drawer walks, or back to the board after its last one,
+  // at once rather than after the save, so a close in the meantime can't be undone by a late jump.
+  // The drawer may be gone when the save fails, so the error goes to the board's toast.
+  const setStatus = (status: Status) => {
+    if (status !== "done" || ticket.status === "done") return act(() => api.updateTicket(slug, ticket.id, { status }));
+    const title = ticket.title;
+    api.updateTicket(slug, ticket.id, { status }).catch((e) => toast(<>Couldn't mark <b>{title}</b> done: {e.message}</>, { tone: "error" }));
+    if (nav?.next) step(nav.next);
+    else if (!editing) onClose();
+  };
+  const col = COLUMNS.find((c) => c.id === ticket.status);
+  const startTarget = startWorkTarget(ticket);
+  const startWork = () => (startTarget === "planning" ? setStatus("planning") : setConfirmStart(true));
+  // The chat's newest unapplied proposal (Chat reports it), so ⌘⇧Enter can apply it and start work in one go.
+  const applyProposalRef = useRef<((start: boolean) => Promise<void>) | null>(null);
+  const [proposalPending, setProposalPending] = useState(false);
+  const onPendingProposal = useCallback((apply: ((start: boolean) => Promise<void>) | null) => {
+    applyProposalRef.current = apply;
+    setProposalPending(!!apply);
+  }, []);
+  // Every child of its plan is done: Move to Done replaces Start work.
+  const finished = planFinished(children);
+  const addMoreTickets = () => {
+    setTab("chat");
+    requestAnimationFrame(() => panelRef.current?.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus());
+  };
+  const next = nextStep({ status: ticket.status, working, proposalPending, planFinished: finished });
+  const nextStepRef = useRef(() => {});
+  nextStepRef.current = () => {
+    if (next === "apply" || next === "apply-start") applyProposalRef.current?.(next === "apply-start");
+    else if (next === "start") startWork();
+    else if (next === "done") setStatus("done");
+  };
   useEffect(() => {
-    // ⌘⇧Enter / Ctrl+Shift+Enter: Mark done (Review only), also while typing.
+    // ⌘⇧Enter / Ctrl+Shift+Enter: the ticket's next step (apply proposal & start work, Start work, Mark done), also while typing.
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Enter" || !e.shiftKey || !(e.metaKey || e.ctrlKey) || e.altKey || e.isComposing) return;
       if (document.querySelector(".overlay")) return;
       e.preventDefault();
-      markDoneRef.current();
+      nextStepRef.current();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-  const col = COLUMNS.find((c) => c.id === ticket.status);
-  const startTarget = startWorkTarget(ticket);
-  const startWork = () => (startTarget === "planning" ? setStatus("planning") : setConfirmStart(true));
+  // E: edit the description; R: Refine with Claude (Backlog). Only when the panel has the keyboard.
+  const letterRef = useRef<(k: string) => boolean>(() => false);
+  letterRef.current = (k) => {
+    if (k === "e" && !editing) return startEdit(), true;
+    if (k === "r" && !working && !editing && ticket.status === "backlog") return setStatus("planning"), true;
+    return false;
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || !panelKeysRef.current(e)) return;
+      if (letterRef.current(e.key.toLowerCase())) e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const cancelEdit = () => { setBody(baseBody); setEditing(false); images.clearError(); };
 
   return (
     <div className="drawer-wrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -395,6 +481,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
           <button className={`icon-btn sidebar-toggle ${detailsOpen ? "on" : ""}`} onClick={() => setDetailsOpen((v) => !v)}
             aria-label={detailsOpen ? "Hide details" : "Show details"} aria-pressed={detailsOpen}
             title={`${detailsOpen ? "Hide" : "Show"} details (⌘\\)`}>
+            <KeyHint keys="⌘\" />
             <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
               <rect x="2" y="3" width="14" height="12" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
               <line x1="7" y1="3.5" x2="7" y2="14.5" stroke="currentColor" strokeWidth="1.5" />
@@ -402,6 +489,9 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             </svg>
             <span className="sidebar-toggle-label">{detailsOpen ? (tab === "outputs" ? "Outputs" : tab === "plan" ? "Plan" : "Chat") : "Details"}</span>
           </button>
+          <StarToggle on={!!ticket.important} onChange={(important) => {
+            api.updateTicket(slug, ticket.id, { important }).catch((e) => onError(`Important not saved: ${e.message}`));
+          }} />
           <input ref={titleRef} className="title-input" value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
             onKeyDown={(e) => {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -413,20 +503,23 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
           </span>
           {att && (
             <span className={`your-turn inline att-${att.kind}`}>
-              <span className="yt-dot" aria-hidden /><span className="yt-label">Your turn</span><span className="yt-why">{att.label}</span>
+              <span className="yt-dot" aria-hidden /><span className="yt-label">Your turn</span><span className="yt-why">{att.kind === "limit" ? limitLabel(ticket) : att.label}</span>
             </span>
           )}
-          {!att && outcomeBadge(ticket)}
+          {!att && !ticket.huddleBusy && outcomeBadge(ticket)}
           {nav && (
             <span className="ticket-nav">
               <button className="icon-btn" disabled={!nav.prev || editing} onClick={() => step(nav.prev)} aria-label="Previous ticket"
-                title={editing ? "Save or cancel the description first" : "Previous ticket (Alt+↑)"}><ChevronUpIcon size={16} /></button>
+                title={editing ? "Save or cancel the description first" : "Previous ticket (↑ or K)"}><ChevronUpIcon size={16} /></button>
               <button className="icon-btn" disabled={!nav.next || editing} onClick={() => step(nav.next)} aria-label="Next ticket"
-                title={editing ? "Save or cancel the description first" : "Next ticket (Alt+↓)"}><ChevronDownIcon size={16} /></button>
+                title={editing ? "Save or cancel the description first" : "Next ticket (↓ or J)"}><ChevronDownIcon size={16} /></button>
+              <KeyHint keys="↑↓ J K" />
             </span>
           )}
           <TicketMenu ticket={ticket} working={working} live={!!(ticket.terminalOpen || linked?.live)}
             linkedLabel={ticket.workdir && ticket.sessionId ? (linked ? sessionLabel(linked) : ticket.sessionId.slice(0, 8)) : null}
+            boardCap={profile.runCapUsd ?? null}
+            onCap={(usd) => api.updateTicket(slug, ticket.id, { runCapUsd: usd })}
             onBranch={() => setConfirmBranch(true)}
             onPickSession={() => setPicking(true)}
             onUnlink={() => act(() => api.linkSession(slug, ticket.id, null))}
@@ -437,7 +530,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             })}
             onReportBug={() => setReportingBug(true)}
             onDelete={() => setConfirmDelete(true)} />
-          <button className="icon-btn close-btn" onClick={onClose} aria-label="Close" title="Close (Esc)"><CloseIcon /></button>
+          <button className="icon-btn close-btn" onClick={onClose} aria-label="Close" title="Close (Esc)"><CloseIcon /><KeyHint keys="Esc" /></button>
         </header>
 
         <div ref={bodyRef} className={`panel-body ${detailsOpen ? "" : "details-closed"} ${side.dragging ? "resizing" : ""}`}
@@ -455,15 +548,22 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
 
               <div className="action-row">
                 {working && <button className="btn danger-soft" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop"}</button>}
-                {!working && (ticket.status === "backlog" || ticket.status === "planning") && (
+                {finished && <PlanFinished ticket={ticket} total={children.length} onMoveToDone={() => setStatus("done")} onAddMore={addMoreTickets} />}
+                {!working && !finished && (ticket.status === "backlog" || ticket.status === "planning") && (
                   <button className={`btn ${att?.kind === "questions" || att?.kind === "proposal" ? "" : "primary"}`}
-                    onClick={startWork} title={startTarget === "planning" ? "Your agent interviews you first" : "Your agent works on its own"}>Start work</button>
+                    onClick={startWork} title={`${startTarget === "planning" ? "Your agent interviews you first" : "Your agent works on its own"} (${proposalPending ? `${MOD}⇧Enter applies the proposal and starts` : `${MOD}⇧Enter`})`}>
+                    Start work{!proposalPending && <KeyHint keys="⌘⇧↵" />}
+                  </button>
                 )}
                 {!working && ticket.status === "backlog" && (
-                  <button className="btn" onClick={() => setStatus("planning")}>Refine with agent</button>
+                  <button className="btn" onClick={() => setStatus("planning")} title="Move to Planning: your agent interviews you (R)">
+                    Refine with agent<KeyHint keys={startTarget === "planning" && !proposalPending ? "⌘⇧↵ · R" : "R"} />
+                  </button>
                 )}
-                {ticket.status === "review" && <button className="btn primary" onClick={() => setStatus("done")}>Mark done</button>}
-                {ticket.prUrl && (
+                {ticket.status === "review" && !finished && (
+                  <button className={`btn ${ticket.prUrl ? "" : "primary"}`} onClick={() => setStatus("done")} title={`Mark done (${MOD}⇧Enter)`}>Mark done{!working && <KeyHint keys={proposalPending ? "⌘⇧↵ after Apply" : "⌘⇧↵"} />}</button>
+                )}
+                {ticket.prUrl && ticket.status !== "review" && (
                   <a className="btn icon-label" href={safeHref(ticket.prUrl)} target="_blank" rel="noreferrer">PR #{ticket.prUrl.split("/").pop()} <ExternalIcon size={12} /></a>
                 )}
                 {outputCount > 0 && (
@@ -473,6 +573,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                   <a key={a.url} className="btn icon-label" href={safeHref(a.url)} target="_blank" rel="noreferrer" title={a.url}><ExternalIcon size={12} /> {a.label}</a>
                 ))}
               </div>
+              {ticket.prUrl && ticket.status === "review" && <PrBox profile={profile} ticket={ticket as Ticket & { prUrl: string }} onError={onError} />}
               </section>
               <TicketMetadata slug={slug} ticket={ticket} onError={onError} />
 
@@ -515,11 +616,12 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                 </div>
               )}
 
-              <NeedsField slug={slug} ticket={ticket} onError={onError} />
+              {/* Rarely set by hand (plans and update_ticket set it), so only shown once the ticket has needs. */}
+              {!!ticket.needs?.length && <NeedsField slug={slug} ticket={ticket} onError={onError} />}
 
               {children.length > 0 && <PlanSummary ticket={ticket} children={children} onOpen={() => setTab("plan")} />}
 
-              {(!!ticket.session?.artifacts.length || !!ticket.shareLinks?.length || outputCount > 0 || hasUsage) && (
+              {(!!links.length || outputCount > 0 || hasUsage) && (
                 <div className="result-chips" aria-label="Results">
                   {usage && hasUsage && (
                     <button className="result-chip usage-chip" onClick={() => setTab("usage")}
@@ -530,14 +632,17 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                   {outputCount > 0 && (
                     <button className="result-chip" onClick={() => setTab("outputs")}><FileTextIcon size={13} /> {outputCount} output file{outputCount > 1 ? "s" : ""}</button>
                   )}
-                  {ticket.session?.artifacts.slice().reverse().map((a) => (
-                    <a key={a.url} className="result-chip" href={safeHref(a.url)} target="_blank" rel="noreferrer" title={a.url}><ExternalIcon size={12} /> {a.label}</a>
-                  ))}
-                  {ticket.shareLinks?.filter((l) => !ticket.session?.artifacts.some((a) => a.url === l.url)).slice().reverse().map((l) => (
-                    <a key={l.url} className="result-chip" href={safeHref(l.url)} target="_blank" rel="noreferrer" title={`Share link for ${l.file}: ${l.url}`}>
-                      <LinkIcon size={12} /> {l.file.slice(l.file.lastIndexOf("/") + 1)}
+                  {links.slice(0, LINK_CHIPS).map((l) => (
+                    <a key={l.url} className="result-chip" href={safeHref(l.url)} target="_blank" rel="noreferrer"
+                      title={l.source === "share" ? `Share link: ${l.url}` : l.url}>
+                      {l.source === "share" ? <LinkIcon size={12} /> : <ExternalIcon size={12} />} {l.label}
                     </a>
                   ))}
+                  {links.length > LINK_CHIPS && (
+                    <button className="result-chip" onClick={() => { setOutputFocus(null); setTab("outputs"); }} title="All links are in the Outputs tab">
+                      +{links.length - LINK_CHIPS} more
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -545,27 +650,24 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             <section className={`details-desc ${descScrolled && !editing ? "scrolled" : ""}`}>
               <div className="section-head">
                 <h4>Description</h4>
-                {!editing && <button className="btn ghost small" onClick={startEdit}>Edit</button>}
+                {!editing && <button className="btn ghost small" onClick={startEdit} title="Edit the description (E)">Edit<KeyHint keys="E" /></button>}
               </div>
               {editing ? (
                 <div className="desc-edit">
-                  <textarea ref={bodyInput} className={`body-input${images.dragOver ? " drop-target" : ""}`} value={body} onChange={(e) => setBody(e.target.value)} autoFocus
-                    placeholder="Markdown. Paste or drop images. Type @ to insert a snippet." {...images.handlers} {...snippets.handlers}
+                  <DescriptionEditor slug={slug} ticketId={ticket.id} value={body} setValue={setBody} images={images} inputRef={bodyInput} autoFocus fill
                     onKeyDown={(e) => {
-                      if (snippets.onKeyDown(e)) return;
                       if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey) saveBody();
+                      else if (e.key === "Escape" && !e.nativeEvent.isComposing) { e.preventDefault(); cancelEdit(); }
                     }} />
-                  {snippets.popup}
-                  {images.error && <div className="form-error">{images.error}</div>}
                   <div className="form-actions">
-                    <button className="btn ghost small" onClick={() => { setBody(baseBody); setEditing(false); images.clearError(); }}>Cancel</button>
-                    <button className="btn primary small" disabled={images.uploading} onClick={saveBody}>{images.uploading ? "Uploading…" : "Save"}</button>
+                    <button className="btn ghost" onClick={cancelEdit} title="Cancel (Esc)">Cancel<KeyHint keys="Esc" /></button>
+                    <button className="btn primary" disabled={images.uploading} onClick={saveBody} title={`Save (${MOD}Enter)`}>{images.uploading ? "Uploading…" : "Save"}<KeyHint keys="⌘↵" /></button>
                   </div>
                 </div>
               ) : (
                 <div className="desc-scroll" onScroll={(e) => setDescScrolled(e.currentTarget.scrollTop > 0)}>
                   {body.trim() ? (
-                    <div className="body-view" onDoubleClick={startEdit}><Markdown text={body} /></div>
+                    <div className="body-view" onDoubleClick={startEdit}><Markdown text={body} commands={descCommands} /></div>
                   ) : (
                     <div className="muted small">No description yet. {ticket.status === "planning" ? "Your agent can propose one in the chat." : ""}</div>
                   )}
@@ -586,6 +688,34 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                 <button className="icon-btn" aria-label="Dismiss" onClick={() => setPanelError(null)}><CloseIcon /></button>
               </div>
             )}
+            {limitWait(ticket) && (
+              <div className="banner warn inline limit-banner" role="status">
+                <div className="limit-text">
+                  <strong>{limitLabel(ticket)}</strong>
+                  <span>{limitHint(ticket)}</span>
+                  {ticket.limit?.message && <span className="muted small">{ticket.limit.message}</span>}
+                </div>
+                <LimitActions slug={slug} ticket={ticket} onError={onError} small />
+              </div>
+            )}
+            {capWait(ticket) && (
+              <div className="banner warn inline limit-banner" role="status">
+                <div className="limit-text">
+                  <strong>{capLabel(ticket)}</strong>
+                  <span>The run spent its budget before it finished. Continue it in the same session with more, or change the cap in ⋯.</span>
+                </div>
+                <CapActions slug={slug} ticket={ticket} onError={onError} small />
+              </div>
+            )}
+            {stallWait(ticket) && (
+              <div className="banner warn inline limit-banner" role="status">
+                <div className="limit-text">
+                  <strong>Stalled · no output for {ticket.stalled!.minutes} min</strong>
+                  <span>A tool call may be stuck, or it's just a long step. Nothing is killed unless you choose to.</span>
+                </div>
+                <StallActions slug={slug} ticket={ticket} onError={onError} small />
+              </div>
+            )}
             <nav className="tabs" role="tablist" aria-label="Ticket">
               <button role="tab" aria-selected={tab === "chat"} className={tab === "chat" ? "active" : ""} onClick={() => setTab("chat")}>
                 Chat {working && <span className="dot" />}
@@ -598,13 +728,20 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                 </button>
               )}
               <button role="tab" aria-selected={tab === "review"} className={tab === "review" ? "active" : ""} onClick={()=>setTab("review")}>Review</button>
-              {ticket.worktree && (
+              <button role="tab" aria-selected={tab === "huddle"} className={tab === "huddle" ? "active" : ""} onClick={() => setTab("huddle")}>
+                Huddle{huddle && huddle.status !== "closed" && <span className={`tab-count${huddle.status === "live" ? " ok" : ""}`}>{members(huddle).length}</span>}
+                {huddle && huddle.status !== "closed" && !!huddle.forYou && (
+                  <span className="for-you-pill" title={`${huddle.forYou} ${huddle.forYou === 1 ? "message tags" : "messages tag"} you`}>{huddle.forYou}</span>
+                )}
+                {huddle?.status === "live" && huddle.participants.some((p) => p.status === "working") && <span className="dot" />}
+              </button>
+              {(ticket.worktree || inFolder) && (
                 <button role="tab" aria-selected={tab === "changes"} className={tab === "changes" ? "active" : ""} onClick={() => { diffState.reload(); setTab("changes"); }}>
                   Changes{!!diffState.diff?.files.length && <span className="tab-count">{diffState.diff.files.length}</span>}
                 </button>
               )}
               <button role="tab" aria-selected={tab === "outputs"} className={tab === "outputs" ? "active" : ""} onClick={() => { setOutputFocus(null); setTab("outputs"); }}>
-                Outputs{outputCount > 0 && <span className="tab-count">{outputCount}</span>}
+                Outputs{outputCount + links.length > 0 && <span className="tab-count">{outputCount + links.length}</span>}
               </button>
               <button role="tab" aria-selected={tab === "usage"} className={tab === "usage" ? "active" : ""} onClick={() => { ticketUsage.reload(); setTab("usage"); }}>
                 Usage{usage && hasUsage && usage.totals.pctCurrentWindow !== null && <span className="tab-count">{approxPct(usage.totals.pctCurrentWindow).replace(" ", "")}</span>}
@@ -612,8 +749,13 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             </nav>
             {tab === "review" ? <div className="panel-scroll"><ReviewPanel slug={slug} ticket={ticket} onError={onError} onOutputs={()=>setTab("outputs")} /></div> : tab === "plan" ? (
               <div className="panel-scroll panel-plan">
-                <PlanPanel slug={slug} ticket={ticket} children={children} onOpenTicket={onOpenTicket} onError={onError} />
+                <PlanPanel slug={slug} ticket={ticket} children={children} onOpenTicket={onOpenTicket} onError={onError}
+                  onMoveToDone={() => setStatus("done")} onAddMore={addMoreTickets} />
               </div>
+            ) : tab === "huddle" ? (
+              <HuddlePanel slug={slug} ticket={ticket} tickets={tickets} state={huddleState} onError={onError} seed={huddleSeed ?? null} onSelect={setHuddlePick}
+                onOpenOutput={(name) => { setOutputFocus(name); setTab("outputs"); }}
+                onOpenChat={() => setTab("chat")} onOpenTicket={onOpenTicket} onOpenTeam={onOpenTeam} />
             ) : tab === "changes" ? (
               <Changes slug={slug} ticket={ticket} state={diffState} onSent={() => setTab("chat")} onError={onError} />
             ) : tab === "usage" ? (
@@ -621,7 +763,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             ) : tab === "outputs" ? (
               <div className="panel-scroll panel-outputs"><Outputs slug={slug} ticket={ticket} onCount={setOutputCount} focus={outputFocus} /></div>
             ) : (
-              <Chat slug={slug} ticket={ticket} tickets={tickets} onOpenTicket={onOpenTicket} onError={onError}
+              <Chat slug={slug} ticket={ticket} tickets={tickets} onOpenTicket={onOpenTicket} onError={onError} onPendingProposal={onPendingProposal}
+                huddle={huddle} onOpenHuddle={() => setTab("huddle")} onOpenTeam={onOpenTeam}
                 onOpenOutput={(name) => { setOutputFocus(name); setTab("outputs"); }} />
             )}
           </div>

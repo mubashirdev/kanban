@@ -2,8 +2,13 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Bus } from "./events";
+import { rosterError, type RosterEntry } from "./huddle-roster";
 import { mockupName, stripMockups } from "./mockups";
+import { parseResult } from "./result";
+import { parseTeammateProposal, type TeammateProposal } from "./teammate-proposal";
 import type { Store } from "./store";
+import { findToolDetailIn, type ToolDetail as FullToolDetail } from "./tooldetail";
+import { subagentFiles } from "./subagents";
 import { parseSetupBlock, type SetupResult } from "./worktree-setup";
 
 /** One visible item of a Claude Code session, as shown in the ticket's Conversation tab. */
@@ -112,6 +117,12 @@ export interface SessionEntry {
   newTickets?: NewTicketDraft[];
   /** Claude offered to branch this ticket (rendered with a Branch button). */
   branch?: { reason: string };
+  /** Claude proposed a huddle roster (propose_huddle; rendered with a Start button). */
+  huddle?: { roster: RosterEntry[]; reason: string; template?: string };
+  /** Claude asked to delete tickets (propose_delete; rendered with Cancel / Delete buttons). */
+  deletion?: { ids: string[]; reason: string };
+  /** Claude proposed a teammate (propose_teammate; rendered with Save teammate / Edit first / Dismiss). */
+  teammate?: TeammateProposal;
   /** Mockups Claude sent as blocks (saved to outputs/mockups; the chat links to them). */
   mockups?: string[];
   /** Claude asked the board to move the ticket (a planning-only request arrived in Review). */
@@ -122,8 +133,10 @@ export interface SessionEntry {
   tool?: ToolDetail;
   /** A short progress note the agent wrote before using a tool (Codex "commentary"), shown quietly. */
   note?: boolean;
-  /** A ticket-to-ticket message (ask_ticket / reply_ticket): in = from that ticket's Claude, out = to it. */
+  /** A message from outside the user (a huddle digest): in = into this session. */
   peer?: { dir: "in" | "out"; ticketId: string | null };
+  /** Huddle messages delivered to this ticket's session (also a peer entry, ticketId null): the huddle's id. */
+  huddleId?: string;
   /** The board prepared a new worktree before this prompt (copied files, setup command): shown as a row before it. */
   setup?: SetupResult;
   /** This step started a helper agent: shown as its own card with live progress. */
@@ -280,6 +293,10 @@ export interface SessionMessage {
   role: "user" | "assistant";
   text: string;
   at: string;
+  /** A user-role message that didn't come from the user: a huddle digest. */
+  from?: "huddle";
+  /** An assistant message answering such a message (a quiet reply, not one for the user). */
+  peerReply?: boolean;
 }
 
 export interface ParsedSession {
@@ -293,6 +310,8 @@ export interface ParsedSession {
   pendingProposal: TicketProposal | null;
   /** Latest proposed new tickets since the user's last message (some may already be created). */
   pendingNewTickets: TicketProposal[];
+  /** Teammate cards (their entry uuids) since the user's last message; Ticket.teammateCards says which were answered. */
+  pendingTeammates: string[];
 }
 
 /** What the board card and ticket header need; sent over SSE. */
@@ -304,6 +323,7 @@ export interface SessionSummary {
   openQuestions: number;
   pendingProposal: TicketProposal | null;
   pendingNewTickets: TicketProposal[];
+  pendingTeammates: string[];
 }
 
 interface Dirs {
@@ -342,7 +362,7 @@ function isPublisher(block: any): boolean {
   return block.name === "Bash" && typeof block.input?.command === "string" && HELPER_PUBLISH.test(block.input.command);
 }
 
-function userText(content: unknown): { kind: "text" | "board"; text: string; from?: string; question?: string; setup?: SetupResult } | null {
+function userText(content: unknown): { kind: "text" | "board"; text: string; huddle?: string; setup?: SetupResult } | null {
   if (Array.isArray(content)) {
     if (content.some((c: any) => c?.type === "tool_result")) return null;
     content = content.map((c: any) => (c?.type === "text" ? c.text : "")).join("\n");
@@ -353,11 +373,11 @@ function userText(content: unknown): { kind: "text" | "board"; text: string; fro
     // Board-sent prompt: show only what the user typed; pure instructions become a short note.
     const typed = content.slice(0, ctx).trim();
     const tag = content.slice(ctx, content.indexOf(">", ctx) + 1);
-    // Sent by another ticket's Claude (a question, or a late reply): from="<ticket id>".
-    const from = tag.match(/ from="([^"]*)"/)?.[1];
     const setup = parseSetupBlock(content.slice(ctx));
     const extra = setup ? { setup } : {};
-    if (typed && from) return { kind: "text", text: typed, from, question: tag.match(/ question="([^"]*)"/)?.[1], ...extra };
+    // Huddle messages for this ticket's session: huddle="<huddle id>".
+    const huddle = tag.match(/ huddle="([^"]*)"/)?.[1];
+    if (typed && huddle) return { kind: "text", text: typed, huddle, ...extra };
     if (typed) return { kind: "text", text: typed, ...extra };
     const note = content.slice(ctx).match(/note="([^"]*)"/)?.[1];
     return { kind: "board", text: note || "Board sent instructions to Claude", ...extra };
@@ -376,21 +396,21 @@ function resultText(content: unknown): string {
   return "";
 }
 
-const ASK_TOOL = /(?:^|__)ask_ticket$/;
-const REPLY_TOOL = /(?:^|__)reply_ticket$/;
 /** Planning-chat tools (ckanban MCP): their input becomes a form or card, like the text blocks. */
 const QUESTIONS_TOOL = /(?:^|__)ask_questions$/;
 const PROPOSAL_TOOL = /(?:^|__)propose_ticket$/;
 const TICKETS_TOOL = /(?:^|__)propose_tickets$/;
 const BRANCH_TOOL = /(?:^|__)propose_branch$/;
-const REPLY_HEAD = /^Reply from ticket (\S+) .*:\n\n/;
+const HUDDLE_TOOL = /(?:^|__)propose_huddle$/;
+const DELETE_TOOL = /(?:^|__)propose_delete$/;
+const TEAMMATE_TOOL = /(?:^|__)propose_teammate$/;
 const HELPER_TOOLS = new Set(["Agent", "Task"]);
 /** A background helper's tool result only says it started; its report comes later in a task notification. */
 const HELPER_LAUNCHED = /^Async agent launched/;
 const TASK_NOTE = /<tool-use-id>([^<]+)<\/tool-use-id>[\s\S]*?<status>(\w+)<\/status>(?:[\s\S]*?<result>([\s\S]*?)<\/result>)?/;
 
 /** The form or card a planning-chat tool call shows, or null for other tools (or input that can't be read). */
-function cardEntry(block: any): Pick<SessionEntry, "questions" | "proposal" | "newTickets" | "branch"> | null {
+function cardEntry(block: any): Pick<SessionEntry, "questions" | "proposal" | "newTickets" | "branch" | "huddle" | "deletion" | "teammate"> | null {
   const name = String(block.name ?? "");
   if (QUESTIONS_TOOL.test(name)) {
     const questions = parseQuestions(block.input?.questions);
@@ -405,6 +425,22 @@ function cardEntry(block: any): Pick<SessionEntry, "questions" | "proposal" | "n
     return newTickets && { newTickets };
   }
   if (BRANCH_TOOL.test(name)) return { branch: { reason: typeof block.input?.reason === "string" ? block.input.reason.trim() : "" } };
+  if (DELETE_TOOL.test(name)) {
+    const ids = Array.isArray(block.input?.ids) ? [...new Set(block.input.ids.filter((x: unknown) => typeof x === "string" && x.trim()).map((x: string) => x.trim()))] as string[] : [];
+    return ids.length ? { deletion: { ids, reason: typeof block.input?.reason === "string" ? block.input.reason.trim() : "" } } : null;
+  }
+  if (TEAMMATE_TOOL.test(name)) {
+    const teammate = parseTeammateProposal(block.input);
+    return teammate && { teammate };
+  }
+  if (HUDDLE_TOOL.test(name)) {
+    const template = typeof block.input?.template === "string" && block.input.template.trim() ? block.input.template.trim() : undefined;
+    // With a template the roster is optional: the card fills in the template's.
+    const roster = template && block.input?.roster === undefined ? [] : block.input?.roster;
+    if (!(template && Array.isArray(roster) && !roster.length) && rosterError(roster)) return null;
+    const reason = typeof block.input?.reason === "string" ? block.input.reason.trim() : "";
+    return { huddle: { roster, reason, ...(template ? { template } : {}) } };
+  }
   return null;
 }
 
@@ -484,9 +520,6 @@ export function parseSession(raw: string, helperLogs = new Map<string, HelperLog
   const entries: SessionEntry[] = [];
   const artifacts = new Map<string, SessionArtifact>();
   const publishers = new Set<string>();
-  /** ask_ticket calls by tool_use id → asked ticket; question id → asking ticket. */
-  const asks = new Map<string, string | null>();
-  const askers = new Map<string, string>();
   /** Card tool calls (by tool_use id) and those whose result was an error: those don't render. */
   const cards = new Set<string>();
   const failed = new Set<string>();
@@ -494,13 +527,11 @@ export function parseSession(raw: string, helperLogs = new Map<string, HelperLog
   const steps = new Map<string, { entry: SessionEntry; started: number }>();
   /** Helper agents by the id of the Agent tool call that started them. */
   const helpers = new Map<string, HelperRun>();
-  const peerEntry = (u: NonNullable<ReturnType<typeof userText>>, uuid: string, at: string): SessionEntry => {
-    if (u.from && u.question) askers.set(u.question, u.from);
-    return {
-      uuid, at, role: "user", kind: u.kind, text: u.text,
-      ...(u.from ? { peer: { dir: "in" as const, ticketId: u.from } } : {}), ...(u.setup ? { setup: u.setup } : {}),
-    };
-  };
+  const peerEntry = (u: NonNullable<ReturnType<typeof userText>>, uuid: string, at: string): SessionEntry => ({
+    uuid, at, role: "user", kind: u.kind, text: u.text,
+    ...(u.huddle ? { peer: { dir: "in" as const, ticketId: null }, huddleId: u.huddle } : {}),
+    ...(u.setup ? { setup: u.setup } : {}),
+  });
 
   for (const line of raw.split("\n")) {
     if (!line) continue;
@@ -525,7 +556,7 @@ export function parseSession(raw: string, helperLogs = new Map<string, HelperLog
 
     if (ev.type === "user") {
       if (Array.isArray(content)) {
-        for (const [i, b] of content.entries()) {
+        for (const b of content) {
           if (b?.type === "tool_result" && b.is_error && cards.has(b.tool_use_id)) failed.add(b.tool_use_id);
           const helper = b?.type === "tool_result" ? helpers.get(b.tool_use_id) : undefined;
           if (helper && !HELPER_LAUNCHED.test(helperResult(b.content))) {
@@ -537,14 +568,6 @@ export function parseSession(raw: string, helperLogs = new Map<string, HelperLog
             const output = resultText(b.content).trim();
             const ms = Date.parse(at) - step.started;
             step.entry.tool = { ...step.entry.tool, ok: !b.is_error, ...(output ? { output: output.slice(0, OUTPUT_LIMIT) } : {}), ...(ms >= 0 ? { ms } : {}) };
-          }
-          // The reply an ask_ticket call came back with: shown as that ticket's message.
-          if (b?.type === "tool_result" && asks.has(b.tool_use_id) && !b.is_error) {
-            const m = REPLY_HEAD.exec(resultText(b.content));
-            if (m) {
-              const text = resultText(b.content).slice(m[0].length).trim();
-              entries.push({ uuid: i ? `${uuid}:${i}` : uuid, at, role: "user", kind: "text", text, peer: { dir: "in", ticketId: asks.get(b.tool_use_id) ?? m[1] } });
-            }
           }
           // Only real publishes: output of the Artifact tool, or of the `ckanban artifact publish`
           // helper / publish_artifact MCP tool headless runs use. Other tools (e.g. Bash grepping a different session's file)
@@ -576,14 +599,7 @@ export function parseSession(raw: string, helperLogs = new Map<string, HelperLog
       const id = i ? `${uuid}:${i}` : uuid;
       const card = b?.type === "tool_use" && typeof b.id === "string" ? cardEntry(b) : null;
       if (b?.type === "text" && b.text?.trim()) entries.push({ uuid: id, at, role: "assistant", kind: "text", ...assistantBlock(b.text.trim()), ...(ev.phase === "commentary" ? { note: true } : {}) });
-      else if (b?.type === "tool_use" && ASK_TOOL.test(b.name ?? "") && typeof b.input?.question === "string") {
-        const to = typeof b.input.id === "string" ? b.input.id : null;
-        if (typeof b.id === "string") asks.set(b.id, to);
-        entries.push({ uuid: id, at, role: "assistant", kind: "text", text: b.input.question.trim(), peer: { dir: "out", ticketId: to } });
-      } else if (b?.type === "tool_use" && REPLY_TOOL.test(b.name ?? "") && typeof b.input?.text === "string") {
-        const to = typeof b.input.questionId === "string" ? askers.get(b.input.questionId) ?? null : null;
-        entries.push({ uuid: id, at, role: "assistant", kind: "text", text: b.input.text.trim(), peer: { dir: "out", ticketId: to } });
-      } else if (card) {
+      else if (card) {
         // The tool_use id keeps the uuid stable, so form drafts and answered/applied state stick to it.
         cards.add(b.id);
         entries.push({ uuid: b.id, at, role: "assistant", kind: "text", text: "", ...card });
@@ -610,21 +626,42 @@ export function parseSession(raw: string, helperLogs = new Map<string, HelperLog
     if (helper.status === "done" && !helper.result && log.text) helper.result = log.text;
   }
   if (failed.size) entries.splice(0, entries.length, ...entries.filter((e) => !failed.has(e.uuid)));
-  const last = entries.findLast((e) => e.kind === "text" && (e.text || e.questions || e.proposal || e.newTickets || e.branch));
+  dropBlockedMoves(entries);
+  const last = entries.findLast((e) => e.kind === "text" && (e.text || e.questions || e.proposal || e.newTickets || e.branch || e.deletion || e.teammate));
   const lastText = !last ? "" : last.text
     || (last.questions ? `Asked ${last.questions.length} question${last.questions.length > 1 ? "s" : ""}`
       : last.newTickets ? `Proposed ${last.newTickets.length} new ticket${last.newTickets.length > 1 ? "s" : ""}`
-      : last.branch ? "Offered to branch this ticket" : "Proposed an updated ticket");
+      : last.branch ? "Offered to branch this ticket"
+      : last.deletion ? `Asked to delete ${last.deletion.ids.length} ticket${last.deletion.ids.length > 1 ? "s" : ""}`
+      : last.teammate ? `Proposed teammate @${last.teammate.name}` : "Proposed an updated ticket");
+  const asked = last?.role === "assistant" ? entries.findLast((e, i) => i < entries.indexOf(last) && e.role === "user" && e.kind === "text") : undefined;
   return {
     title: customTitle ?? aiTitle,
     entries,
     artifacts: [...artifacts.values()],
-    lastMessage: last ? { role: last.role, text: lastText, at: last.at } : null,
+    lastMessage: last
+      ? {
+        role: last.role, text: lastText, at: last.at,
+        ...(last.role === "user" && last.peer ? { from: "huddle" as const } : {}),
+        ...(asked?.peer?.dir === "in" ? { peerReply: true } : {}),
+      }
+      : null,
     ...pendingSince(entries),
   };
 }
 
-function pendingSince(entries: SessionEntry[]): Pick<ParsedSession, "openQuestions" | "pendingProposal" | "pendingNewTickets"> {
+/** The board doesn't move a blocked run to Planning; its reply (up to the next user message) mustn't claim it did. */
+function dropBlockedMoves(entries: SessionEntry[]): void {
+  entries.forEach((e, i) => {
+    if (!e.moved) return;
+    for (let j = i; j < entries.length && !(entries[j].role === "user" && !entries[j].peer); j++) {
+      const r = entries[j].role === "assistant" && entries[j].kind === "text" ? parseResult(entries[j].text) : null;
+      if (r?.status === "blocked") return void delete e.moved;
+    }
+  });
+}
+
+function pendingSince(entries: SessionEntry[]): Pick<ParsedSession, "openQuestions" | "pendingProposal" | "pendingNewTickets" | "pendingTeammates"> {
   let lastUser = -1;
   entries.forEach((e, i) => {
     // Messages from other tickets don't answer what Claude asked the user.
@@ -635,6 +672,7 @@ function pendingSince(entries: SessionEntry[]): Pick<ParsedSession, "openQuestio
     openQuestions: after.reduce((n, e) => n + (e.questions?.length ?? 0), 0),
     pendingProposal: after.findLast((e) => e.proposal)?.proposal ?? null,
     pendingNewTickets: after.findLast((e) => e.newTickets)?.newTickets ?? [],
+    pendingTeammates: after.filter((e) => e.teammate).map((e) => e.uuid),
   };
 }
 
@@ -693,6 +731,17 @@ export class SessionCache {
     return parsed;
   }
 
+  /** The session's transcript file, wherever it is under the projects folder; null when there is none. */
+  file(sessionId: string): string | null {
+    return this.locate(sessionId);
+  }
+
+  /** One tool call in full (input and output), from the session or one of its subagents' transcripts. */
+  toolDetail(sessionId: string, toolUseId: string): FullToolDetail | null {
+    const f = this.locate(sessionId);
+    return f ? findToolDetailIn([f, ...subagentFiles(f)], toolUseId) : null;
+  }
+
   summary(sessionId: string): SessionSummary | null {
     const p = this.get(sessionId);
     const f = this.locate(sessionId);
@@ -703,7 +752,7 @@ export class SessionCache {
     } catch {}
     return {
       title: p.title, lastMessage: p.lastMessage, artifacts: p.artifacts, updatedAt,
-      openQuestions: p.openQuestions, pendingProposal: p.pendingProposal, pendingNewTickets: p.pendingNewTickets,
+      openQuestions: p.openQuestions, pendingProposal: p.pendingProposal, pendingNewTickets: p.pendingNewTickets, pendingTeammates: p.pendingTeammates,
     };
   }
 }

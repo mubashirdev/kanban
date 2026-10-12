@@ -3,42 +3,49 @@ import { ticketReview } from "./review";
 import { ticketMetadata } from "./ticket-metadata";
 import { homedir } from "node:os";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join, normalize } from "node:path";
+import { basename, isAbsolute, join, normalize } from "node:path";
 import { runArtifactJob, type ArtifactJob, type ArtifactOutcome } from "./artifact";
-import { ConflictError, type Board } from "./board";
+import { ConflictError, recoveryFor, type Board } from "./board";
 import { dailyUsage } from "./usage-daily";
 import { claudeDefaults, listClaudeProjects, listSessions, liveSessionMatch, pickFolder, processCommands } from "./claude";
 import type { Bus, BusEvent } from "./events";
-import { DiffError, ticketDiff } from "./diff";
-import { detectBaseBranch, isGitRepo, resolveBaseBranch, which } from "./git";
-import { checkPr } from "./prpoller";
+import { listCommands } from "./slash";
+import { DiffError, folderDiff, ticketDiff } from "./diff";
+import { detectBaseBranch, enableVersionHistory, isGitRepo, repoKind, resolveBaseBranch, which } from "./git";
+import { checkPr, mergePr, PrError, REFRESH_MIN_MS, refreshPr, resolveConflicts, sendFailures, type PrDeps } from "./prpoller";
 import { resumeCommand } from "./prompts";
 import { cronError, describeCron, nextRuns, parseCron } from "./cron";
 import { shellQuote } from "./util";
 import { RUN_HEADER, ScheduleError, Scheduler } from "./scheduler";
 import { SnippetError, Snippets } from "./snippets";
-import { QuestionError, Questions } from "./questions";
-import { attentionFor, userWaitReason } from "./attention";
-import { childrenOf, isComplete, MAX_RETRIES, planActive } from "./plan";
+import { HuddleError, Huddles, type Caller } from "./huddle";
+import { HuddleSessionCache, participantSession, participantTool } from "./huddle-session";
+import { HUDDLE_HEADER, SOURCE_HEADER } from "./huddle-roster";
+import { NOTES_CAP } from "./huddle-notes";
+import { byWaitingAge, huddleAsk, huddleBusy, SNOOZE_MS, snoozeKey, ticketAttention, userWaitReason, withSnooze } from "./attention";
+import { isComplete, MAX_RETRIES, planActive } from "./plan";
 import { BugReportError, draftReport, submitReport, type BugBlockId, type BugSource, type GhRunner } from "./bugreport";
 import { AttachmentError, attachmentFile, attachmentType, IMAGE_TYPES, saveAttachment } from "./attachments";
 import { FileError, listDir, openWithSystem, readFileForView } from "./files";
 import { McpError, McpManager } from "./mcp";
+import { Notifier } from "./notify";
 import { AGENT_IDS, AgentError, AgentRegistry, type AgentId } from "./agents";
 import { codexModels } from "./codex-catalog";
 import { codexCommands, codexSkills } from "./codex-commands";
 import { searchFiles } from "./git-actions";
 import { CodexSessions, listCodexSessions } from "./codex-session";
+import { collectLinks } from "./links";
 import { searchBoard } from "./search";
-import { SessionCache, mergeCommandEntries } from "./session";
+import { SessionCache, mergeCommandEntries, type SessionSummary } from "./session";
 import { ptySupported, ShellManager, type PtyKind, type Shell } from "./shell";
 import type { TerminalWatcher } from "./terminals";
 import { attachmentHeader, canCopyFile, copyFileToClipboard, markdownPage, markdownTitle, revealFile, ShareError } from "./share";
 import { UpdateChecker } from "./update";
+import { SpendIndex } from "./spend";
 import { ClaudeLogIndex, readWindows, recordWindow, ticketRuns, ticketUsage, UsageCache, windowsNeeded } from "./ticket-usage";
 import { fetchUsage, type UsageResult } from "./usage";
 import type { Store } from "./store";
-import { STATUSES, type Config, type Profile, type ScheduleEditor, type Status, type Ticket } from "./types";
+import { runCapFor, STATUSES, type Config, type Profile, type ScheduleEditor, type Status, type Ticket, type Workspace } from "./types";
 import { nowIso, slugify } from "./util";
 import { authorizeLan, createLanSignIn, type LanAccess } from "./lan";
 import { ClaudeCommands, effortOptions } from "./commands";
@@ -52,6 +59,8 @@ export interface ServerDeps {
   webDir: string;
   /** Opt-in private LAN access; localhost remains available to the CLI. */
   lan?: LanAccess;
+  /** gh stand-ins for the PR box (tests). */
+  pr?: PrDeps;
   /** URL path → embedded file (standalone binary). When non-empty, used instead of webDir. */
   assets?: Record<string, string>;
   sessions?: SessionCache;
@@ -61,7 +70,7 @@ export interface ServerDeps {
   mcp?: McpManager;
   scheduler?: Scheduler;
   agents?: AgentRegistry;
-  questions?: Questions;
+  huddles?: Huddles;
   /** Restart the daemon once no run is active (POST /api/restart); missing when not running as the daemon. */
   restart?: () => { running: number; alreadyPending: boolean };
   /** Runs `gh` for bug reports (tests pass a fake). */
@@ -76,6 +85,9 @@ export interface ServerDeps {
   claudeLogs?: ClaudeLogIndex;
   /** Publishes output files as claude.ai pages (tests pass a fake). */
   publishArtifact?: (job: ArtifactJob) => Promise<ArtifactOutcome>;
+  /** Phone access over Tailscale (tests pass one with a fake tailscale runner). */
+  /** "Needs you" notifications (notify.ts); the daemon passes its started one. */
+  notifier?: Notifier;
 }
 
 /** A Share menu publish in progress, or the error of the last one, per output file. Not persisted. */
@@ -108,7 +120,6 @@ const LOCAL_HOSTS = ["localhost", "127.0.0.1"];
 const DEFAULT_MAX_PARALLEL = 5;
 const CLEAR_COMMAND = { name: "clear", description: "Start a new conversation", argumentHint: "", aliases: ["new"], builtin: true };
 const EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"];
-const INBOX_KINDS = new Set(["questions", "proposal", "reply", "blocked", "failed"]);
 /** Output extensions served with their image type (raster only) so the Outputs tab can preview them. */
 const OUTPUT_IMAGE_TYPES: Record<string, string> = {
   ...Object.fromEntries(Object.entries(IMAGE_TYPES).map(([t, e]) => [e, t])),
@@ -154,25 +165,31 @@ export function createServer(deps: ServerDeps) {
   const { store, bus, board } = deps;
   const codexSessions = deps.codexSessions ?? new CodexSessions(store);
   const sessions = deps.sessions ?? new SessionCache();
+  const huddleSessions = new HuddleSessionCache();
   const updates = deps.updates ?? new UpdateChecker();
   const shells = deps.shells ?? new ShellManager();
   const mcp = deps.mcp ?? new McpManager(bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   const scheduler = deps.scheduler ?? new Scheduler(board, store, bus);
   const agents = deps.agents ?? new AgentRegistry();
-  const questions = deps.questions ?? new Questions(store, board);
   const notifications = deps.notifications ?? new Notifications(store);
   const commands = deps.commands ?? new ClaudeCommands(process.env.CKANBAN_CLAUDE_BIN ?? "claude");
+  const huddles = deps.huddles ?? new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   const snippets = new Snippets(store, bus);
   const windowsFile = join(store.root, "usage-windows.json");
   const usage = new UsageCache(deps.usage ?? fetchUsage, (r) => recordWindow(windowsFile, r));
+  const spend = new SpendIndex(store);
   const claudeLogs = deps.claudeLogs ?? new ClaudeLogIndex();
   const publishArtifact = deps.publishArtifact ?? ((job: ArtifactJob) => runArtifactJob(job));
+  const notifier = deps.notifier ?? new Notifier(store, bus, {
+    root: store.root, sessionSummary: (id) => sessions.summary(id), isRunning: (s, id) => board.isRunning(s, id),
+    hostHuddles: (s) => board.hostHuddles(s), baseUrl: () => `http://localhost:${server.port ?? deps.port}`,
+  });
   // "<profile>/<ticket>" -> jobs by output file.
   const shareJobs = new Map<string, Map<string, ShareJob>>();
 
   const profileOr404 = (slug: string): Profile => {
     const p = store.getProfile(slug);
-    if (!p) throw new HttpError(404, `profile ${slug} not found`);
+    if (!p) throw new HttpError(404, `board ${slug} not found`);
     return p;
   };
   const ticketOr404 = (slug: string, id: string): Ticket => {
@@ -180,28 +197,40 @@ export function createServer(deps: ServerDeps) {
     if (!t) throw new HttpError(404, `ticket ${id} not found`);
     return t;
   };
-  // Only read when a planner has proposed tickets, so listing the board stays cheap.
-  const childTitles = (slug: string, id: string) =>
-    new Set(store.listTickets(slug).filter((c) => c.parentId === id).map((c) => c.title));
   /**
-   * Board runs send RUN_HEADER ("<profile>/<ticket id>") with ticket changes. Runs can't change the board, except
-   * a planner on its own child tickets: any run of a running plan, or a reply to the user's message in the
-   * planner's chat (see Board.plannerRights). Returns that planner, or undefined for the user.
+   * Board runs send RUN_HEADER ("<profile>/<ticket id>") with ticket changes. Runs can't change the board, except:
+   * - a Planning chat answering the user's message (Board.userRequestRights) acts for the user on any ticket of its
+   *   board but its own: returned as `requester`;
+   * - a planner on its own child tickets: any run of a running plan, or a reply to the user's message in the
+   *   planner's chat (Board.plannerRights): returned as `planner`.
+   * Returns {} for the user. Huddle agents run as their host ticket but get neither.
    */
-  const plannerFor = (req: Request, slug: string, target?: Ticket): Ticket | undefined => {
+  const runRights = (req: Request, slug: string, target?: Ticket): { planner?: Ticket; requester?: Ticket } => {
     const h = req.headers.get(RUN_HEADER);
-    if (!h) return undefined;
+    if (!h) return {};
     const [runSlug, runId] = h.split("/");
-    const planner = runSlug === slug && runId ? board.plannerRights(slug, runId) : null;
+    const mine = runSlug === slug && !!runId && !req.headers.get(HUDDLE_HEADER);
+    const requester = mine ? board.userRequestRights(slug, runId) : null;
+    if (requester) {
+      if (target?.id === requester.id) {
+        throw new HttpError(403, `${target.id} is this Planning chat's own ticket: ask the user to move, edit or stop it themselves ` +
+          "(changing it from here would end this reply or start its work)");
+      }
+      return { requester };
+    }
+    const planner = mine ? board.plannerRights(slug, runId) : null;
     if (!planner) {
       throw new HttpError(403, "changing the board is disabled inside a board run, so runs can't create or start other runs; " +
-        "only a planner may change its own child tickets: while its plan runs, or when the user asked for it in the planner's own chat");
+        "only a Planning chat answering the user's message may change other tickets, and a planner its own child tickets: " +
+        "while its plan runs, or when the user asked for it in the planner's own chat");
     }
     if (target && target.parentId !== planner.id) {
       throw new HttpError(403, `${target.id} is not a child ticket of plan ${planner.id}; the planner may only change its own child tickets`);
     }
-    return planner;
+    return { planner };
   };
+  /** How a change made for the user from a Planning chat is credited on the changed ticket. */
+  const byRequest = (requester: Ticket) => `by the Planning chat of ${requester.id} (user request)`;
   /** The board run's ticket (RUN_HEADER), null outside runs; a run may only reach tickets on its own board. */
   const runTicket = (req: Request, slug: string): string | null => {
     const h = req.headers.get(RUN_HEADER);
@@ -215,15 +244,37 @@ export function createServer(deps: ServerDeps) {
   };
   const strings = (v: unknown): string[] | undefined =>
     Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x.trim()).map((x) => x.trim()) : undefined;
-  // Only read for stuck plans, so listing the board stays cheap.
-  const planComplete = (slug: string, id: string) => {
-    const kids = childrenOf(store.listTickets(slug), id);
-    return kids.length > 0 && kids.every(isComplete);
+  /** Huddle teammates (agents with a session) by host ticket; huddle files are read again only once they change. */
+  const teammates = new Map<string, { version: string; byHost: Map<string, { handle: string; sessionId: string }[]> }>();
+  const teammatesOf = (slug: string, id: string) => {
+    let hit = teammates.get(slug);
+    const version = store.huddlesVersion(slug);
+    if (hit?.version !== version) {
+      const byHost = new Map<string, { handle: string; sessionId: string }[]>();
+      for (const h of store.listHuddles(slug)) {
+        const list = byHost.get(h.hostTicket) ?? [];
+        for (const p of h.participants) if (p.kind === "agent" && p.sessionId && p.sessionStarted) list.push({ handle: p.handle, sessionId: p.sessionId });
+        byHost.set(h.hostTicket, list);
+      }
+      hit = { version, byHost };
+      teammates.set(slug, hit);
+    }
+    return hit.byHost.get(id) ?? [];
   };
-  const view = (p: Profile, t: Ticket) => {
+  /** Every artifact and share link of the ticket, newest first (see links.ts). */
+  const ticketLinks = (slug: string, t: Ticket, session: SessionSummary | null) => collectLinks({
+    ticket: session?.artifacts,
+    huddles: teammatesOf(slug, t.id).map((m) => ({ handle: m.handle, artifacts: sessions.get(m.sessionId)?.artifacts ?? [] })),
+    results: store.aiComments(slug, t.id),
+    shareLinks: t.shareLinks,
+  });
+  /** hosts: the board's open huddles by host ticket, when the caller already has them (one read per board). */
+  const view = (p: Profile, t: Ticket, hosts = board.hostHuddles(p.slug)) => {
     const running = board.isRunning(p.slug, t.id);
     const codexParsed = t.agent === "codex" ? codexSessions.get(p.slug, t.id) : null;
     const session = t.agent === "codex" ? (codexParsed ? { ...codexParsed, updatedAt: t.updatedAt } : null) : t.sessionId ? sessions.summary(t.sessionId) : null;
+    const huddle = hosts.get(t.id);
+    const { attention, snoozed } = withSnooze(t, session, ticketAttention(store, p.slug, t, session, running, huddle), Date.now(), huddle);
     return {
       ...t,
       running,
@@ -231,21 +282,31 @@ export function createServer(deps: ServerDeps) {
       holdsSlot: running && board.holdsSlot(p.slug, t.id),
       resumeCommand: t.agent === "codex" ? (t.codexSessionId ? `cd ${shellQuote(t.workdir ?? t.worktree ?? p.path)} && codex resume ${shellQuote(t.codexSessionId)}` : null) : t.sessionId ? resumeCommand(t.workdir ?? t.worktree ?? p.path, t.sessionId) : null,
       session,
+      /** Artifacts and share links, newest first: the Outputs tab's Links, the header chips and the card's ↗ chip. */
+      links: ticketLinks(p.slug, t, session),
       /** Absolute outputs folder, so the Share menu can show where a file is. */
       outputDir: store.outputsPath(p.slug, t.id),
       shareJobs: [...(shareJobs.get(`${p.slug}/${t.id}`)?.values() ?? [])],
       canCopyFile: canCopyFile() || !!process.env.CKANBAN_OSASCRIPT_BIN,
       /** Linked session is open in a terminal right now (board chat still works, UI warns). */
       terminalOpen: deps.terminals?.isOpen(p.slug, t.id) ?? false,
+      /** The last run's error has a one-click fix (Start fresh session / Take over here). */
+      recovery: running ? null : recoveryFor(t.error),
       /** Ticket.needs: holds them now, or which ones another ticket holds while this one would start. */
       resources: board.resourceState(p.slug, t),
+      /** It would start now but another ticket is editing the board's folder in place (see Board.folderBusy). */
+      folderWait: board.folderWait(p.slug, t),
       /** A plan child waiting on the user (never started by the plan until then). */
       userWait: t.parentId && !isComplete(t) ? userWaitReason(t, session) : null,
-      attention: attentionFor(t, session, running, {
-        createdTitles: session?.pendingNewTickets.length ? childTitles(p.slug, t.id) : undefined,
-        managed: t.parentId ? planActive(store.getTicket(p.slug, t.parentId)?.plan) : false,
-        planComplete: t.plan?.state === "stuck" ? planComplete(p.slug, t.id) : undefined,
-      }),
+      attention,
+      /** Snoozed from the Inbox: what it waits for and until when (attention is null meanwhile). */
+      snoozed,
+      /** Its own huddle is working on it: the card shows "Huddle · n working" instead of an outcome badge. */
+      huddleBusy: !running && t.status !== "in_progress" && huddleBusy(huddle) && !huddleAsk(huddle),
+      /** API-equivalent $ so far (the Usage tab's total: its runs and its huddles' teammates), for In Progress and Review cards. */
+      costUsd: running || t.status === "in_progress" || t.status === "review" ? spend.ticket(p.slug, t.id).costUsd + huddles.ticketSpend(p.slug, t.id).costUsd : null,
+      /** Spending cap its next work run gets (null: none). */
+      runCap: runCapFor(t, p),
     };
   };
 
@@ -341,6 +402,23 @@ export function createServer(deps: ServerDeps) {
       throw new HttpError(415, "content-type must be application/json");
     }
 
+    // "Needs you" notifications (notify.ts). Runs can't read or change them: the webhook URL is the user's channel.
+    if (parts[0] === "notify") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "board runs can't use notification settings");
+      if (parts.length === 1 && m === "GET") return json(notifier.state());
+      if (parts.length === 1 && m === "POST") {
+        try {
+          return json(notifier.update(await body(req)));
+        } catch (e) {
+          throw new HttpError(400, (e as Error).message);
+        }
+      }
+      if (parts[1] === "test" && m === "POST") {
+        const b = await body(req);
+        return json({ ...(await notifier.test(typeof b?.profile === "string" ? b.profile : undefined)), state: notifier.state() });
+      }
+    }
+
     if (parts[0] === "health" && m === "GET") {
       const [claude, git, gh] = await Promise.all([
         which(process.env.CKANBAN_CLAUDE_BIN ?? "claude"), which("git"), which("gh"),
@@ -351,16 +429,23 @@ export function createServer(deps: ServerDeps) {
     if (parts[0] === "events" && m === "GET") return sse(req);
     if (parts[0] === "version" && m === "GET") return json(await updates.status());
     if (parts[0] === "usage" && m === "GET") return json(await usage.get(0));
+    // What every board spent today (tickets' runs and huddle agents), for the header pill.
+    if (parts[0] === "spend" && m === "GET") return json(spend.today());
+    // How every teammate (huddle preset) and template was used, from the huddles on every board.
+    if (parts[0] === "team-usage" && m === "GET") return json(huddles.usage());
     if (parts[0] === "inbox" && m === "GET") {
-      // Every board: tickets where Claude is waiting on the user (Review is left out on purpose).
+      // Every board: tickets that need the user (the same rule as the cards' "Your turn"), oldest first.
       const out = [];
       for (const p of store.listProfiles()) {
+        const hosts = board.hostHuddles(p.slug);
         for (const t of store.listTickets(p.slug)) {
-          const att = view(p, t).attention;
-          if (att && INBOX_KINDS.has(att.kind)) out.push({ profile: p.slug, profileName: p.name, id: t.id, title: t.title, attention: att });
+          const v = view(p, t, hosts);
+          const base = { profile: p.slug, profileName: p.name, id: t.id, title: t.title };
+          if (v.attention) out.push({ ...base, attention: v.attention });
+          else if (v.snoozed) out.push({ ...base, attention: v.snoozed.attention, snoozedUntil: v.snoozed.until });
         }
       }
-      return json(out);
+      return json(out.sort(byWaitingAge));
     }
 
     if (parts[0] === "notifications") {
@@ -385,13 +470,16 @@ export function createServer(deps: ServerDeps) {
       throw new HttpError(404, "not found");
     }
     if (parts[0] === "tickets" && parts.length === 1 && m === "GET") {
-      // ⌘K command bar: a light row per ticket on every board (title search runs in the browser).
+      // ⌘K command bar: a light row per ticket on every board (search runs in the browser). Long texts are
+      // capped: the bar only needs enough to find a word and show a snippet around it.
+      const cap = (s: string | null) => (s && s.length > 4000 ? s.slice(0, 4000) : s ?? "");
       const out = [];
       for (const p of store.listProfiles()) {
         for (const t of store.listTickets(p.slug)) {
           out.push({
             profile: p.slug, profileName: p.name, id: t.id, title: t.title, status: t.status,
             running: board.isRunning(p.slug, t.id), updatedAt: t.updatedAt,
+            body: cap(t.body), summary: cap(store.lastAiComment(p.slug, t.id)), prUrl: t.prUrl,
           });
         }
       }
@@ -505,6 +593,31 @@ export function createServer(deps: ServerDeps) {
       } catch (error) { throw new HttpError(503, (error as Error).message); }
     }
     if (parts[0] === "pick-folder" && m === "POST") return json({ path: await pickFolder() });
+    // A folder's version history, for the "Turn on version history" offer (New board, board settings).
+    if (parts[0] === "version-history" && parts.length === 1) {
+      const path = m === "GET" ? url.searchParams.get("path") ?? "" : String((await body(req))?.path ?? "");
+      if (!path.trim() || !isAbsolute(path)) throw new HttpError(400, "an absolute folder path is required");
+      const git = await which("git");
+      if (m === "GET") return json({ git, repo: git && existsSync(path) ? await repoKind(path) : null });
+      if (m === "POST") {
+        if (!git) throw new HttpError(400, "git isn't installed on this computer");
+        if (!existsSync(path)) throw new HttpError(404, `folder does not exist: ${path}`);
+        // A ticket editing the folder in place right now would leave half-done files in the first snapshot.
+        const busy = store.listProfiles().filter((p) => p.path === path)
+          .flatMap((p) => store.listTickets(p.slug).filter((t) => board.isRunning(p.slug, t.id) && board.runsInFolder(p.slug, t) !== false));
+        if (busy.length) throw new HttpError(409, `Wait until "${busy[0].title}" finishes: Claude is changing files in this folder right now.`);
+        let r;
+        try {
+          r = await enableVersionHistory(path);
+        } catch (e) {
+          throw new HttpError(500, `Couldn't turn on version history: ${(e as Error).message}`);
+        }
+        const repo = await repoKind(path);
+        // Boards on this folder: their next ticket gets a worktree of its own.
+        for (const p of store.listProfiles()) if (p.path === path) board.noteRepo(p.slug, repo);
+        return json({ ...r, repo });
+      }
+    }
     if (parts[0] === "restart" && parts.length === 1) {
       if (m === "GET") return json(board.restartState());
       if (m === "POST") {
@@ -556,6 +669,7 @@ export function createServer(deps: ServerDeps) {
           maxParallel: Math.max(1, Number(b.maxParallel) || DEFAULT_MAX_PARALLEL),
           model: b.model || null,
           createdAt: nowIso(),
+          ...(b.workspace !== undefined ? { workspace: workspaceValue(b.workspace) } : {}),
         };
         const saved = applyDetection(profile, await detectSetup(path));
         store.saveProfile(saved);
@@ -584,6 +698,18 @@ export function createServer(deps: ServerDeps) {
         }
         if (b.setupCommand !== undefined) next.setupCommand = String(b.setupCommand ?? "").trim();
         if (b.cleanupCommand !== undefined) next.cleanupCommand = String(b.cleanupCommand ?? "").trim();
+        if (b.autoHuddles !== undefined) next.autoHuddles = !!b.autoHuddles;
+        if (b.runCapUsd !== undefined) {
+          if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can change the board's spending cap");
+          next.runCapUsd = capValue(b.runCapUsd, true) || null;
+        }
+        if (b.artifacts !== undefined) next.artifacts = !!b.artifacts;
+        if (b.workspace !== undefined) next.workspace = workspaceValue(b.workspace);
+        if (b.stallMinutes !== undefined) {
+          const n = b.stallMinutes;
+          if (typeof n !== "number" || !Number.isInteger(n) || n < 0 || n > 1440) throw new HttpError(400, "stallMinutes must be a whole number of minutes from 0 (off) to 1440");
+          next.stallMinutes = n;
+        }
         if (b.setupDetected !== undefined) next.setupDetected = b.setupDetected && typeof b.setupDetected === "object" ? b.setupDetected : null;
         if (next.path !== profile.path) shells.kill(slug);
         store.saveProfile(next);
@@ -592,7 +718,7 @@ export function createServer(deps: ServerDeps) {
         return json(next);
       }
       if (m === "DELETE") {
-        if (board.running(slug) > 0) throw new HttpError(409, "profile has running tickets");
+        if (board.running(slug) > 0) throw new HttpError(409, "board has running tickets");
         store.deleteProfile(slug);
         snippets.dropScope(slug);
         shells.kill(slug);
@@ -603,6 +729,11 @@ export function createServer(deps: ServerDeps) {
 
     // /profiles/:p/detect-setup — what worktree setup detection finds now (the settings dialog decides what to save)
     if (parts[2] === "detect-setup" && parts.length === 3 && m === "POST") return json(await detectSetup(profile.path));
+
+    // /profiles/:p/commands — skills and commands in the profile folder (the `/` picker of new ticket and schedule descriptions)
+    if (parts[2] === "commands" && parts.length === 3 && m === "GET") {
+      return json(listCommands(profile.path, { projects: [profile.path] }).map(({ local, ...c }) => c));
+    }
 
     // /profiles/:p/sessions — Claude Code sessions started in the profile folder
     if (parts[2] === "sessions" && parts.length === 3 && m === "GET") {
@@ -700,29 +831,71 @@ export function createServer(deps: ServerDeps) {
       throw new HttpError(404, "not found");
     }
 
-    // /profiles/:p/questions/:q/(poll|reply) — ticket-to-ticket questions (ask_ticket / reply_ticket)
-    if (parts[2] === "questions" && parts.length === 5 && m === "POST") {
-      const b = await body(req);
-      const runId = runTicket(req, slug);
-      if (parts[4] === "poll") {
-        if (!runId) throw new HttpError(403, "only the asking ticket's run can wait for a reply");
-        return json(questions.poll(slug, parts[3], runId, !!b.final));
+    // /profiles/:p/huddle-presets[/:name] — huddle role presets ("teammates"): built-ins merged with the global ones and
+    // the board's own. Anyone reads; only the user saves or deletes (the Team tab, a proposal card, the CLI). A run (a
+    // huddle agent's or a ticket's, the coordinator included) proposes one with propose_teammate instead. Body `scope`:
+    // "board" (default) or "global" (every board); DELETE ?scope= defaults to the level in effect.
+    if (parts[2] === "huddle-presets") {
+      if (parts.length === 3 && m === "GET") return json(huddles.presets(slug));
+      if (req.headers.get(RUN_HEADER) || req.headers.get(HUDDLE_HEADER)) {
+        throw new HttpError(403, m === "DELETE"
+          ? "a board or huddle run can't delete or reset teammates; ask the user"
+          : "a board or huddle run can't save teammates; propose one with propose_teammate and the user saves it with one click");
       }
-      if (parts[4] === "reply") return json(await questions.reply(slug, parts[3], runId, String(b.text ?? "")));
+      if (parts.length === 3 && m === "POST") {
+        const b = await body(req);
+        return json(huddles.savePreset(slug, b, b?.scope ?? "board"), 201);
+      }
+      if (parts.length === 4 && m === "PUT") {
+        const b = await body(req);
+        return json(huddles.savePreset(slug, { ...b, name: parts[3] }, b?.scope ?? "board"));
+      }
+      if (parts.length === 4 && m === "DELETE") return json(huddles.deletePreset(slug, parts[3], url.searchParams.get("scope") ?? undefined));
       throw new HttpError(404, "not found");
     }
 
     if (parts[2] === "activity" && parts.length === 3 && m === "GET") return json(store.workspaceActivity(slug));
+    // /profiles/:p/huddle-templates[/:name] — whole-huddle templates (roster and rules), levels as for presets. Anyone
+    // reads; only the user changes them.
+    if (parts[2] === "huddle-templates") {
+      if (parts.length === 3 && m === "GET") return json(huddles.templates(slug));
+      if (req.headers.get(RUN_HEADER) || req.headers.get(HUDDLE_HEADER)) throw new HttpError(403, "only the user changes huddle templates (the Team tab)");
+      if (parts.length === 3 && m === "POST") {
+        const b = await body(req);
+        return json(huddles.saveTemplate(slug, b, b?.scope ?? "board"), 201);
+      }
+      if (parts.length === 4 && m === "PUT") {
+        const b = await body(req);
+        return json(huddles.saveTemplate(slug, { ...b, name: parts[3] }, b?.scope ?? "board"));
+      }
+      if (parts.length === 4 && m === "DELETE") return json(huddles.deleteTemplate(slug, parts[3], url.searchParams.get("scope") ?? undefined));
+      throw new HttpError(404, "not found");
+    }
+
+    // /profiles/:p/huddle-notes[/:role/:scope] — role notes from past huddles (huddle-notes.ts). Anyone reads; only the
+    // user writes them, so no agent can change what future agents are told.
+    if (parts[2] === "huddle-notes") {
+      if (parts.length === 3 && m === "GET") return json({ notes: huddles.notes(slug), cap: NOTES_CAP });
+      if (req.headers.get(RUN_HEADER) || req.headers.get(HUDDLE_HEADER)) throw new HttpError(403, "only the user changes huddle role notes (the Team tab)");
+      if (parts.length === 5 && m === "PUT") return json(huddles.setNotes(slug, parts[3], parts[4], (await body(req))?.notes));
+      throw new HttpError(404, "not found");
+    }
+
+    // /profiles/:p/huddles — shared rooms where several Claude sessions work on a ticket (see huddle.ts)
+    if (parts[2] === "huddles") return huddleApi(req, url, slug, parts.slice(3));
 
     // /profiles/:p/tickets
     if (parts[2] !== "tickets") throw new HttpError(404, "not found");
     if (parts.length === 3) {
-      if (m === "GET") return json(store.listTickets(slug).map((t) => view(profile, t)));
+      if (m === "GET") {
+        const hosts = board.hostHuddles(slug);
+        return json(store.listTickets(slug).map((t) => view(profile, t, hosts)));
+      }
       if (m === "POST") {
         const b = await body(req);
         const title = String(b.title ?? "").trim();
         if (!title) throw new HttpError(400, "title is required");
-        const planner = plannerFor(req, slug);
+        const { planner, requester } = runRights(req, slug);
         let status: Status = STATUSES.includes(b.status) ? b.status : "backlog";
         let mode: "auto" | "interview" = b.mode === "auto" ? "auto" : "interview";
         let parentId = typeof b.parentId === "string" && b.parentId ? b.parentId : undefined;
@@ -749,10 +922,12 @@ export function createServer(deps: ServerDeps) {
         const standalone = b.standalone === true && !planner;
         let t = await board.createTicket(slug, {
           ...metadata(b), title, body: String(b.body ?? ""), status: standalone ? "backlog" : b.sessionId && !planner ? "backlog" : status, mode, parentId, planKey, dependsOn, needs,
+          important: b.important === true,
           ...(standalone ? { standalone, access: b.access === "edit" ? "edit" : "read", isolated: b.isolated === true } : {}),
           ...(b.codexSessionId ? { codexSessionId: String(b.codexSessionId) } : {}),
         });
         if (planner) store.addComment(slug, t.id, "ai", `Created by the planner of plan ${planner.id}.`);
+        if (requester) store.addComment(slug, t.id, "ai", `Created ${byRequest(requester)}.`);
         if (b.sessionId && !planner) {
           try {
             await board.linkSession(slug, t.id, String(b.sessionId));
@@ -776,7 +951,10 @@ export function createServer(deps: ServerDeps) {
         const b = await body(req);
         if (b.status !== undefined && !STATUSES.includes(b.status)) throw new HttpError(400, `invalid status ${b.status}`);
         const target = store.getTicket(slug, id)!;
-        const planner = plannerFor(req, slug, target);
+        // ⭐ Important on its own ticket: any of the ticket's runs may set it (the user said the task matters).
+        const own = req.headers.get(RUN_HEADER) === `${slug}/${id}` && !req.headers.get(HUDDLE_HEADER);
+        const onlyImportant = Object.keys(b).length > 0 && Object.keys(b).every((k) => k === "important");
+        const { planner, requester } = own && onlyImportant ? {} : runRights(req, slug, target);
         const patch: Parameters<Board["updateTicket"]>[2] = metadata(b);
         for (const key of ["codexModel", "codexEffort"]) if (key in b && b[key] !== null && typeof b[key] !== "string") throw new HttpError(400, `Invalid ${key}`);
         if (b.codexModel === null || typeof b.codexModel === "string") patch.codexModel = b.codexModel;
@@ -784,8 +962,8 @@ export function createServer(deps: ServerDeps) {
         if (b.access === "read" || b.access === "edit") patch.access = b.access;
         if (typeof b.readAt === "string" && !Number.isNaN(Date.parse(b.readAt))) patch.readAt = b.readAt;
         if (b.standalone === false) patch.standalone = false;
-        // Only the user moves a ticket to Chats, never a planner's run.
-        if (b.standalone === true && !planner) patch.standalone = true;
+        // Only the user moves a ticket to Chats, never a run.
+        if (b.standalone === true && !req.headers.get(RUN_HEADER)) patch.standalone = true;
         const deps = strings(b.dependsOn);
         if (deps) patch.dependsOn = deps;
         const needs = strings(b.needs);
@@ -799,9 +977,20 @@ export function createServer(deps: ServerDeps) {
         if (b.status) patch.status = b.status;
         if (typeof b.order === "number") patch.order = b.order;
         if (b.notice === null) patch.notice = null;
-        if (planner) {
+        if (b.important !== undefined) {
+          if (typeof b.important !== "boolean") throw new HttpError(400, "important must be true or false");
+          patch.important = b.important;
+        }
+        // Spending cap per run: a positive amount, 0 for none, null for the board's. Only the user sets it.
+        if (b.runCapUsd !== undefined) {
+          if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can change a ticket's spending cap");
+          patch.runCapUsd = capValue(b.runCapUsd, true);
+        }
+        if (planner || requester) {
           delete patch.order;
           delete patch.notice;
+        }
+        if (planner) {
           if (patch.status === "ready" && target.status !== "ready" && target.runCount > 0) {
             try {
               board.countRetry(slug, planner.id, id, MAX_RETRIES);
@@ -817,15 +1006,18 @@ export function createServer(deps: ServerDeps) {
           if (e instanceof ConflictError) throw e;
           throw new HttpError(400, (e as Error).message);
         }
-        if (planner) {
+        const changer = planner ?? requester;
+        if (own && onlyImportant && target.important !== t.important) store.addComment(slug, id, "ai", t.important ? "Claude marked this ticket ⭐ Important." : "Claude cleared ⭐ Important.");
+        if (changer) {
           const what = Object.entries(patch)
-            .map(([k, v]) => (k === "status" ? `moved it to ${v}` : k === "parentId" ? `released it from plan ${planner.id}` : `changed ${k}`)).join(", ");
-          if (what) store.addComment(slug, id, "ai", `Planner ${what}.`);
+            .map(([k, v]) => (k === "status" ? `moved it to ${v}` : k === "parentId" ? `released it from plan ${target.parentId}` : k === "important" ? (v ? "marked it ⭐ Important" : "cleared ⭐ Important") : `changed ${k}`)).join(", ");
+          if (what) store.addComment(slug, id, "ai", planner ? `Planner ${what}.` : `${what[0].toUpperCase()}${what.slice(1)} ${byRequest(changer)}.`);
         }
         return json(view(profile, t));
       }
       if (m === "DELETE") {
         if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "deleting tickets is disabled inside a board run");
+        huddles.closeForTicket(slug, id);
         await board.deleteTicket(slug, id);
         return new Response(null, { status: 204 });
       }
@@ -870,6 +1062,21 @@ export function createServer(deps: ServerDeps) {
       return json(view(profile, await board.updateTicket(slug, id, { [field]: value })));
     }
     if (action === "activity" && m === "GET") return json(store.readActivity(slug, id));
+    // Inbox Snooze: hide what the ticket waits for now (1 day, or { hours }); DELETE unsnoozes.
+    if (action === "snooze" && (m === "POST" || m === "DELETE")) {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "snoozing is the user's, not a board run's");
+      if (m === "DELETE") return json(view(profile, board.setSnooze(slug, id, null)));
+      const b = (await body(req)) ?? {};
+      const hours = b.hours === undefined ? SNOOZE_MS / 3600_000 : Number(b.hours);
+      if (!(hours > 0 && hours <= 24 * 30)) throw new HttpError(400, "hours must be between 0 and 720");
+      const t = store.getTicket(slug, id)!;
+      const session = t.sessionId ? sessions.summary(t.sessionId) : null;
+      const huddle = board.hostHuddles(slug).get(id);
+      const att = ticketAttention(store, slug, t, session, board.isRunning(slug, id), huddle);
+      if (!att) throw new HttpError(409, "this ticket doesn't need you, nothing to snooze");
+      const until = new Date(Date.now() + hours * 3600_000).toISOString();
+      return json(view(profile, board.setSnooze(slug, id, { until, key: snoozeKey(t, session, att, huddle) })));
+    }
     if (action === "usage" && m === "GET") {
       // The usage endpoint rate-limits: a ticket view reuses an answer up to 5 minutes old.
       const plan = await usage.get(5 * 60_000);
@@ -879,6 +1086,7 @@ export function createServer(deps: ServerDeps) {
       if (needed.length) await claudeLogs.refresh(Math.min(...needed.map((w) => Date.parse(w.start))));
       return json(ticketUsage({
         activity, windows, machineCost: (a, b) => claudeLogs.costBetween(a, b), windowError: "error" in plan ? plan.error : null,
+        teammates: huddles.ticketSpend(slug, id),
       }));
     }
     if (action === "outputs" && m === "POST" && parts.length > 5) {
@@ -917,9 +1125,19 @@ export function createServer(deps: ServerDeps) {
       });
     }
     if (action === "diff" && m === "GET") {
-      // The Changes tab: the worktree (committed, uncommitted and untracked) against its merge-base with the base branch.
+      // The Changes tab: the worktree (committed, uncommitted and untracked) against its merge-base with the base branch;
+      // a ticket working in the board's folder itself, that folder against its HEAD at the ticket's first run.
       const t = store.getTicket(slug, id)!;
-      if (!t.worktree) throw new HttpError(404, "this ticket has no worktree");
+      const ws = url.searchParams.get("w") === "1";
+      if (!t.worktree && t.baseSha && !t.workdir) {
+        try {
+          return json(await folderDiff(profile.path, t.baseSha, { ignoreWhitespace: ws }));
+        } catch (e) {
+          if (e instanceof DiffError) throw new HttpError(e.status, e.message);
+          throw e;
+        }
+      }
+      if (!t.worktree) throw new HttpError(404, "No version history for this folder, so changes can't be shown.");
       try {
         const base = profile.baseBranch || (await detectBaseBranch(t.worktree));
         return json(await ticketDiff(t.worktree, base, { ignoreWhitespace: url.searchParams.get("w") === "1" }));
@@ -946,24 +1164,19 @@ export function createServer(deps: ServerDeps) {
         const text = String(b.text ?? "").trim();
         if (!text) throw new HttpError(400, "text is required");
         // The child reads user comments on its next run; mark who wrote this one.
-        const planner = plannerFor(req, slug, store.getTicket(slug, id)!);
-        return json(board.addComment(slug, id, planner ? `Planner: ${text}` : text), 201);
+        const { planner, requester } = runRights(req, slug, store.getTicket(slug, id)!);
+        const by = planner ? "Planner: " : requester ? `From the Planning chat of ${requester.id} (user request): ` : "";
+        return json(board.addComment(slug, id, by + text), 201);
       }
     }
-    // Another ticket's Claude asks this ticket's Claude (ask_ticket); the asker then polls questions/:q/poll.
-    if (m === "POST" && action === "ask") {
-      const from = runTicket(req, slug);
-      if (!from) throw new HttpError(403, "ask_ticket only works inside a board run (it asks on behalf of that run's ticket)");
-      const b = await body(req);
-      const q = await questions.ask(slug, from, id, String(b.question ?? ""), Number(b.waitMs) || 0);
-      return json(q, 201);
-    }
     if (m === "POST" && action === "chat") {
-      const planner = plannerFor(req, slug, store.getTicket(slug, id)!);
+      const { planner, requester } = runRights(req, slug, store.getTicket(slug, id)!);
       const b = await body(req);
       const text = String(b.text ?? "").trim();
       if (!text) throw new HttpError(400, "text is required");
-      const t = await board.chat(slug, id, text, { fromPlanner: !!planner });
+      // A message from a run never hands the user's rights on to the run it starts.
+      const t = await board.chat(slug, id, text, { fromPlanner: !!(planner || requester) });
+      if (requester) store.addComment(slug, id, "ai", `Message sent ${byRequest(requester)}.`);
       return json(view(profile, t), 202);
     }
     // POST .../fork { model?, text? }: a copy of this chat that continues the same conversation (on another model).
@@ -988,15 +1201,37 @@ export function createServer(deps: ServerDeps) {
         throw new HttpError(404, (e as Error).message);
       }
     }
-    // A message Stop left unsent: POST .../queued/<msgId> sends it, DELETE discards it.
-    if (action === "queued" && parts[5] && !parts[6] && (m === "POST" || m === "DELETE")) {
+    // A message Claude hasn't received: POST .../queued/<msgId> sends it (unsent only), PATCH { text } edits it, DELETE discards it.
+    if (action === "queued" && parts[5] && !parts[6] && (m === "POST" || m === "PATCH" || m === "DELETE")) {
       try {
-        const t = m === "POST" ? await board.sendQueued(slug, id, parts[5]) : board.discardQueued(slug, id, parts[5]);
+        let t: Ticket;
+        if (m === "PATCH") {
+          const text = String((await body(req)).text ?? "").trim();
+          if (!text) throw new HttpError(400, "text is required");
+          t = board.editQueued(slug, id, parts[5], text);
+        } else t = m === "POST" ? await board.sendQueued(slug, id, parts[5]) : board.discardQueued(slug, id, parts[5]);
         return json(view(profile, t), m === "POST" ? 202 : 200);
       } catch (e) {
-        if (e instanceof ConflictError) throw e;
+        if (e instanceof ConflictError || e instanceof HttpError) throw e;
         throw new HttpError(404, (e as Error).message);
       }
+    }
+    // A teammate card in the chat (propose_teammate) was answered: PUT .../teammate-cards/<entry uuid> { state: "saved",
+    // name, scope } after the user saved it (the save itself goes through huddle-presets), or { state: "dismissed" }.
+    if (action === "teammate-cards" && parts.length === 6 && m === "PUT") {
+      if (req.headers.get(RUN_HEADER) || req.headers.get(HUDDLE_HEADER)) throw new HttpError(403, "only the user answers teammate cards");
+      const b = await body(req);
+      if (b.state !== "saved" && b.state !== "dismissed") throw new HttpError(400, "state must be saved or dismissed");
+      if (b.scope !== undefined && b.scope !== "global" && b.scope !== "board") throw new HttpError(400, "scope must be global or board");
+      const t = store.getTicket(slug, id)!;
+      const card = {
+        state: b.state, at: nowIso(),
+        ...(b.state === "saved" && typeof b.name === "string" && b.name.trim() ? { name: b.name.trim() } : {}),
+        ...(b.state === "saved" && b.scope ? { scope: b.scope } : {}),
+      };
+      store.updateTicket(slug, id, { teammateCards: { ...t.teammateCards, [parts[5]]: card } });
+      emitTicket(slug, id);
+      return json(view(profile, store.getTicket(slug, id)!));
     }
     if (m === "POST" && action === "link-session") {
       const b = await body(req);
@@ -1025,10 +1260,23 @@ export function createServer(deps: ServerDeps) {
       const t = board.answerPermission(slug, id, String(b.askId ?? ""), b.allow === true, b.always === true);
       return json(view(profile, t));
     }
+    // One-click recovery: the session is gone (fresh-session) or open in a terminal (take-over). The user's call.
+    if (m === "POST" && (action === "fresh-session" || action === "take-over")) {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "session recovery is the user's call, not a run's");
+      try {
+        if (action === "fresh-session") return json({ ticket: view(profile, board.startFresh(slug, id)), external: false });
+        const r = await board.takeOver(slug, id);
+        return json({ ticket: view(profile, r.ticket), external: r.external });
+      } catch (e) {
+        if (e instanceof ConflictError) throw e;
+        throw new HttpError(400, (e as Error).message);
+      }
+    }
     if (m === "POST" && action === "stop") {
-      const planner = plannerFor(req, slug, store.getTicket(slug, id)!);
+      const { planner, requester } = runRights(req, slug, store.getTicket(slug, id)!);
       const stopped = board.stop(slug, id);
       if (planner && stopped) store.addComment(slug, id, "ai", "Planner stopped this run.");
+      if (requester && stopped) store.addComment(slug, id, "ai", `Run stopped ${byRequest(requester)}.`);
       return json({ stopped });
     }
     // Start / pause / resume / mark done a planner's plan, or change how many children run at once.
@@ -1043,6 +1291,7 @@ export function createServer(deps: ServerDeps) {
         if (!board.plannerRights(slug, id)) {
           throw new HttpError(403, "starting the plan from a board run needs the user's go-ahead: only a reply to the user's message in this ticket's chat may do it");
         }
+        if (store.getTicket(slug, id)!.plan?.state === "done") throw new HttpError(403, "this ticket's plan is done; the user can start a new one first");
       }
       const n = b.maxConcurrent === undefined || byPlanner ? undefined : Number(b.maxConcurrent);
       try {
@@ -1088,9 +1337,65 @@ export function createServer(deps: ServerDeps) {
       const r = board.adoptTickets(slug, id, ids);
       return json({ adopted: r.adopted.map((t) => view(profile, t)), skipped: r.skipped });
     }
+    // A run stopped at its spending cap: "Continue with +$Y" ({addUsd}).
+    if (m === "POST" && action === "cap-continue") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can continue a ticket past its spending cap");
+      const b = await body(req);
+      try {
+        return json(view(profile, await board.continueAfterCap(slug, id, Number(b.addUsd))), 202);
+      } catch (e) {
+        if (e instanceof ConflictError) throw e;
+        throw new HttpError(400, (e as Error).message);
+      }
+    }
+    // Stalled run (no output for the board's stall time): Stop, Keep waiting or Restart in the same session.
+    if (m === "POST" && action === "stall") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can stop, keep waiting on or restart a stalled run");
+      const b = await body(req);
+      if (b.action !== "stop" && b.action !== "wait" && b.action !== "restart") throw new HttpError(400, "action must be stop, wait or restart");
+      try {
+        return json(view(profile, board.stallAction(slug, id, b.action)));
+      } catch (e) {
+        throw new HttpError(409, (e as Error).message);
+      }
+    }
+    // Usage limit: "Continue now" (action: continue), or "Don't auto-continue" / "Auto-continue" (auto: boolean).
+    if (m === "POST" && action === "limit") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can continue a ticket after the usage limit or change its auto-continue");
+      const b = await body(req);
+      if (b.action === "continue") {
+        try {
+          return json(view(profile, await board.continueAfterLimit(slug, id)), 202);
+        } catch (e) {
+          if (e instanceof ConflictError) throw e;
+          throw new HttpError(400, (e as Error).message);
+        }
+      }
+      if (typeof b.auto !== "boolean") throw new HttpError(400, "send {action: \"continue\"} or {auto: true|false}");
+      return json(view(profile, board.setAutoContinue(slug, id, b.auto)));
+    }
     if (m === "POST" && action === "check-pr") {
       const state = await checkPr(board, store, slug, id);
       return json({ state, ticket: view(profile, store.getTicket(slug, id)!) });
+    }
+    // Review PR box: refresh (rate-limited unless force), send failing CI logs to Claude, resolve conflicts, Merge & done.
+    if (m === "POST" && action === "pr" && ["refresh", "send-failures", "resolve-conflicts", "merge"].includes(parts[5])) {
+      if (parts[5] !== "refresh" && req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can merge a PR or send its CI failures or conflicts from the board");
+      try {
+        if (parts[5] === "refresh") {
+          const force = !!(await body(req).catch(() => ({} as Record<string, unknown>))).force;
+          const pr = await refreshPr(board, store, slug, id, { ...deps.pr, maxAgeMs: force ? 0 : REFRESH_MIN_MS });
+          return json({ pr, ticket: view(profile, store.getTicket(slug, id)!) });
+        }
+        const t = parts[5] === "merge" ? await mergePr(board, store, slug, id, deps.pr)
+          : parts[5] === "resolve-conflicts" ? await resolveConflicts(board, store, slug, id, deps.pr)
+          : await sendFailures(board, store, slug, id, deps.pr);
+        return json(view(profile, t), parts[5] === "merge" ? 200 : 202);
+      } catch (e) {
+        if (e instanceof PrError) throw new HttpError(e.status, e.message);
+        if (e instanceof HttpError || e instanceof ConflictError) throw e;
+        throw new HttpError(502, (e as Error).message);
+      }
     }
     if (m === "POST" && action === "planning-command") {
       try {
@@ -1098,6 +1403,169 @@ export function createServer(deps: ServerDeps) {
       } catch (e) {
         throw new HttpError(400, (e as Error).message);
       }
+    }
+    throw new HttpError(404, "not found");
+  }
+
+  /**
+   * Huddle routes. The sender of a message is never taken from the body: a request from a board run is that run's
+   * participant (its token for agents), anything else is the user (@you). Stop, resume, close and stopping one
+   * participant are the user's alone.
+   */
+  async function huddleApi(req: Request, url: URL, slug: string, rest: string[]): Promise<Response> {
+    const m = req.method;
+    const who: Caller = { run: req.headers.get(RUN_HEADER), agent: req.headers.get(HUDDLE_HEADER) };
+    const userOnly = (what: string) => {
+      if (who.run || who.agent) throw new HttpError(403, `only the user can ${what}; ask them in the huddle (tag @you)`);
+    };
+    const num = (k: string) => {
+      const v = url.searchParams.get(k);
+      return v === null || v === "" || !Number.isFinite(Number(v)) ? undefined : Number(v);
+    };
+    // start_huddle: the host ticket's own unattended run starts its review huddle (Huddles.startAuto checks the rest).
+    if (rest.length === 1 && rest[0] === "auto" && m === "POST") {
+      const [runSlug, ticketId] = (who.run ?? "").split("/");
+      if (!who.run || who.agent || runSlug !== slug || !ticketId) {
+        throw new HttpError(403, "only a board run of the host ticket can start an auto huddle; propose a roster with propose_huddle instead");
+      }
+      const b = await body(req);
+      const out = huddles.startAuto(slug, ticketId, {
+        reason: typeof b.reason === "string" ? b.reason : "",
+        template: typeof b.template === "string" && b.template.trim() ? b.template.trim() : undefined,
+        roster: Array.isArray(b.roster) ? b.roster : undefined,
+        maxCostUsd: b.maxCostUsd === undefined || b.maxCostUsd === null ? undefined : Number(b.maxCostUsd),
+      });
+      return json({ waiting: out.waiting, template: out.template, huddle: out.huddle ? huddles.view(slug, out.huddle) : null }, out.waiting ? 202 : 201);
+    }
+    if (rest.length === 0) {
+      if (m === "GET") return json(huddles.list(slug, url.searchParams.get("ticket") ?? undefined));
+      if (m === "POST") {
+        userOnly("start a huddle (propose a roster with propose_huddle instead)");
+        const b = await body(req);
+        const ticketId = String(b.ticketId ?? "");
+        if (!ticketId) throw new HttpError(400, "ticketId is required");
+        const h = huddles.create(slug, ticketId, Array.isArray(b.roster) ? b.roster : [], {
+          maxParticipants: Number(b.maxParticipants) || undefined,
+          maxCostUsd: b.maxCostUsd === undefined || b.maxCostUsd === null ? undefined : Number(b.maxCostUsd),
+          template: typeof b.template === "string" && b.template.trim() ? b.template : undefined,
+        });
+        return json(huddles.view(slug, h), 201);
+      }
+      throw new HttpError(404, "not found");
+    }
+    const { h, me } = huddles.identify(slug, rest[0], who);
+    const [, action, handle, sub, part, partId] = rest;
+    if (!action && m === "GET") {
+      const page = huddles.messages(slug, h.id, { before: num("before"), since: num("since"), limit: num("limit") });
+      return json({ huddle: huddles.view(slug, h), you: me.handle, ...page });
+    }
+    if (m === "POST" && action === "messages" && !handle) {
+      const b = await body(req);
+      const kind = b.kind === "finding" ? "finding" : "message";
+      const status = b.status ? { status: b.status, reason: typeof b.reason === "string" ? b.reason : undefined, lessons: b.lessons } : undefined;
+      const src = req.headers.get(SOURCE_HEADER);
+      return json(huddles.post(slug, h.id, me, String(b.text ?? ""), kind, status, src === "ui" || src === "mcp" ? src : "none"), 201);
+    }
+    // The pinned brief (goal, decisions): leads, @main and the user.
+    if (m === "PUT" && action === "brief" && !handle) {
+      const b = await body(req);
+      return json(huddles.view(slug, huddles.setBrief(slug, h.id, me, String(b.text ?? ""))));
+    }
+    // A participant's own status: done, blocked (reason) or active again.
+    if (m === "POST" && action === "status" && !handle) {
+      const b = await body(req);
+      const { token: _t, ...p } = huddles.setStatus(slug, h.id, me, b.status, typeof b.reason === "string" ? b.reason : undefined, b.lessons);
+      return json(p);
+    }
+    // @main or a lead asks the user to close the huddle (only the user closes it).
+    if (m === "POST" && action === "close-request" && !handle) {
+      const b = await body(req);
+      return json(huddles.view(slug, huddles.requestClose(slug, h.id, me, typeof b.reason === "string" ? b.reason : "")));
+    }
+    if (action === "participants") {
+      if (m === "POST" && !handle) {
+        const b = await body(req);
+        const added = huddles.addParticipants(slug, h.id, me, b ?? {});
+        return json({ added: added.map(({ token: _t, ...p }) => p), huddle: huddles.view(slug, huddles.get(slug, h.id)) }, 201);
+      }
+      if (m === "PATCH" && handle && !sub) {
+        const b = await body(req);
+        huddles.setMode(slug, h.id, me, handle, b.mode);
+        return json(huddles.view(slug, huddles.get(slug, h.id)));
+      }
+      if (m === "POST" && handle && sub === "stop") {
+        userOnly("stop a participant");
+        huddles.stopParticipant(slug, h.id, handle);
+        return json(huddles.view(slug, huddles.get(slug, h.id)));
+      }
+      // A participant's own Claude session, read-only (the Huddle tab's session viewer). The user's alone: agents
+      // and runs can't read each other's sessions.
+      if (handle && sub === "session") {
+        userOnly("read a participant's session");
+        if (m === "GET" && !part) {
+          return json(participantSession(huddles, store, sessions, huddleSessions, slug, h.id, handle, { before: num("before"), since: num("since"), limit: num("limit") }));
+        }
+        if (m === "GET" && part === "tool" && partId) {
+          const d = participantTool(huddles, sessions, slug, h.id, handle, partId);
+          if (!d) throw new HttpError(404, "tool call not found");
+          return json(d);
+        }
+        if (m === "POST" && part === "reveal" && !partId) {
+          const file = participantSession(huddles, store, sessions, huddleSessions, slug, h.id, handle, { limit: 1 }).file;
+          if (!file) throw new HttpError(404, `@${handle} has no transcript file yet`);
+          await revealFile(file);
+          return json({ ok: true, file });
+        }
+      }
+      if (m === "POST" && handle && sub === "restart") {
+        userOnly("restart a participant");
+        huddles.restartParticipant(slug, h.id, handle);
+        return json(huddles.view(slug, huddles.get(slug, h.id)));
+      }
+    }
+    if (m === "POST" && !handle && (action === "stop" || action === "resume" || action === "close")) {
+      userOnly(`${action} the huddle`);
+      const b = action === "resume" ? await body(req) : {};
+      const add = b?.addBudgetUsd === undefined || b?.addBudgetUsd === null ? 0 : Number(b.addBudgetUsd);
+      const out = action === "stop" ? huddles.stopAll(slug, h.id) : action === "resume" ? huddles.resume(slug, h.id, add) : huddles.close(slug, h.id);
+      return json(huddles.view(slug, out));
+    }
+    // The user viewed the huddle up to message `seq` (scrolled to the latest): what tagged them so far counts as seen.
+    if (m === "POST" && action === "seen" && !handle) {
+      userOnly("mark the huddle seen");
+      const b = await body(req);
+      return json(huddles.view(slug, huddles.markSeen(slug, h.id, Number(b?.seq))));
+    }
+    // A huddle agent proposes a teammate (propose_teammate): it waits under Learnings for the user.
+    if (m === "POST" && action === "teammates" && !handle) return json(huddles.proposeTeammate(slug, h.id, me, await body(req)), 201);
+    // Lessons agents proposed: only the user edits, saves (as role notes) or discards them.
+    if (action === "learnings" && handle) {
+      userOnly("save, edit or discard learnings");
+      if (m === "POST" && sub === "discard") return json(huddles.discardLearning(slug, h.id, handle));
+      const patch = async () => {
+        const raw = await req.text();
+        let b: any = {};
+        try {
+          if (raw.trim()) b = JSON.parse(raw) ?? {};
+        } catch {
+          throw new HttpError(400, "invalid JSON body");
+        }
+        return { text: b.text, scope: b.scope, target: b.target };
+      };
+      if (m === "PATCH" && !sub) return json(huddles.editLearning(slug, h.id, handle, await patch()));
+      if (m === "POST" && sub === "save") return json(huddles.saveLearning(slug, h.id, handle, await patch()));
+    }
+    if (m === "POST" && action === "invite" && !handle) {
+      const b = await body(req);
+      const ticketId = String(b.ticketId ?? "");
+      if (!ticketId) throw new HttpError(400, "ticketId is required");
+      const { token: _t, ...p } = huddles.invite(slug, h.id, me, ticketId, typeof b.handle === "string" ? b.handle : undefined);
+      return json(p, 201);
+    }
+    if (m === "POST" && action === "findings" && !handle) {
+      const b = await body(req);
+      const act = b.action === "add" || b.action === "resolve" ? b.action : "list";
+      return json(huddles.findings(slug, h.id, me, act, { text: typeof b.text === "string" ? b.text : undefined, id: typeof b.id === "string" ? b.id : undefined }));
     }
     throw new HttpError(404, "not found");
   }
@@ -1121,11 +1589,13 @@ export function createServer(deps: ServerDeps) {
             if (p) out = { ...e, ticket: view(p, e.ticket) };
           }
           send(`data: ${JSON.stringify(out)}\n\n`);
-          // Session changes (terminal chat, new questions) change the ticket's "your turn" state too.
-          if (e.type === "session.updated") {
-            const p = store.getProfile(e.profile);
-            const t = p && store.getTicket(e.profile, e.id);
-            if (p && t) send(`data: ${JSON.stringify({ type: "ticket.updated", profile: e.profile, ticket: view(p, t) })}\n\n`);
+          // Session changes (terminal chat, new questions) and the host's huddle change the ticket's "your turn" state too.
+          const changed = e.type === "session.updated" ? { profile: e.profile, id: e.id }
+            : e.type === "huddle.updated" ? { profile: e.profile, id: e.huddle.hostTicket } : null;
+          if (changed) {
+            const p = store.getProfile(changed.profile);
+            const t = p && store.getTicket(changed.profile, changed.id);
+            if (p && t) send(`data: ${JSON.stringify({ type: "ticket.updated", profile: changed.profile, ticket: view(p, t) })}\n\n`);
           }
         });
         ping = setInterval(() => send(": ping\n\n"), 15_000);
@@ -1228,7 +1698,7 @@ export function createServer(deps: ServerDeps) {
         if (e instanceof AgentError) return json({ error: e.message }, e.status);
         if (e instanceof ScheduleError) return json({ error: e.message }, e.status);
         if (e instanceof SnippetError) return json({ error: e.message }, e.status);
-        if (e instanceof QuestionError) return json({ error: e.message }, e.status);
+        if (e instanceof HuddleError) return json({ error: e.message }, e.status);
         if (e instanceof URIError) return json({ error: "malformed URL" }, 400);
         console.error(e);
         return json({ error: (e as Error).message ?? "internal error" }, 500);
@@ -1259,4 +1729,18 @@ export function createServer(deps: ServerDeps) {
     },
   });
   return server;
+}
+
+/** A spending cap from a request: a positive amount, 0 for none (allowZero), null for the default. */
+function capValue(v: unknown, allowZero: boolean): number | null {
+  if (v === null || v === "") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0 || (n === 0 && !allowZero)) throw new HttpError(400, `spending cap must be a positive amount${allowZero ? ", 0 for none" : ""}, or null`);
+  return n;
+}
+
+/** The board's Workspace setting from a request. */
+function workspaceValue(v: unknown): Workspace {
+  if (v !== "worktree" && v !== "folder") throw new HttpError(400, 'workspace must be "worktree" or "folder"');
+  return v;
 }
