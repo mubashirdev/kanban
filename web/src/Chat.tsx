@@ -22,7 +22,7 @@ import { filesByReply } from "./fileCards";
 import { handoff as handoffOf, liveView, saved, type Handoff } from "./liveReply";
 import { baseName, copyFile, downloadFile } from "./share";
 import { draftKey, formKey, takeFirstMessage } from "./drafts";
-import { clock, fullTime, timeAgo } from "./time";
+import { duration, fullTime, timeAgo } from "./time";
 import { useNow } from "./useNow";
 import { canStartFromProposal } from "./keynav";
 import { toast } from "./toast";
@@ -75,7 +75,7 @@ function WaitingCard({ tasks }: { tasks: NonNullable<Ticket["waitingOn"]> }) {
       <div className="waiting-title"><span className="spinner" /> Waiting for {tasks.length === 1 ? "1 background task" : `${tasks.length} background tasks`}</div>
       <ul>
         {tasks.map((t) => (
-          <li key={t.id}><span>{t.description}</span><span className="waiting-time" title={`Started ${fullTime(t.startedAt)}`}>{clock(t.startedAt, now)}</span></li>
+          <li key={t.id}><span>{t.description}</span><span className="waiting-time" title={`Started ${fullTime(t.startedAt)}`}>{duration(t.startedAt, now)}</span></li>
         ))}
       </ul>
       <div className="waiting-note">Claude continues automatically when they finish.</div>
@@ -250,7 +250,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       .then(([claude, codex]) => setModelNames(Object.fromEntries([...claude, ...codex].map((m) => [m.value, m.displayName]))))
       .catch(() => {});
   }, []);
-  const modelLabel = (value: string | null | undefined) => (value && modelNames[value]) || chipLabel(value, "Default model");
+  // "Board default", the same words as the model menu.
+  const modelLabel = (value: string | null | undefined) => (value && modelNames[value]) || chipLabel(value, "Board default");
   const modelText = modelLabel((codex ? ticket.codexModel : ticket.model === "default" ? null : ticket.model) ?? (codex ? defaults?.codexModel : defaults?.claudeModel));
   const effortValue = (codex ? ticket.codexEffort : ticket.effort) ?? (codex ? defaults?.codexEffort : defaults?.claudeEffort) ?? null;
   const effortText = chipLabel(effortValue, "Auto");

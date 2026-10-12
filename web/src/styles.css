@@ -3490,3 +3490,15 @@ button.hd-mode:disabled { cursor: default; }
 
 /* Very narrow phones (320px): the header badge would be cut to a few letters; the title gets the room. */
 @media (max-width: 359px) { .panel-head > .badge { display: none; } }
+
+/* Huddle roster on phones: each role is a small card (name and remove, then count, mode and model, then focus) instead of a wide table. */
+@media (max-width: 720px) {
+  .roster-table, .roster-table tbody { display: block; }
+  .roster-table thead { display: none; }
+  .roster-table tr { display: grid; grid-template-columns: 56px minmax(0, 1fr) minmax(0, 1fr) 44px; gap: 6px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  .roster-table td, .roster-table td:first-child, .roster-table td:last-child { display: block; min-width: 0; width: auto; padding: 0; border: 0; }
+  .roster-table td:first-child { grid-column: 1 / 4; }
+  .roster-table td:nth-child(5) { grid-column: 1 / -1; }
+  .roster-table td:nth-child(6) { grid-column: 4; grid-row: 1; justify-self: end; }
+  .roster-table .roster-select, .roster-table input { width: 100%; }
+}

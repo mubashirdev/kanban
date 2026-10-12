@@ -121,7 +121,7 @@ export function RosterEditor({ presets, draft, setDraft, tickets, hostId, max = 
           {!hideMain && <tr>
             <td>
               <b>@main</b> <span className="pill lead">coordinator</span>
-              <div className="roster-desc">this ticket's session · only one who edits code</div>
+              <div className="roster-desc">this {tickets.find((t) => t.id === hostId)?.standalone ? "chat" : "ticket"}'s session · only one who edits code</div>
             </td>
             <td className="roster-num">1</td>
             <td>

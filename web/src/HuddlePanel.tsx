@@ -145,7 +145,7 @@ function StartHuddle({ slug, ticket, tickets, onError, onBack, onStarted, seed }
       <div className="huddle-intro">
         <h3>Start a huddle</h3>
         <p className="muted">
-          Helper Claude sessions (reviewers, QA, a lead…) work on this ticket with its own session, which joins as <b>@main</b> and coordinates.
+          Helper Claude sessions (reviewers, QA, a lead…) work on this {ticket.standalone ? "chat" : "ticket"} with its own session, which joins as <b>@main</b> and coordinates.
           They talk in one room; you can read along and @tag anyone. Claude can also propose a roster from the chat.
         </p>
       </div>

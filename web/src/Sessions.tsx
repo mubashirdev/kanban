@@ -42,7 +42,9 @@ const titleFrom = (text: string) => {
 function SessionCard({ ticket, onOpen }: { ticket: Ticket; onOpen: () => void }) {
   const last = ticket.session?.lastMessage;
   const att = ticket.attention;
-  const state = ticket.running ? "running" : att?.kind === "reply" ? "unread" : att ? "waiting" : null;
+  // Claude paused to ask for approval: the chat waits on the user even though its run is still open.
+  const asking = att?.kind === "approval";
+  const state = asking ? "waiting" : ticket.running ? "running" : att?.kind === "reply" ? "unread" : att ? "waiting" : null;
   return (
     <button className={`chat-row ${state ?? ""}`} onClick={onOpen}
       aria-label={`${ticket.title}, ${agentName(ticket)}${state === "unread" ? ", new reply" : state === "waiting" ? `, ${att!.label}` : ""}`}>
@@ -53,7 +55,8 @@ function SessionCard({ ticket, onOpen }: { ticket: Ticket; onOpen: () => void })
           <time className="chat-row-time" dateTime={lastAt(ticket)}>{timeAgo(lastAt(ticket))}</time>
         </span>
         <span className="chat-row-preview">
-          {ticket.running ? <><span className="spinner" /> {ticket.lastActivity ?? `${agentName(ticket)} is working…`}</>
+          {asking ? <b>{att!.label}</b>
+            : ticket.running ? <><span className="spinner" /> {ticket.lastActivity ?? `${agentName(ticket)} is working…`}</>
             : att && att.kind !== "reply" ? <b>{att.label}</b>
             : last ? <>{last.role === "user" ? "You: " : ""}{plainText(last.text)}</>
             : "No messages yet"}

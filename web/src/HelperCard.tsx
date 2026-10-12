@@ -2,20 +2,20 @@ import { useEffect, useState } from "react";
 import type { HelperRun } from "./api";
 import { CheckIcon, ChevronRightIcon, CloseIcon } from "./icons";
 import { ToolGroup } from "./ToolGroup";
-import { clock } from "./time";
+import { duration } from "./time";
 import { describeStep } from "./toolSteps";
 import { Markdown } from "./Transcript";
 
 const ENDED = { done: "Finished", failed: "Failed", stopped: "Stopped" } as const;
 
-/** Running clock since the helper started. */
+/** Live time since the helper started, in the app's one format ("2m 14s", "1h 5m"). */
 function Elapsed({ since }: { since: string }) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-  return <span className="helper-time">{clock(since, now)}</span>;
+  return <span className="helper-time">{duration(since, now)}</span>;
 }
 
 /** A helper agent Claude started: its task, what it is doing now and for how long; tap to see its steps and its report.
