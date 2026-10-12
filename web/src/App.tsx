@@ -875,7 +875,7 @@ export function App() {
           ...(profile ? [{ label: "Search tickets & chats", icon: <SearchIcon />, onSelect: () => setFullSearch(true) }] : []),
           ...(profile ? [{ label: "Snippets", icon: <AtIcon />, onSelect: () => setSnippetsOpen(true), title: "Reusable prompt text: type @name in a ticket to insert it" }] : []),
           ...(profile ? [{ label: "Activity", icon: <HistoryIcon />, onSelect: () => setActivityOpen(true) }] : []),
-          { label: "Daily cost", icon: <DollarIcon />, onSelect: () => setDailyCostOpen(true) },
+          { label: "Daily usage", icon: <DollarIcon />, onSelect: () => setDailyCostOpen(true) },
           { label: "Default models", groupStart: true, icon: <SlidersIcon />, onSelect: () => setDefaultModelsOpen(true) },
           {
             label: "Appearance", icon: <ContrastIcon />, keepOpen: true, title: "Tap to switch: System, Light, Dark",

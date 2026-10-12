@@ -17,7 +17,7 @@ export function DailyCostDialog({ onClose }: { onClose: () => void }) {
   const total = (days ?? []).reduce((sum, d) => sum + d.costUsd, 0);
 
   return (
-    <Modal title="Daily cost" onClose={onClose}>
+    <Modal title="Daily usage" onClose={onClose}>
       <div className="daily-cost">
         {error && <div className="form-error">{error}</div>}
         {!days && !error && <p className="muted">Loading…</p>}
@@ -41,7 +41,7 @@ export function DailyCostDialog({ onClose }: { onClose: () => void }) {
                 </li>
               ))}
             </ul>
-            <p className="muted small">Cost covers Claude runs only; Codex doesn’t report a cost.</p>
+            <p className="muted small">What these runs would cost on the pay-per-use API, as Claude Code reports it. On a Claude subscription you don’t pay this; it shows how much work ran. Claude runs only: Codex doesn’t report a cost.</p>
           </>
         )}
       </div>

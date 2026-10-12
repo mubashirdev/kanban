@@ -27,13 +27,19 @@ export function dailyUsage(store: Store, days = 7, now = new Date()): DayUsage[]
     for (const ticket of store.listTickets(profile.slug)) {
       const modified = Number(store.activityVersion(profile.slug, ticket.id)?.split(":")[0]);
       if (!modified || modified < cutoff.getTime()) continue;
+      // A result's total_cost_usd is its session's running total: a turn costs only what it added since the last one.
+      const lastTotal = new Map<string, number>();
       for (const entry of store.readActivity(profile.slug, ticket.id)) {
         if (entry.event?.type !== "result") continue;
+        const total = typeof entry.event.total_cost_usd === "number" ? entry.event.total_cost_usd : 0;
+        const sid = String(entry.event.session_id ?? "");
+        const prev = lastTotal.get(sid) ?? 0;
+        lastTotal.set(sid, total);
         const bucket = out.get(localDay(new Date(entry.at)));
         if (!bucket) continue;
         if (entry.event.provider === "codex") bucket.codexRuns++;
         else bucket.claudeRuns++;
-        bucket.costUsd += typeof entry.event.total_cost_usd === "number" ? entry.event.total_cost_usd : 0;
+        bucket.costUsd += total >= prev ? total - prev : total;
         bucket.seconds += typeof entry.event.duration_ms === "number" ? entry.event.duration_ms / 1000 : 0;
       }
     }
