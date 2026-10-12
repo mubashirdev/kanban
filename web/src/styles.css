@@ -1125,7 +1125,7 @@ body > .output-view.reader { position: fixed; }
 .chat-file b { font-family: var(--mono); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-file > .muted { flex: none; }
 .chat-file-actions { margin-left: auto; display: flex; gap: 6px; flex: none; }
-.chat-file + .chat-file { margin-top: 6px; }
+.chat-file + .chat-file, .chat-file + .chat-more-files { margin-top: 6px; }
 .chat-unreadable {
   margin-top: 8px; font-size: 12.5px; color: var(--warn); background: var(--warn-soft); border-radius: 8px; padding: 6px 10px;
   display: flex; align-items: center; justify-content: space-between; gap: 10px;

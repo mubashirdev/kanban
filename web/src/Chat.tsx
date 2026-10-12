@@ -151,6 +151,11 @@ export function useStop(slug: string, ticket: Ticket, working: boolean, onError:
   return { stopping, stop };
 }
 
+/** A reply with more files than MAX_FILES shows the newest SHOWN_FILES and a "+N more" row. */
+const MAX_FILES = 4;
+const SHOWN_FILES = 3;
+const shownFiles = <F,>(files: F[] = []) => (files.length > MAX_FILES ? files.slice(0, SHOWN_FILES) : files);
+
 /** A queued peer message that carries huddle messages (see the server's huddleMainPrompt). */
 const HUDDLE_TAG = /<ckanban-context[^>]* huddle="/;
 
@@ -161,7 +166,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   tickets: Ticket[];
   onOpenTicket: (id: string) => void;
   /** Show a file of the ticket's outputs folder (path relative to it) in the Outputs tab. */
-  onOpenOutput?: (name: string) => void;
+  /** null: open the Outputs tab without a file. */
+  onOpenOutput?: (name: string | null) => void;
   onError: (m: string) => void;
   /** The newest proposal card not applied yet, as its Apply action (null when none): ⌘⇧Enter in the panel applies it. */
   /** The newest unapplied proposal's apply; start: also move the ticket to Ready. */
@@ -368,11 +374,15 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     return () => clearInterval(timer);
   }, [handingOff, loadTail]);
   // Output files for the cards under replies; refreshed whenever the conversation is.
+  // Huddle teammates' files stay in the Outputs tab, so the chat needs the handles of every huddle this ticket hosted.
   const [files, setFiles] = useState<OutputFile[]>([]);
+  const [teammates, setTeammates] = useState<string[]>([]);
   useEffect(() => {
-    if (page) api.outputs(slug, ticket.id).then(setFiles).catch(() => {});
-  }, [slug, ticket.id, page, running]);
-  const cards = useMemo(() => filesByReply(entries, files), [entries, files]);
+    if (!page) return;
+    api.outputs(slug, ticket.id).then(setFiles).catch(() => {});
+    api.huddles(slug, ticket.id).then((hs) => setTeammates(hs.flatMap((h) => h.participants.map((p) => p.handle)))).catch(() => {});
+  }, [slug, ticket.id, page, running, huddle?.participants.length]);
+  const cards = useMemo(() => filesByReply(entries, files, teammates), [entries, files, teammates]);
   // Drop optimistic bubbles once the session file contains the message.
   useEffect(() => {
     if (pending.some((p) => delivered(entries, p.text))) setPending((ps) => ps.filter((p) => !delivered(entries, p.text)));
@@ -659,7 +669,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                   ))}
                 </div>
               )}
-              {e.role === "assistant" && cards.get(e.uuid)?.map((f) => (
+              {e.role === "assistant" && shownFiles(cards.get(e.uuid)).map((f) => (
                 <div key={f.name} className="chat-file">
                   <FileTextIcon size={14} />
                   <b title={f.name}>{baseName(f.name)}</b>
@@ -671,6 +681,11 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                   </span>
                 </div>
               ))}
+              {e.role === "assistant" && (cards.get(e.uuid)?.length ?? 0) > MAX_FILES && (
+                <button className="chat-mockup chat-more-files" onClick={() => onOpenOutput?.(null)} title="See every file in the Outputs tab">
+                  +{cards.get(e.uuid)!.length - SHOWN_FILES} more
+                </button>
+              )}
               {e.unreadable && (
                 <div className="chat-unreadable" role="status">
                   <span>Couldn't read {agentName}’s {UNREADABLE[e.unreadable]}.</span>

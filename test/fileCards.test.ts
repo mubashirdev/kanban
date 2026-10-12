@@ -20,7 +20,7 @@ test("output files go under the last reply of the turn they were written in", ()
     f("mockups/a-x.html", "2026-10-06T10:00:30Z"),
     f("old.md", "2026-10-05T10:00:00Z"),
   ]);
-  expect(cards.get("a2")?.map((x) => x.name)).toEqual(["b/data.csv", "report.md"]);
+  expect(cards.get("a2")?.map((x) => x.name)).toEqual(["report.md", "b/data.csv"]);
   expect(cards.get("a3")?.map((x) => x.name)).toEqual(["later.md"]);
   expect(cards.has("a1")).toBe(false);
   expect([...cards.values()].flat().some((x) => x.name === "old.md" || x.name.startsWith("mockups/"))).toBe(false);
@@ -29,4 +29,16 @@ test("output files go under the last reply of the turn they were written in", ()
 test("a turn without a reply yet gets no card", () => {
   const cards = filesByReply([e("a0", "2026-10-06T09:00:00Z", "assistant"), e("u1", "2026-10-06T10:00:00Z", "user")], [f("r.md", "2026-10-06T10:00:10Z")]);
   expect(cards.size).toBe(0);
+});
+
+test("huddle teammates' folders and huddles/ stay out of the chat; newest file first", () => {
+  const entries = [e("u1", "2026-10-06T10:00:00Z", "user"), e("a1", "2026-10-06T10:00:05Z", "assistant")];
+  const cards = filesByReply(entries, [
+    f("qa-lead/shot.png", "2026-10-06T10:00:10Z"),
+    f("ux-critic/notes.md", "2026-10-06T10:00:20Z"),
+    f("huddles/h1/summary.md", "2026-10-06T10:00:30Z"),
+    f("report.md", "2026-10-06T10:00:40Z"),
+    f("data.csv", "2026-10-06T10:00:50Z"),
+  ], ["qa-lead", "ux-critic"]);
+  expect(cards.get("a1")?.map((x) => x.name)).toEqual(["data.csv", "report.md"]);
 });
