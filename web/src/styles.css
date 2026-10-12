@@ -910,7 +910,9 @@ body > .output-view.reader { position: fixed; }
 .sidebar-toggle { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: none; }
 .sidebar-toggle.on { color: var(--text); }
 .panel-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
-.panel-main .tabs { padding: 0 28px; }
+/* Scrolls sideways when the tabs don't fit (iPad landscape with the details open). */
+.panel-main .tabs { padding: 0 28px; overflow-x: auto; scrollbar-width: none; }
+.panel-main .tabs button { flex: none; white-space: nowrap; }
 .panel-scroll { flex: 1; overflow-y: auto; padding: 16px 24px; }
 .field-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .field-key { font-size: 12px; font-weight: 600; color: var(--muted); }
@@ -956,7 +958,7 @@ body > .output-view.reader { position: fixed; }
 .more-btn.on { background: var(--surface-2); color: var(--text); }
 .more-dot { position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 2px var(--surface); }
 .ticket-menu { width: 320px; max-height: 70vh; }
-.menu-heading { display: flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 6px 8px 4px; }
+.menu-heading { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 6px 8px 4px; }
 .live-badge { margin-left: auto; text-transform: none; letter-spacing: 0; display: inline-flex; align-items: center; gap: 5px; }
 .term-block {
   display: flex; flex-direction: column; gap: 5px; width: calc(100% - 8px); margin: 2px 4px 6px; text-align: left; cursor: pointer;
@@ -2255,6 +2257,8 @@ button.pill:hover { color: var(--text); }
   .panel-head > .your-turn, .panel-head > .badge { order: 3; flex: 0 1 auto; min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .panel-head .title-input { min-width: 96px; }
   .panel-head > .your-turn .yt-label { display: none; }
+  /* The title needs the room more than the run time; "Replying" and the Stop button already say it runs. */
+  .panel-head > .badge .badge-time { display: none; }
   .panel-head .segmented { order: 3; }
   .panel-head .sidebar-toggle { order: 4; flex: none; border: 0; }
   .panel-head .ticket-menu-wrap, .panel-head .session-menu { order: 5; flex: none; }
@@ -2957,13 +2961,21 @@ body { letter-spacing: -0.011em; }
 .model-pill-part.model { padding: 0 3px 0 14px; }
 .model-pill-part.effort { padding: 0 14px 0 3px; }
 .model-pill-part:disabled { opacity: 0.5; cursor: default; }
+/* Under 360px "Board default" or "Opus 5.5" would shrink to "Bo…": show the first word. */
+.model-name-short { display: none; }
+@media (max-width: 359px) { .model-name { display: none; } .model-name-short { display: inline; } }
 /* Touch: 44px to tap but a 36px circle to see, like the Claude app; a transparent border holds the gap. */
 @media (pointer: coarse) {
   .composer-card .composer-bar { gap: 0; }
-  .composer-card .composer-plus, .composer-card .composer-mic, .composer-card .access-shield, .composer-card .send-round,
-  .model-pill { border: 4px solid transparent; background-clip: padding-box; }
-  .model-pill { height: 44px; }
-  .model-pill-part { font-size: 14px; }
+  .composer-card .composer-plus, .composer-card .composer-mic, .composer-card .access-shield, .composer-card .send-round { border: 4px solid transparent; background-clip: padding-box; }
+  /* The pill is drawn 4px inside, so its two buttons get the whole 44px to tap. */
+  .model-pill { position: relative; height: 44px; background: none; }
+  .model-pill::before { content: ""; position: absolute; inset: 4px; border-radius: 999px; background: var(--surface-2); }
+  .model-pill-part { position: relative; font-size: 14px; }
+  .model-pill-part.model { padding-left: 18px; }
+  .model-pill-part.effort { padding-right: 18px; }
+  /* Under 360px the short name needs a little more room next to the access shield. */
+  @media (max-width: 359px) { .model-pill-part.model { padding-left: 13px; } .model-pill-part.effort { padding-right: 13px; } }
   .composer.composer-card { padding: 14px 6px 6px; gap: 6px; }
   .composer-card textarea { padding: 0 12px; font-size: 17px; }
   .composer-card .composer-plus svg, .composer-card .composer-mic svg { stroke-width: 1.3; }
@@ -2989,6 +3001,8 @@ body { letter-spacing: -0.011em; }
   border-radius: 5px; padding: 0 6px; color: var(--muted); cursor: pointer;
 }
 .tool-lbl button:hover { color: var(--text); }
+/* Touch: a 44px Copy that fills the label bar to the card edge (the bar's 4px and 10px padding). */
+@media (pointer: coarse) { .tool-lbl button { min-width: 44px; min-height: 44px; margin: -4px -10px -4px 0; padding: 0 12px; border: 0; background: none; font-size: 13px; } }
 .tool-card pre {
   margin: 0; padding: 8px 10px; font: 12px/1.45 var(--mono); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere;
   max-height: 260px; overflow: auto;
@@ -3503,7 +3517,7 @@ button.hd-mode:disabled { cursor: default; }
 }
 
 /* Very narrow phones (320px): the header badge would be cut to a few letters; the title gets the room. */
-@media (max-width: 359px) { .panel-head > .badge { display: none; } }
+@media (max-width: 359px) { .panel-head > .badge, .panel-head > .your-turn { display: none; } }
 
 /* Huddle roster on phones: each role is a small card (name and remove, then count, mode and model, then focus) instead of a wide table. */
 @media (max-width: 720px) {

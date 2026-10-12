@@ -34,6 +34,8 @@ export const ChevronDownIcon = (p: IconProps) => svg(<path d="M3.5 6L8 10.5 12.5
 export const ChevronUpIcon = (p: IconProps) => svg(<path d="M3.5 10L8 5.5 12.5 10" />, p);
 export const ChevronLeftIcon = (p: IconProps) => svg(<path d="M10 3.5L5.5 8l4.5 4.5" />, p);
 export const ArrowDownIcon = (p: IconProps) => svg(<path d="M8 3v10M4 9l4 4 4-4" />, p);
+export const StarIcon = ({ filled, ...p }: IconProps & { filled?: boolean }) => svg(<path d="M8 2.2l1.7 3.6 4 .5-2.9 2.7.7 3.9L8 11l-3.5 1.9.7-3.9-2.9-2.7 4-.5z" fill={filled ? "currentColor" : "none"} />, p);
+export const PanelIcon = (p: IconProps) => svg(<><rect x="2" y="3" width="12" height="10" rx="2" /><path d="M6 3.5v9" /></>, p);
 export const MoreIcon = (p: IconProps) => svg(<><circle cx="3.5" cy="8" r=".9" fill="currentColor" /><circle cx="8" cy="8" r=".9" fill="currentColor" /><circle cx="12.5" cy="8" r=".9" fill="currentColor" /></>, p);
 export const SearchIcon = (p: IconProps) => svg(<><circle cx="7" cy="7" r="4.2" /><path d="M10.2 10.2L13.5 13.5" /></>, p);
 export const TerminalIcon = (p: IconProps) => svg(<><rect x="2" y="3" width="12" height="10" rx="1.8" /><path d="M5 6.5L7 8.3 5 10M8.5 10.5H11" /></>, p);

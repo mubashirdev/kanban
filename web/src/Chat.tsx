@@ -982,7 +982,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                 <button type="button" className={`model-pill-part ${kind}`} aria-haspopup="menu" aria-expanded={picking === kind} disabled={stopping}
                   aria-label={kind === "model" ? `Model: ${modelText}` : `Reasoning effort: ${effortText}`}
                   onClick={() => { commands.close(); setPicking(picking === kind ? null : kind); }}>
-                  {kind === "model" ? modelText : effortText}
+                  {kind === "model" ? <><span className="model-name">{modelText}</span><span className="model-name-short">{modelText.split(" ")[0]}</span></> : effortText}
                 </button>
                 {picking === kind && <QuickPick slug={slug} ticket={ticket} kind={kind} onClose={() => setPicking(null)}
                   onMore={() => setSettingsTab(codex || kind === "model" ? "model" : "effort")} />}

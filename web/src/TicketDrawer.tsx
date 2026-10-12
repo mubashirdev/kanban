@@ -31,7 +31,7 @@ import { toast } from "./toast";
 import { missingPctReason, UsagePanel, usageChipText, useTicketUsage } from "./UsagePanel";
 import { approxPct } from "./usage";
 import { Markdown } from "./Transcript";
-import { useMediaQuery } from "./useMediaQuery";
+import { PHONE, useMediaQuery } from "./useMediaQuery";
 import { NeedsField } from "./Needs";
 import { useHuddle, members } from "./huddle";
 import { HuddlePanel } from "./HuddlePanel";
@@ -283,6 +283,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
     }
   });
   const compact = useMediaQuery("(max-width: 900px)");
+  const phone = useMediaQuery(PHONE);
   useEffect(() => {
     try {
       setDetailsOpenState(!compact && localStorage.getItem("ckanban.detailsOpen") !== "0");
@@ -468,6 +469,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  const setImportant = (important: boolean) =>
+    api.updateTicket(slug, ticket.id, { important }).catch((e) => onError(`Important not saved: ${e.message}`));
   const cancelEdit = () => { setBody(baseBody); setEditing(false); images.clearError(); };
 
   return (
@@ -478,7 +481,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
 
         <header className="panel-head">
           <button className="icon-btn back-btn" onClick={onClose} aria-label="Back to board"><ChevronLeftIcon size={20} /></button>
-          <button className={`icon-btn sidebar-toggle ${detailsOpen ? "on" : ""}`} onClick={() => setDetailsOpen((v) => !v)}
+          {/* Phones keep it in the More menu, but show it while details are open as the way back to the chat. */}
+          {(!phone || detailsOpen) && <button className={`icon-btn sidebar-toggle ${detailsOpen ? "on" : ""}`} onClick={() => setDetailsOpen((v) => !v)}
             aria-label={detailsOpen ? "Hide details" : "Show details"} aria-pressed={detailsOpen}
             title={`${detailsOpen ? "Hide" : "Show"} details (⌘\\)`}>
             <KeyHint keys="⌘\" />
@@ -488,10 +492,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
               {detailsOpen && <rect x="2.75" y="3.75" width="3.5" height="10.5" rx="1.5" fill="currentColor" opacity="0.35" />}
             </svg>
             <span className="sidebar-toggle-label">{detailsOpen ? (tab === "outputs" ? "Outputs" : tab === "plan" ? "Plan" : "Chat") : "Details"}</span>
-          </button>
-          <StarToggle on={!!ticket.important} onChange={(important) => {
-            api.updateTicket(slug, ticket.id, { important }).catch((e) => onError(`Important not saved: ${e.message}`));
-          }} />
+          </button>}
+          {!phone && <StarToggle on={!!ticket.important} onChange={setImportant} />}
           <input ref={titleRef} className="title-input" value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
             onKeyDown={(e) => {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -517,6 +519,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             </span>
           )}
           <TicketMenu ticket={ticket} working={working} live={!!(ticket.terminalOpen || linked?.live)}
+            phone={phone ? { detailsOpen, onDetails: () => setDetailsOpen((v) => !v), onImportant: setImportant } : undefined}
             linkedLabel={ticket.workdir && ticket.sessionId ? (linked ? sessionLabel(linked) : ticket.sessionId.slice(0, 8)) : null}
             boardCap={profile.runCapUsd ?? null}
             onCap={(usd) => api.updateTicket(slug, ticket.id, { runCapUsd: usd })}

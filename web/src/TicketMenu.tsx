@@ -1,15 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { copy, type Ticket } from "./api";
-import { BranchIcon, BugIcon, ChatIcon, CheckIcon, CloseIcon, CopyIcon, MoreIcon, RefreshIcon, TerminalIcon, TrashIcon } from "./icons";
+import { BranchIcon, BugIcon, ChatIcon, CheckIcon, CloseIcon, CopyIcon, MoreIcon, PanelIcon, RefreshIcon, StarIcon, TerminalIcon, TrashIcon } from "./icons";
 import { capInputText, parseCap } from "./capText";
 import { useLayer } from "./layers";
 import { costText } from "./usage";
 
 /**
  * "⋯" menu in the ticket panel header: the session (resume command, branch, ID, linked session),
- * then Report a bug and Delete. ↑↓ move, Esc closes only the menu.
+ * then Report a bug and Delete. On phones it also holds Details and the star, so the title gets the header room.
+ * ↑↓ move, Esc closes only the menu.
  */
-export function TicketMenu({ ticket, working, live, linkedLabel, boardCap, onCap, onBranch, onPickSession, onUnlink, onCheckPr, onToChats, onReportBug, onDelete }: {
+export function TicketMenu({ ticket, working, live, linkedLabel, boardCap, onCap, onBranch, onPickSession, onUnlink, onCheckPr, onToChats, onReportBug, onDelete, phone }: {
   ticket: Ticket;
   working: boolean;
   /** The session is open in a terminal right now. */
@@ -29,6 +30,8 @@ export function TicketMenu({ ticket, working, live, linkedLabel, boardCap, onCap
   onToChats: () => void;
   onReportBug: () => void;
   onDelete: () => void;
+  /** Phones: the header's Details and star buttons, shown at the top of the menu instead. */
+  phone?: { detailsOpen: boolean; onDetails: () => void; onImportant: (important: boolean) => void };
 }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
@@ -84,6 +87,20 @@ export function TicketMenu({ ticket, working, live, linkedLabel, boardCap, onCap
       </button>
       {open && (
         <div className="inbox-menu ticket-menu" role="menu" aria-label="Ticket actions" ref={menu} onKeyDown={onKey}>
+          {phone && (
+            <>
+              <button role="menuitem" className="menu-item" onClick={pick(phone.onDetails)}>
+                <span className="menu-icon" aria-hidden><PanelIcon size={14} /></span>
+                <span className="menu-label">{phone.detailsOpen ? "Hide details" : "Show details"}</span>
+              </button>
+              <button role="menuitem" className="menu-item" onClick={pick(() => phone.onImportant(!ticket.important))}>
+                <span className="menu-icon" aria-hidden><StarIcon size={14} filled={ticket.important} /></span>
+                <span className="menu-label">{ticket.important ? "Unmark important" : "Mark as important"}</span>
+                <span className="menu-hint">auto review before landing</span>
+              </button>
+              <div className="menu-sep" role="separator" />
+            </>
+          )}
           <div className="menu-heading">
             Session
             {live && <span className="badge ok live-badge"><span className="live-dot" /> open in terminal</span>}

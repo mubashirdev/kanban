@@ -23,9 +23,6 @@ const BASE = `http://localhost:${PORT}`;
 // Problems other tickets are fixing, as "screen: problem" (sizes left out). They're counted but don't fail the run.
 // Delete a line once its fix lands; the audit says when a line no longer matches anything.
 const KNOWN: RegExp[] = [
-  // t_20261012_p8b5 phone ticket chat: model button, header
-  /^(session chat|fork dialog|ticket chat with plan|chat events|chat code block|helper cards|permission card): tiny target \S+ "(Model|Reasoning effort): /,
-  /^ticket (huddle|changes|outputs): cut off at the edge "(Session and ticket actio|Show details|Usage)"/,
   // t_20261012_bqag huddle badge on cards
   /^(board.*|new ticket dialog|header menu|daily usage sheet|search dialog|activity sheet|report a bug|notification sheet|long-press card sheet): tiny target \S+ "🗣 Huddle /,
   // t_20261012_ll9q Huddle tab
@@ -183,6 +180,10 @@ try {
       for (let a = e.parentElement; a; a = a.parentElement) if (/auto|scroll/.test(getComputedStyle(a).overflowX)) return;
       problems.push(`cut off at the edge "${label(e)}"`);
     });
+    // The composer's model and effort names must fit, not end in "…".
+    document.querySelectorAll(".model-pill-part").forEach((e) => {
+      if (shown(e) && e.scrollWidth > e.clientWidth) problems.push(`text cut short "${label(e)}"`);
+    });
     if (document.documentElement.scrollWidth > innerWidth) problems.push(`sideways overflow ${document.documentElement.scrollWidth}>${innerWidth}`);
     return [...new Set(problems)];
   };
@@ -196,7 +197,8 @@ try {
     const context = await browser.newContext({ viewport: { width, height }, hasTouch: touch, isMobile: touch, deviceScaleFactor: 2 });
     await context.addInitScript((t) => localStorage.setItem("esa.theme", t), theme);
     // The helper and permission cards only show while Claude is working: pretend these two runs are live.
-    await context.route(/\/api\/profiles\/audit\/tickets(\/t_\w+)?(\?|$)/, async (route) => {
+    // Board tickets, one ticket and the chats list (/api/tickets); not their conversations.
+    await context.route(/\/api\/(profiles\/audit\/tickets(\/[^/?]+)?|tickets)(\?|$)/, async (route) => {
       if (route.request().method() !== "GET") return route.continue();
       const res = await route.fetch();
       const data = await res.json();
@@ -228,6 +230,8 @@ try {
       }
     };
     const newButton = (p: Page) => (phone ? p.locator(".fab") : p.locator(".new-ticket-btn")).click();
+    // A full load: a hash change alone can be undone by the history step of a dialog that just closed.
+    const open = async (p: Page, id: string) => { await p.goto(`${BASE}/#/audit/${id}`); await p.reload(); };
     const showChats = (p: Page) => (phone ? p.locator(".tabbar button").nth(1) : p.locator(".mode-switch button").nth(1)).click();
     await page.goto(`${BASE}/#/audit`);
     await page.evaluate(() => sessionStorage.setItem("ck-inbox-landed", "1"));
@@ -264,14 +268,20 @@ try {
     await check("chats list", showChats);
     await check("new chat dialog", newButton);
     await page.keyboard.press("Escape");
-    await check("session chat", (p) => p.goto(`${BASE}/#/audit/${session.id}`).then(() => undefined));
+    await check("session chat", (p) => open(p, session.id));
     await check("fork dialog", async (p) => {
       await p.locator('button[aria-label="Session actions"]').click();
       await p.getByText("Fork chat…").click();
     });
     await page.keyboard.press("Escape");
-    await check("ticket chat with plan", (p) => p.goto(`${BASE}/#/audit/${ticket.id}`).then(() => undefined));
-    await check("chat events", (p) => p.goto(`${BASE}/#/audit/${events.id}`).then(() => undefined));
+    await check("ticket chat with plan", (p) => open(p, ticket.id));
+    await check("ticket actions menu", (p) => p.locator(".panel-head .more-btn").click());
+    await page.keyboard.press("Escape");
+    await check("chat events", async (p) => {
+      await open(p, events.id);
+      // A live ticket update can replace the faked running state; a reload fetches it again.
+      await p.locator(".ask-card").waitFor({ timeout: 5000 }).catch(() => p.reload());
+    });
     await check("chat code block", (p) => p.locator(".code-block").first().scrollIntoViewIfNeeded());
     await check("helper cards", (p) => p.locator(".helper-card").first().scrollIntoViewIfNeeded());
     await check("permission card", (p) => p.locator(".ask-card").first().scrollIntoViewIfNeeded());
