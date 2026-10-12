@@ -23,8 +23,6 @@ const BASE = `http://localhost:${PORT}`;
 // Problems other tickets are fixing, as "screen: problem" (sizes left out). They're counted but don't fail the run.
 // Delete a line once its fix lands; the audit says when a line no longer matches anything.
 const KNOWN: RegExp[] = [
-  // t_20261012_bqag huddle badge on cards
-  /^(board.*|new ticket dialog|header menu|daily usage sheet|search dialog|activity sheet|report a bug|notification sheet|long-press card sheet): tiny target \S+ "🗣 Huddle /,
   // No ticket yet: Changes tab controls and file letters, the "Your turn" pill next to an open ticket
   /^ticket changes: tiny target \S+ "(|Comment on line \d+|Msettings.ts|Atoggle.ts|▾src)" /,
   /^ticket changes: tiny text \S+ "[MA]"/,

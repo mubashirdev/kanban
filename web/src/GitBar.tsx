@@ -5,7 +5,7 @@ import { toast } from "./toast";
 
 const agentOf = (t: Ticket) => (t.agent === "codex" ? "Codex" : "Claude");
 
-/** Commit, push and open a PR from the phone, like the desktop apps' Git bar. */
+/** Commit, push and open a PR from the phone, like the desktop apps' Git bar. Texts use plain words: users may not know git. */
 export function GitBar({ slug, ticket, git, onDone, onError }: {
   slug: string; ticket: Ticket; git: GitState; onDone: () => void; onError: (m: string) => void;
 }) {
@@ -26,42 +26,43 @@ export function GitBar({ slug, ticket, git, onDone, onError }: {
     }
   };
   const askAgent = () => act("ask", () => api.chat(slug, ticket.id,
-    "Commit the current changes with a short conventional commit message that says why. Don't push."), `Asked ${agent} to commit.`);
+    "Commit the current changes with a short conventional commit message that says why. Don't push."), `Asked ${agent} to save a snapshot.`);
   const onBase = git.branch === git.base;
   const canPush = !!git.branch && git.dirty === 0 && !!git.ahead;
+  const where = !git.branch ? "Not on a named version" : onBase ? "Working on the main version" : "Working on its own copy of the folder";
 
   return (
-    <section className="review-section git-bar" aria-label="Git">
+    <section className="review-section git-bar" aria-label="Version history">
       <p className="git-status">
-        <span className="git-branch">{git.branch ?? "detached HEAD"}</span>
+        <span className="git-branch" title={git.branch ?? undefined}>{where}</span>
         <span className="muted">
-          {[git.dirty ? `${git.dirty} uncommitted ${git.dirty === 1 ? "file" : "files"}` : "nothing to commit",
-            git.ahead ? `${git.ahead} ${git.ahead === 1 ? "commit" : "commits"} to push` : null]
+          {[git.dirty ? `${git.dirty} ${git.dirty === 1 ? "file" : "files"} changed since the last snapshot` : "all changes saved",
+            git.ahead ? `${git.ahead} ${git.ahead === 1 ? "snapshot" : "snapshots"} to upload` : null]
             .filter(Boolean).join(", ")}
         </span>
       </p>
       {git.dirty > 0 && (
-        <form className="git-commit" onSubmit={(e) => { e.preventDefault(); if (message.trim()) void act("commit", () => api.gitAction(slug, ticket.id, "commit", message), "Committed."); }}>
-          <input value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Commit message" aria-label="Commit message" maxLength={500} disabled={!!busy || running} />
-          <button className="btn primary" disabled={!message.trim() || !!busy || running}>{busy === "commit" ? "Committing…" : "Commit all"}</button>
-          <button type="button" className="btn small git-ask" disabled={!!busy || running} onClick={askAgent}>Let {agent} write the message and commit</button>
+        <form className="git-commit" onSubmit={(e) => { e.preventDefault(); if (message.trim()) void act("commit", () => api.gitAction(slug, ticket.id, "commit", message), "Snapshot saved."); }}>
+          <input value={message} onChange={(e) => setMessage(e.target.value)} placeholder="What changed?" aria-label="Snapshot note" maxLength={500} disabled={!!busy || running} />
+          <button className="btn primary" disabled={!message.trim() || !!busy || running}>{busy === "commit" ? "Saving…" : "Save snapshot"}</button>
+          <button type="button" className="btn small git-ask" disabled={!!busy || running} onClick={askAgent}>Let {agent} write the note and save</button>
         </form>
       )}
       <div className="git-actions">
         {canPush && (
-          <button className="btn" disabled={!!busy || running} onClick={() => act("push", () => api.gitAction(slug, ticket.id, "push"), `Pushed ${git.branch}.`)}>
-            {busy === "push" ? "Pushing…" : "Push"}
+          <button className="btn" disabled={!!busy || running} onClick={() => act("push", () => api.gitAction(slug, ticket.id, "push"), "Uploaded.")}>
+            {busy === "push" ? "Uploading…" : "Upload"}
           </button>
         )}
         {ticket.prUrl ? (
-          <a className="btn icon-label" href={safeHref(ticket.prUrl)} target="_blank" rel="noreferrer">Open pull request <ExternalIcon /></a>
+          <a className="btn icon-label" href={safeHref(ticket.prUrl)} target="_blank" rel="noreferrer">Open review request <ExternalIcon /></a>
         ) : !onBase && git.branch && git.dirty === 0 && git.ahead === 0 && git.upstream && (
-          <button className="btn" disabled={!!busy || running} onClick={() => act("pr", () => api.gitAction(slug, ticket.id, "pr"), "Pull request created.")}>
-            {busy === "pr" ? "Creating…" : `Create pull request into ${git.base}`}
+          <button className="btn" disabled={!!busy || running} onClick={() => act("pr", () => api.gitAction(slug, ticket.id, "pr"), "Review requested.")}>
+            {busy === "pr" ? "Asking…" : "Ask to add it to the main version"}
           </button>
         )}
       </div>
-      {running && <p className="muted small">Git actions wait until {agent} has finished.</p>}
+      {running && <p className="muted small">These buttons wait until {agent} has finished.</p>}
     </section>
   );
 }

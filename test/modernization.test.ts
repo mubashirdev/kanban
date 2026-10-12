@@ -188,7 +188,7 @@ test("review compares committed worktree changes, staged changes, new files and 
   ).rejects.toThrow("Choose a changed file");
   expect(
     (await ticketReview(profile, { ...ticket, worktree: null }, store)).warning
-  ).toContain("Shared repository");
+  ).toContain("Shared folder");
 });
 
 const subscription = (endpoint = "https://web.push.apple.com/device/test") => ({

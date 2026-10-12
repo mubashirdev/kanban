@@ -122,8 +122,8 @@ export function Changes({ slug, ticket, state, onSent, onError }: {
         <span>{files.length} file{files.length === 1 ? "" : "s"}</span>
         <span className="diff-add">+{diff.additions}</span>
         <span className="diff-del">−{diff.deletions}</span>
-        <span className="changes-ref" title={inFolder ? "Everything changed in the project folder since this ticket's first run, including edits made there by others" : undefined}>
-          vs <code>{diff.base}</code>{inFolder && " (this ticket's start)"}{diff.branch && <> · <code>{diff.branch}</code></>}
+        <span className="changes-ref" title={inFolder ? "Everything changed in the project folder since this ticket's first run, including edits made there by others" : `Compared with ${diff.base}`}>
+          {inFolder ? "since this ticket's start" : "compared with the main version"}
         </span>
         <span className="spacer" />
         {error && <span className="changes-err" title={error}>Refresh failed</span>}

@@ -98,7 +98,7 @@ export function ReviewPanel({
   return (
     <div className="review-panel">
       <div className="workspace-heading">
-        <h2>{ticket.standalone ? "Changes in the repo" : "Review work"}</h2>
+        <h2>{ticket.standalone ? "Changes in the folder" : "Review work"}</h2>
         <button
           className="btn small icon-label"
           onClick={() => {

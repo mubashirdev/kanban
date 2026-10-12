@@ -159,12 +159,12 @@ export async function ticketReview(
       }
     }
     if (names.code !== 0)
-      warning = "Git inspection failed. Refresh or open Terminal & files.";
-  } else warning = "No Git checkout is available for this ticket.";
+      warning = "Couldn't read the folder's version history. Refresh or open Terminal & files.";
+  } else warning = "This ticket has no version history to show changes from.";
   if (available && !ticket.worktree && !ticket.workdir)
     warning =
       warning ??
-      "Shared repository: showing current uncommitted changes. Other tickets may also have changed these files.";
+      "Shared folder: showing changes not saved in a snapshot yet. Other tickets may also have changed these files.";
   let checks: { name: string; state: string; url: string | null }[] = [],
     checkError: string | null = null;
   if (ticket.prUrl && !file) {
