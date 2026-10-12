@@ -11,6 +11,8 @@ export interface MenuItem {
   hint?: string;
   /** Starts a new group of items. */
   groupStart?: boolean;
+  /** Starts a new group under this heading, e.g. "Settings". */
+  section?: string;
   /** Right-aligned extra, e.g. a count or a need-chip. */
   badge?: ReactNode;
   title?: string;
@@ -20,6 +22,11 @@ export interface MenuItem {
   keepOpen?: boolean;
   /** Destructive (red), e.g. Stop agents in the huddle's phone sheet. */
   danger?: boolean;
+}
+
+/** Flattens named groups into one list, heading each non-empty group. */
+export function withSections(groups: Record<string, MenuItem[]>): MenuItem[] {
+  return Object.entries(groups).flatMap(([section, items]) => items.map((item, i) => (i === 0 ? { ...item, section } : item)));
 }
 
 /** "⋯" overflow menu at the end of the top bar for things you need now and then. ↑↓ move, Esc closes. */
@@ -66,7 +73,7 @@ export function HeaderMenu({ items, footer, alert, keyHint }: { items: MenuItem[
           <div className="sheet-list">
             {items.map((it, i) => (
               <Fragment key={it.label}>
-                {it.groupStart && i > 0 && <div className="sheet-gap" />}
+                {it.section ? <div className="menu-section">{it.section}</div> : it.groupStart && i > 0 && <div className="sheet-gap" />}
                 <button type="button" className="sheet-action menu-row" onClick={() => { if (!it.keepOpen) setOpen(false); it.onSelect(); }}>
                   <span className="menu-icon" aria-hidden>{it.icon}</span>
                   <span>{it.label}</span>
@@ -82,7 +89,8 @@ export function HeaderMenu({ items, footer, alert, keyHint }: { items: MenuItem[
         <div className="inbox-menu header-menu-list" role="menu" ref={menu} onKeyDown={onKey}>
           {items.map((it, i) => (
             <Fragment key={it.label}>
-              {it.groupStart && i > 0 && <div className="menu-sep" role="separator" />}
+              {(it.groupStart || it.section) && i > 0 && <div className="menu-sep" role="separator" />}
+              {it.section && <div className="menu-section" role="presentation">{it.section}</div>}
               <button role="menuitem" className="menu-item" title={it.title} onClick={() => { if (!it.keepOpen) setOpen(false); it.onSelect(); }}>
                 <span className="menu-icon" aria-hidden>{it.icon}</span>
                 <span className="menu-label">{it.label}</span>

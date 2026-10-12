@@ -5,11 +5,11 @@ import { ChatsView, NewSessionDialog, SessionView } from "./Sessions";
 import { Modal } from "./Modal";
 import { usePersistentState } from "./usePersistentState";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, copy, COLUMNS, onReconnect, subscribe, waitsForSlot, type Health, type InboxItem, type McpState, type Profile, type Schedule, type Status, type Ticket } from "./api";
+import { api, copy, COLUMNS, onReconnect, subscribe, waitsForSlot, type Health, type InboxItem, type McpServer, type McpState, type Profile, type Schedule, type Status, type Ticket } from "./api";
 import { avatarColor, avatarLetter } from "./avatar";
 import { BugReportDialog } from "./BugReportDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
-import { HeaderMenu } from "./HeaderMenu";
+import { HeaderMenu, withSections } from "./HeaderMenu";
 import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, ColumnsIcon, ContrastIcon, CopyIcon, DollarIcon, GearIcon, HistoryIcon, KeyboardIcon, PlusIcon, PlugIcon, RefreshIcon, SearchIcon, SlidersIcon, TeamIcon, TerminalIcon, TrashIcon } from "./icons";
 import { buzz } from "./haptics";
 import { Inbox } from "./Inbox";
@@ -146,6 +146,16 @@ function quiet<T>(load: () => Promise<T>, what: string, set: (v: T) => void) {
   });
 }
 
+/** Why Connections needs you, e.g. "GitHub needs you to log in again" or "2 connections failed". */
+function connectionsReason(servers: McpServer[]): string {
+  const bad = servers.filter((s) => s.attention);
+  const failed = bad.filter((s) => s.status === "failed").length;
+  if (bad.length === 1) return failed ? `${bad[0].name} failed to connect` : `${bad[0].name} needs you to log in again`;
+  if (failed === bad.length) return `${bad.length} connections failed`;
+  if (failed === 0) return `${bad.length} connections need you to log in again`;
+  return `${bad.length} connections need you`;
+}
+
 function readLast(): string | null {
   try {
     return localStorage.getItem(LAST_PROFILE);
@@ -162,6 +172,8 @@ export function App() {
   const pwa = usePwa();
   const compact = useMediaQuery(PHONE);
   const narrow = useMediaQuery("(max-width: 900px)");
+  // No keyboard to speak of: hides Keyboard shortcuts (iPads keep it).
+  const phoneWidth = useMediaQuery("(max-width: 767px)");
   const [usageRequest, setUsageRequest] = useState(0);
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
   const [slug, setSlug] = useState<string | null>(parseHash().slug ?? readLast());
@@ -862,45 +874,57 @@ export function App() {
             <PlusIcon size={21} className="icon new-ticket-symbol" /><span className="new-ticket-label">{mode === "chats" ? "New chat" : "New ticket"}</span>
           </button>
         )}
-        <HeaderMenu alert={compact && (scheduleErrors > 0 || mcpAttention > 0)} items={[
-          ...(!pwa.installed ? [{ label: "Install Muba AI", icon: <CopyIcon />, onSelect: pwa.install }] : []),
-          ...(pwa.waiting ? [{ label: "Reload app update", icon: <CheckIcon />, onSelect: pwa.update }] : []),
-          ...(narrow ? [{ label: "Usage & limits", icon: <ClockIcon />, onSelect: () => setUsageRequest((n) => n + 1) }] : []),
-          ...(compact ? [
-            ...(profile ? [
+        <HeaderMenu alert={compact && (scheduleErrors > 0 || mcpAttention > 0)} items={withSections({
+          "Needs you": [
+            ...(compact && scheduleErrors ? [{ label: `${scheduleErrors} schedule${scheduleErrors === 1 ? "" : "s"} could not start`, icon: <RefreshIcon />, onSelect: () => setSchedulesOpen(true) }] : []),
+            ...(compact && mcpAttention ? [{ label: connectionsReason(mcp!.servers), icon: <PlugIcon />, onSelect: () => setConnections(true) }] : []),
+            ...(pwa.waiting ? [{ label: "Reload app update", icon: <CheckIcon />, onSelect: pwa.update }] : []),
+          ],
+          Tools: [
+            ...(compact && profile ? [
               { label: "Terminal & files", icon: <TerminalIcon />, onSelect: () => openDockOn("terminal") },
               { label: "Quick Claude chat", icon: <ChatIcon />, onSelect: () => openDockOn("claude") },
               { label: "Team", icon: <TeamIcon />, onSelect: () => openDockOn("team") },
-              { label: `Schedules${scheduleErrors ? ` · ${scheduleErrors} need you` : ""}`, icon: <RefreshIcon />, onSelect: () => setSchedulesOpen(true) },
+              ...(!scheduleErrors ? [{ label: "Schedules", icon: <RefreshIcon />, onSelect: () => setSchedulesOpen(true) }] : []),
             ] : []),
-            { label: `Connections${mcpAttention ? ` · ${mcpAttention} need you` : ""}`, icon: <PlugIcon />, onSelect: () => setConnections(true) },
-          ] : []),
-          ...(profile ? [{ label: "Board settings", groupStart: true, icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
-          ...(profile ? [{ label: "Search tickets & chats", icon: <SearchIcon />, onSelect: () => setFullSearch(true) }] : []),
-          ...(profile ? [{ label: "Snippets", icon: <AtIcon />, onSelect: () => setSnippetsOpen(true), title: "Reusable prompt text: type @name in a ticket to insert it" }] : []),
-          ...(profile ? [{ label: "Activity", icon: <HistoryIcon />, onSelect: () => setActivityOpen(true) }] : []),
-          { label: "Daily usage", icon: <DollarIcon />, onSelect: () => setDailyCostOpen(true) },
-          { label: "Default models", groupStart: true, icon: <SlidersIcon />, onSelect: () => setDefaultModelsOpen(true) },
-          {
-            label: "Appearance", icon: <ContrastIcon />, keepOpen: true, title: "Tap to switch: System, Light, Dark",
-            badge: <span className="menu-setting">{THEME_LABEL[theme]}</span>,
-            onSelect: () => {
-              const next = THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length];
-              setThemeChoice(next);
-              setTheme(next);
+            ...(compact && !mcpAttention ? [{ label: "Connections", icon: <PlugIcon />, onSelect: () => setConnections(true) }] : []),
+            ...(profile ? [
+              { label: "Search tickets & chats", icon: <SearchIcon />, onSelect: () => setFullSearch(true) },
+              { label: "Snippets", icon: <AtIcon />, onSelect: () => setSnippetsOpen(true), title: "Reusable prompt text: type @name in a ticket to insert it" },
+              { label: "Activity", icon: <HistoryIcon />, onSelect: () => setActivityOpen(true) },
+            ] : []),
+          ],
+          Usage: [
+            ...(narrow ? [{ label: "Usage & limits", icon: <ClockIcon />, onSelect: () => setUsageRequest((n) => n + 1) }] : []),
+            { label: "Daily usage", icon: <DollarIcon />, onSelect: () => setDailyCostOpen(true) },
+          ],
+          Settings: [
+            ...(profile ? [{ label: "Board settings", icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
+            { label: "Default models", icon: <SlidersIcon />, onSelect: () => setDefaultModelsOpen(true) },
+            {
+              label: "Appearance", icon: <ContrastIcon />, keepOpen: true, title: "Tap to switch: System, Light, Dark",
+              badge: <span className="menu-setting">{THEME_LABEL[theme]}</span>,
+              onSelect: () => {
+                const next = THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length];
+                setThemeChoice(next);
+                setTheme(next);
+              },
             },
-          },
-          ...(cleanup !== null ? [{
-            label: "Clean up when done", icon: <TrashIcon />, keepOpen: true,
-            title: "When a ticket is done, its screenshots, recordings and traces go to the Trash. Once a day, old leftovers and merged folder copies go too.",
-            badge: <span className="menu-setting">{cleanup ? "On" : "Off"}</span>,
-            onSelect: () => api.updateSettings({ cleanup: !cleanup }).then((s) => setCleanup(!!s.cleanup), () => {}),
-          }] : []),
-          { label: "Notifications", icon: <BellIcon />, onSelect: () => setNotificationsOpen(true) },
-          { label: "Mac & webhook alerts", icon: <BellIcon />, onSelect: () => setAlertsOpen(true), title: "macOS banner and ntfy / webhook when a ticket needs you" },
-          { label: "Keyboard shortcuts", hint: "?", icon: <KeyboardIcon />, onSelect: () => setShortcuts(true) },
-          { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
-        ]} footer={narrow && profile ? `${running}/${profile.maxParallel} running` : version && version.version !== "dev" ? `Muba AI v${version.version}` : null} />
+            ...(cleanup !== null ? [{
+              label: "Clean up when done", icon: <TrashIcon />, keepOpen: true,
+              title: "When a ticket is done, its screenshots, recordings and traces go to the Trash. Once a day, old leftovers and merged folder copies go too.",
+              badge: <span className="menu-setting">{cleanup ? "On" : "Off"}</span>,
+              onSelect: () => api.updateSettings({ cleanup: !cleanup }).then((s) => setCleanup(!!s.cleanup), () => {}),
+            }] : []),
+            { label: "Notifications", icon: <BellIcon />, onSelect: () => setNotificationsOpen(true) },
+            { label: "Mac & webhook alerts", icon: <BellIcon />, onSelect: () => setAlertsOpen(true), title: "macOS banner and ntfy / webhook when a ticket needs you" },
+          ],
+          Help: [
+            ...(!phoneWidth ? [{ label: "Keyboard shortcuts", hint: "?", icon: <KeyboardIcon />, onSelect: () => setShortcuts(true) }] : []),
+            { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
+            ...(!pwa.installed ? [{ label: "Install Muba AI", icon: <CopyIcon />, onSelect: pwa.install }] : []),
+          ],
+        })} footer={narrow && profile ? `${running}/${profile.maxParallel} running` : version && version.version !== "dev" ? `Muba AI v${version.version}` : null} />
       </header>
 
 

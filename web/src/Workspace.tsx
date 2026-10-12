@@ -401,11 +401,13 @@ export function WorkspaceActivity({ slug, tickets, onOpen }: { slug: string; tic
     <ol className="activity-timeline">
       {shown.map((item, i) => (
         <li key={item.at + item.id + i}>
-          <ClockIcon />
-          <div>
-            <button className="link-btn" onClick={() => onOpen(item.id)}>{item.title}</button>
-            <p>{item.changes.join(", ")} <time className="muted" dateTime={item.at}>· {timeAgo(item.at)}</time></p>
-          </div>
+          <button type="button" className="activity-row" onClick={() => onOpen(item.id)}>
+            <ClockIcon />
+            <span>
+              <span className="activity-title">{item.title}</span>
+              <span className="activity-changes">{item.changes.join(", ")} <time className="muted" dateTime={item.at}>· {timeAgo(item.at)}</time></span>
+            </span>
+          </button>
         </li>
       ))}
     </ol>

@@ -27,7 +27,7 @@ const KNOWN: RegExp[] = [
   /^(session chat|fork dialog|ticket chat with plan|chat events|chat code block|helper cards|permission card): tiny target \S+ "(Model|Reasoning effort): /,
   /^ticket (huddle|changes|outputs): cut off at the edge "(Session and ticket actio|Show details|Usage)"/,
   // t_20261012_bqag huddle badge on cards
-  /^(board.*|new ticket dialog|header menu|daily usage sheet|search dialog|notification sheet|long-press card sheet): tiny target \S+ "🗣 Huddle /,
+  /^(board.*|new ticket dialog|header menu|daily usage sheet|search dialog|activity sheet|report a bug|notification sheet|long-press card sheet): tiny target \S+ "🗣 Huddle /,
   // t_20261012_ll9q Huddle tab
   /^ticket huddle: tiny target \S+ "(Edit|@main mode|@reviewer mode|Chat|People2|Findings1|Huddle actions|)" /,
   /^ticket huddle: tiny text \S+ "[MRY]"/,
@@ -164,7 +164,7 @@ try {
     };
     document.querySelectorAll("button, a[href], summary, textarea, select, input:not([type=hidden])").forEach((e) => {
       if (!shown(e) || (e.tagName === "TEXTAREA" && e.closest(".composer-card"))) return; // the whole card focuses it
-      const r = e.getBoundingClientRect(), cs = getComputedStyle(e);
+      const r = (e.closest("label") ?? e).getBoundingClientRect(), cs = getComputedStyle(e); // a label around a checkbox is its tap area
       if (r.width < minTarget || r.height < minTarget) problems.push(`tiny target ${Math.round(r.width)}x${Math.round(r.height)} "${label(e)}" (${e.tagName.toLowerCase()}.${String(e.className).replace(/ +/g, ".")})`);
       if (cs.borderRadius.includes("50%") && Math.abs(r.width - r.height) > 2) problems.push(`not round ${Math.round(r.width)}x${Math.round(r.height)} "${label(e)}"`);
       const named = e.getAttribute("aria-label") || e.getAttribute("title") || (e.textContent || "").trim() || e.tagName !== "BUTTON";
@@ -208,6 +208,11 @@ try {
       else live(data);
       await route.fulfill({ response: res, json: data });
     });
+    // A connection that needs a fresh login, so the header menu shows what needs you.
+    await context.route(/\/api\/mcp$/, (route) => route.request().method() !== "GET" ? route.continue() : route.fulfill({ json: {
+      servers: [{ name: "GitHub", target: "https://api.githubcopilot.com/mcp/", transport: "http", scope: "user", status: "needs_auth", message: null, attention: true, login: null }],
+      unparsed: [], checkedAt: at(0), checking: false, error: null,
+    } }));
     const page = await context.newPage();
     const phone = width < 768 || (touch && width <= 900); // same as PHONE in web/src/useMediaQuery.ts
     const check = async (screen: string, setup: (p: Page) => Promise<void>) => {
@@ -232,16 +237,20 @@ try {
     else await check("board", async () => {});
     await check("new ticket dialog", newButton);
     await page.keyboard.press("Escape");
-    await check("header menu", (p) => p.locator('button[aria-label="More"]').click());
+    await check("header menu", (p) => p.locator('button[aria-label^="More"]').click());
     await page.keyboard.press("Escape");
-    await check("daily usage sheet", async (p) => { await p.locator('button[aria-label="More"]').click(); await p.getByText("Daily usage").click(); });
+    await check("daily usage sheet", async (p) => { await p.locator('button[aria-label^="More"]').click(); await p.getByText("Daily usage").click(); });
     await page.keyboard.press("Escape");
     await check("search dialog", async (p) => {
-      await p.locator('button[aria-label="More"]').click();
+      await p.locator('button[aria-label^="More"]').click();
       await p.getByText("Search tickets & chats").click();
       await p.getByRole("searchbox").fill("login");
       await p.waitForSelector(".search-hits .sheet-action");
     });
+    await page.keyboard.press("Escape");
+    await check("activity sheet", async (p) => { await p.locator('button[aria-label^="More"]').click(); await p.getByText("Activity", { exact: true }).click(); await p.waitForSelector(".activity-timeline"); });
+    await page.keyboard.press("Escape");
+    await check("report a bug", async (p) => { await p.locator('button[aria-label^="More"]').click(); await p.getByText("Report a bug").click(); await p.waitForSelector(".bug-block"); });
     await page.keyboard.press("Escape");
     await check("notification sheet", async (p) => { if (await p.locator(".inbox-pill").count()) await p.locator(".inbox-pill").click(); });
     await page.keyboard.press("Escape");

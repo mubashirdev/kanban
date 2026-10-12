@@ -1108,7 +1108,7 @@ body > .output-view.reader { position: fixed; }
 .column.claude-zone { background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface-2)); box-shadow: inset 0 3px 0 var(--accent); }
 .col-ready .column-title::before, .col-in_progress .column-title::before, .col-review .column-title::before { display: none; }
 .menu-setting { margin-left: auto; font-size: 13px; color: var(--muted); }
-.need-chip { font-size: 10.5px; font-weight: 700; color: var(--warn); background: var(--warn-soft); padding: 1px 7px; border-radius: 99px; }
+.need-chip { font-size: 11px; font-weight: 700; color: var(--warn); background: var(--warn-soft); padding: 1px 7px; border-radius: 99px; }
 .column-drop-hint { border: 1.5px dashed color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 10px; padding: 14px 10px; text-align: center; font-size: 12px; color: var(--muted); }
 
 
@@ -1463,10 +1463,18 @@ input[aria-invalid="true"] { border-color: var(--err); }
 /* Report bug dialog */
 .bug-form textarea { font-family: var(--mono); font-size: 12.5px; }
 .bug-blocks { display: flex; flex-direction: column; gap: 6px; }
-.bug-block { display: flex; align-items: flex-start; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
-.bug-block > input { width: auto; flex: none; margin: 3px 0 0; }
+.bug-block { display: flex; align-items: flex-start; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px 6px 4px; }
+/* The label around each checkbox is its tap area; 44px on touch. */
+.bug-block .bug-include { display: grid; place-items: center; flex: none; width: 24px; height: 24px; cursor: pointer; }
+.bug-include > input { width: auto; margin: 0; }
 .bug-block details { flex: 1; min-width: 0; }
-.bug-block summary { cursor: pointer; font-size: 13px; font-weight: 500; }
+.bug-block summary { padding-block: 3px; cursor: pointer; font-size: 13px; font-weight: 500; }
+@media (pointer: coarse) {
+  .bug-block { padding-block: 0; padding-left: 0; }
+  .bug-block .bug-include { width: 44px; height: 44px; }
+  .bug-include > input { width: 20px; height: 20px; }
+  .bug-block summary { padding-block: 0; line-height: 44px; font-size: 14px; }
+}
 .bug-block.off summary { color: var(--muted); text-decoration: line-through; }
 .bug-block pre { margin: 8px 0 2px; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 11.5px; }
 .banner.bug-fallback { border-radius: 8px; border: 0; justify-content: space-between; flex-wrap: wrap; }
@@ -1964,9 +1972,6 @@ button.pill:hover { color: var(--text); }
 .attention-row:hover, .ticket-list-row:hover { background: var(--surface-2); }
 .attention-reason { color: var(--accent); font-size: 12px; }
 .activity-timeline { padding: 0; margin: 0; list-style: none; }
-.activity-timeline li { display: flex; gap: 14px; padding: 16px 0; border-bottom: 1px solid var(--border); }
-.activity-timeline li > svg { margin-top: 3px; color: var(--accent); }
-.activity-timeline p { margin: 7px 0; overflow-wrap: anywhere; }
 .template-picker { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .template-choice { display: flex; flex-direction: column; gap: 5px; text-align: left; border: 1px solid var(--border); background: var(--surface); border-radius: 10px; padding: 12px; cursor: pointer; }
 .template-choice span { color: var(--muted); font-size: 11px; line-height: 1.4; }
@@ -2256,8 +2261,6 @@ button.pill:hover { color: var(--text); }
   .panel-head .close-btn, .panel-head .ticket-nav, .panel-head .save-state { display: none; }
   :root[data-keyboard-open] .panel-head .title-input { padding: 4px; }
 }
-.modal .activity-timeline li { padding: 12px 20px; gap: 12px; }
-.modal .activity-timeline p { margin: 3px 0; }
 .new-session .session-starter, .new-session .session-starter:focus-within { border: 0; box-shadow: none; padding: 0; background: transparent; }
 @media (max-width: 767px), (pointer: coarse) and (max-width: 900px) {
   /* The lane tabs above already name each lane and its count. */
@@ -2773,6 +2776,9 @@ body { letter-spacing: -0.011em; }
 .sheet-action.menu-row { display: flex; align-items: center; gap: 14px; }
 .menu-row .menu-icon { display: grid; place-items: center; width: 24px; color: var(--muted); }
 .sheet-gap { height: 10px; }
+.menu-section { padding: 10px 8px 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.sheet-list .menu-section { padding: 16px 4px 4px; font-size: 13px; }
+.sheet-list .menu-section:first-child { padding-top: 4px; }
 .sheet-list .menu-footer { padding: 14px 4px 4px; text-align: center; }
 
 /* Cards, iOS style: board cards are compact tiles; chats are one grouped list with hairlines. */
@@ -2908,12 +2914,13 @@ body { letter-spacing: -0.011em; }
 .panel-main .chat > .composer-warn .composer-warn-more { white-space: normal; }
 /* Checkboxes and radios follow the grey theme instead of the browser's blue. */
 :root { accent-color: var(--accent); }
-/* Activity: title, then what changed and when on one line. */
-.activity-timeline .link-btn { min-height: 0; padding: 0; font-size: 14px; font-weight: 600; color: var(--text); }
-.activity-timeline p { font-size: 13.5px; color: var(--muted); }
-.modal .activity-timeline li { padding: 10px 20px; }
-.modal .activity-timeline p { margin: 2px 0 0; }
-.activity-timeline li > svg { margin-top: 2px; color: var(--muted); flex: none; }
+/* Activity: the whole row opens the ticket. Title, then what changed and when. */
+.activity-timeline li { border-bottom: 1px solid var(--border); }
+.activity-row { display: flex; gap: 12px; width: 100%; min-height: 44px; padding: 10px 20px; border: 0; background: none; font: inherit; color: var(--text); text-align: left; cursor: pointer; }
+.activity-row:hover { background: var(--surface-2); }
+.activity-row > svg { margin-top: 2px; color: var(--muted); flex: none; }
+.activity-title { display: block; font-size: 14px; font-weight: 600; }
+.activity-changes { display: block; margin-top: 2px; font-size: 13.5px; color: var(--muted); overflow-wrap: anywhere; }
 
 /* Touch screens (phones and iPads): every control is at least 44px, Apple's minimum tap size.
    Inline summaries keep their compact look: negative margins give back the extra height. */

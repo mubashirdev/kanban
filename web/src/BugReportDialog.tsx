@@ -109,7 +109,9 @@ export function BugReportDialog({ ticket, onClose }: {
             <div className="bug-blocks">
               {blocks.map((b) => (
                 <div key={b.id} className={`bug-block${include.has(b.id) ? "" : " off"}`}>
-                  <input type="checkbox" checked={include.has(b.id)} onChange={() => toggle(b.id)} aria-label={`Include ${b.label}`} />
+                  <label className="bug-include" title={`Include ${b.label}`}>
+                    <input type="checkbox" checked={include.has(b.id)} onChange={() => toggle(b.id)} aria-label={`Include ${b.label}`} />
+                  </label>
                   <details>
                     <summary>{b.label}</summary>
                     <pre>{b.text}</pre>
