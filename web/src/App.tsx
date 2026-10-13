@@ -5,7 +5,7 @@ import { ChatsView, NewSessionDialog, SessionView } from "./Sessions";
 import { Modal } from "./Modal";
 import { usePersistentState } from "./usePersistentState";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, copy, COLUMNS, onReconnect, subscribe, waitsForSlot, type Health, type InboxItem, type McpServer, type McpState, type Profile, type Schedule, type Status, type Ticket } from "./api";
+import { api, copy, COLUMNS, onReconnect, subscribe, waitsForSlot, type Health, type InboxItem, type McpServer, type McpState, type Profile, type Schedule, type Status, type StatusRow, type Ticket } from "./api";
 import { avatarColor, avatarLetter } from "./avatar";
 import { BugReportDialog } from "./BugReportDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
@@ -302,10 +302,20 @@ export function App() {
   }, [loadSchedules]);
 
   const [snoozed, setSnoozed] = useState<InboxItem[]>([]);
+  const [runRows, setRunRows] = useState<StatusRow[]>([]);
   const loadInbox = useCallback(() => quiet(api.inbox, "the inbox", (list) => {
     setInbox(list.filter((i) => !i.snoozedUntil));
     setSnoozed(list.filter((i) => i.snoozedUntil));
   }), []);
+  // The Inbox's Status section: refetched when a run, chat or huddle reports a step (no polling).
+  const statusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshStatusSoon = useCallback(() => {
+    if (statusTimer.current) return;
+    statusTimer.current = setTimeout(() => {
+      statusTimer.current = null;
+      quiet(api.runStatus, "what is running", setRunRows);
+    }, 400);
+  }, []);
   const refreshInboxSoon = useCallback(() => {
     if (inboxTimer.current) return;
     inboxTimer.current = setTimeout(() => {
@@ -317,10 +327,11 @@ export function App() {
   useEffect(() => {
     loadProfiles().catch((e) => setError(e.message));
     loadInbox();
+    refreshStatusSoon();
     quiet(api.health, "tool checks", setHealth);
     quiet(api.version, "the version", setVersion);
     quiet(api.mcp, "connections", setMcp);
-  }, [loadProfiles, loadInbox]);
+  }, [loadProfiles, loadInbox, refreshStatusSoon]);
   // First visit with no boards yet: open New board straight away (it lists recent Claude Code folders).
   const autoOpened = useRef(false);
   useEffect(() => {
@@ -398,12 +409,13 @@ export function App() {
     api.restartState().then(setRestart).catch(() => {});
     loadProfiles().catch(() => {});
     loadInbox();
+    refreshStatusSoon();
     api.mcp().then(setMcp).catch(() => {});
     if (slug) {
       api.tickets(slug).then(setTickets).catch(() => {});
       loadSchedules(slug);
     }
-  }), [slug, loadProfiles, loadInbox, loadSchedules]);
+  }), [slug, loadProfiles, loadInbox, refreshStatusSoon, loadSchedules]);
 
   const needYou = inbox.length;
   // A snooze ends by itself: reload when the first one runs out (the server only counts it again then).
@@ -570,6 +582,7 @@ export function App() {
           if (before !== undefined && now && now !== before && !e.ticket.running) buzz([30, 60, 30]);
         }
         if (e.type === "ticket.updated" || e.type === "ticket.deleted" || e.type === "session.updated" || e.type === "huddle.updated") refreshInboxSoon();
+        if (e.type === "ticket.updated" || e.type === "ticket.deleted" || e.type === "session.updated" || e.type === "huddle.updated" || e.type === "huddle.message" || e.type === "huddle.activity") refreshStatusSoon();
         if (e.type === "schedule.updated" && e.profile === slug) refreshSchedulesSoon(slug);
         if (e.type === "ticket.updated" && e.profile === slug && e.ticket.scheduleId) refreshSchedulesSoon(slug);
         if (e.type === "ticket.updated" && e.profile === slug) {
@@ -589,7 +602,7 @@ export function App() {
           setTickets((ts) => ts.filter((t) => t.id !== e.id));
         }
       }),
-    [slug, loadProfiles, refreshInboxSoon, refreshSchedulesSoon],
+    [slug, loadProfiles, refreshInboxSoon, refreshStatusSoon, refreshSchedulesSoon],
   );
 
   const profile = useMemo(() => profiles?.find((p) => p.slug === slug) ?? null, [profiles, slug]);
@@ -747,10 +760,8 @@ export function App() {
     loadInbox();
   };
 
-  const openFrom = (board: string, id: string) => {
-    if (board !== slug) setSlug(board);
-    openTicket(id, board);
-  };
+  // The hash change switches the board too; setting the board first would let the URL sync drop the ticket.
+  const openFrom = (board: string, id: string) => openTicket(id, board);
 
   // ⌘K actions run the same handlers as their buttons and menu items.
   const commandActions: CommandAction[] = [
@@ -845,6 +856,10 @@ export function App() {
         )}
         <div className="spacer" />
         <Inbox items={inbox} snoozed={snoozed} landOnInbox={narrow && !startedOnTicket.current} openRequest={inboxRequest} onPick={(i) => openFrom(i.profile, i.id)}
+          running={runRows} onOpenRun={(r) => {
+            if (r.huddleId) setHuddleTab({ id: r.id, n: Date.now(), huddleId: r.huddleId });
+            openFrom(r.profile, r.id);
+          }}
           onMarkDone={(i) => void inboxDone(i)} onSnooze={(i, on) => void inboxSnooze(i, on)} />
         {profile && !compact && (
           <button className={`btn ghost icon-label${dockOpen && !chatOpen ? " on" : ""}`}

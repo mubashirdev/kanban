@@ -6,6 +6,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { extractFinalText, summarizeEvent } from "./activity";
+import { pushStep } from "./status";
 import { isSlashCommand } from "./commands";
 import { expandCodexCommand } from "./codex-commands";
 import { commitAll, createPr, pushBranch } from "./git-actions";
@@ -99,6 +100,8 @@ interface ActiveRun {
   draft?: DraftTracker;
   /** Permission asks waiting for the user, by Claude's request id, oldest first. */
   asks?: Map<string, { ask: PermissionAsk; request: any }>;
+  /** Its last few steps in plain words, for the Inbox's Status section. */
+  steps: string[];
 }
 
 /** A finished assistant message with text in it (not just thinking or a tool call). */
@@ -374,6 +377,11 @@ export class Board {
     return this.runs.has(this.key(slug, id));
   }
 
+  /** The current run's last few steps, oldest first (empty when it isn't running). */
+  recentSteps(slug: string, id: string): string[] {
+    return [...(this.runs.get(this.key(slug, id))?.steps ?? [])];
+  }
+
   /** The ticket's current run is a quiet reply to another session's message (a peer run, e.g. a huddle's). */
   isPeerRun(slug: string, id: string): boolean {
     return !!this.runs.get(this.key(slug, id))?.chat?.quiet;
@@ -622,7 +630,7 @@ export class Board {
 
   private start(slug: string, id: string, chat?: ActiveRun["chat"], promptMsgId?: string) {
     const run: ActiveRun = {
-      slug, id, handle: null, promise: Promise.resolve(), targetStatus: null, stopRequested: false, chat, inFlight: new Map(), promptMsgId,
+      slug, id, handle: null, promise: Promise.resolve(), targetStatus: null, stopRequested: false, chat, inFlight: new Map(), promptMsgId, steps: [],
     };
     this.runs.set(this.key(slug, id), run);
     this.begin(run);
@@ -836,6 +844,7 @@ export class Board {
         const s = summarizeEvent(ev);
         // Keep "Stopping…" on the card until the process is gone.
         if (!s || run.stopRequested) return;
+        pushStep(run.steps, s);
         pendingActivity = s;
         const now = Date.now();
         if (now - lastWrite >= ACTIVITY_THROTTLE_MS) {

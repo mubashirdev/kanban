@@ -939,6 +939,28 @@ export interface InboxItem {
   snoozedUntil?: string;
 }
 
+/** What the Inbox's Status section asks a run with Nudge (the server matches the same text to find the answer). */
+export const NUDGE_TEXT = "Give me a 2-line status: what's done, what's left, any blocker";
+
+/** One running ticket, chat or huddle on any board, for the Inbox's Status section (see src/server/status.ts). */
+export interface StatusRow {
+  kind: "ticket" | "chat" | "huddle";
+  profile: string;
+  profileName: string;
+  /** The ticket (for a huddle: its host ticket). */
+  id: string;
+  huddleId?: string;
+  title: string;
+  agent: string;
+  startedAt: string | null;
+  costUsd: number;
+  step: string;
+  /** Newest last. */
+  steps: string[];
+  stalledMinutes: number | null;
+  nudge: { at: string; answer: string | null } | null;
+}
+
 /** A ticket on any board, as the ⌘K command bar lists it. */
 export interface TicketRow {
   profile: string;
@@ -1141,6 +1163,8 @@ export const api = {
   diff: (slug: string, id: string, ignoreWhitespace: boolean) =>
     req<TicketDiff>("GET", `${t(slug, id)}/diff${ignoreWhitespace ? "?w=1" : ""}`),
   chat: (slug: string, id: string, text: string) => req<Ticket>("POST", `${t(slug, id)}/chat`, { text }),
+  /** Asks a running ticket or chat for a 2-line status (409 once the run has finished). */
+  nudge: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/nudge`),
   fork: (slug: string, id: string, input: { model?: string; text?: string }) => req<Ticket>("POST", `${t(slug, id)}/fork`, input),
   search: (slug: string, q: string) => req<SearchHit[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/search?q=${encodeURIComponent(q)}`),
   sendQueued: (slug: string, id: string, msgId: string) => req<Ticket>("POST", `${t(slug, id)}/queued/${msgId}`),
@@ -1165,6 +1189,7 @@ export const api = {
   /** Cost, tokens and ≈ share of the 5h plan window per run. */
   ticketUsage: (slug: string, id: string) => req<TicketUsage>("GET", `${t(slug, id)}/usage`),
   inbox: () => req<InboxItem[]>("GET", "/api/inbox"),
+  runStatus: () => req<StatusRow[]>("GET", "/api/status"),
   allTickets: () => req<TicketRow[]>("GET", "/api/tickets"),
   snippets: (slug: string) => req<Snippet[]>("GET", `/api/snippets?profile=${encodeURIComponent(slug)}`),
   createSnippet: (input: SnippetInput) => req<Snippet>("POST", "/api/snippets", input),

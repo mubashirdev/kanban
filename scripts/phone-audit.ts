@@ -213,6 +213,14 @@ try {
       servers: [{ name: "GitHub", target: "https://api.githubcopilot.com/mcp/", transport: "http", scope: "user", status: "needs_auth", message: null, attention: true, login: null }],
       unparsed: [], checkedAt: at(0), checking: false, error: null,
     } }));
+    // The Inbox's Status section: a stuck ticket that answered a Nudge and a huddle, with long titles and steps.
+    await context.route(/\/api\/status$/, (route) => route.fulfill({ json: [
+      { kind: "ticket", profile: "audit", profileName: "audit", id: ticket.id, title: "Add a dark mode toggle to the settings page", agent: "Claude", startedAt: at(0), costUsd: 1.234,
+        step: "Editing SettingsToggleSwitch.tsx", steps: ["Reading settings.ts", "Running tests", "Editing SettingsToggleSwitch.tsx"], stalledMinutes: 12,
+        nudge: { at: at(5), answer: "Done: the toggle and its styles.\nLeft: the Safari test. No blocker." } },
+      { kind: "huddle", profile: "audit", profileName: "audit", id: polish.id, huddleId: "h_audit", title: "Huddle: Polish the settings page", agent: "Huddle · 2 working", startedAt: at(0), costUsd: 0.42,
+        step: "@reviewer: Searching for \"contrast\"", steps: ["@main: Reading toggle.ts", "@reviewer: Searching for \"contrast\""], stalledMinutes: null, nudge: null },
+    ] }));
     const page = await context.newPage();
     const phone = width < 768 || (touch && width <= 900); // same as PHONE in web/src/useMediaQuery.ts
     const check = async (screen: string, setup: (p: Page) => Promise<void>) => {
@@ -255,6 +263,7 @@ try {
     await check("report a bug", async (p) => { await p.locator('button[aria-label^="More"]').click(); await p.getByText("Report a bug").click(); await p.waitForSelector(".bug-block"); });
     await page.keyboard.press("Escape");
     await check("notification sheet", async (p) => { if (await p.locator(".inbox-pill").count()) await p.locator(".inbox-pill").click(); });
+    await check("status row open", (p) => p.locator(".run-line").first().click());
     await page.keyboard.press("Escape");
     if (touch) await check("long-press card sheet", async (p) => {
       if (phone) await p.locator('button[data-column="backlog"]').click();

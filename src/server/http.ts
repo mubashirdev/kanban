@@ -45,6 +45,7 @@ import type { TerminalWatcher } from "./terminals";
 import { attachmentHeader, canCopyFile, copyFileToClipboard, markdownPage, markdownTitle, revealFile, ShareError } from "./share";
 import { UpdateChecker } from "./update";
 import { SpendIndex } from "./spend";
+import { huddleNudgeAnswer, NUDGE_PROMPT, NUDGE_TEXT, nudgeAnswer, STEP_COUNT, stepLabel, type StatusRow } from "./status";
 import { ClaudeLogIndex, readWindows, recordWindow, ticketRuns, ticketUsage, UsageCache, windowsNeeded } from "./ticket-usage";
 import { fetchUsage, type UsageResult } from "./usage";
 import type { Store } from "./store";
@@ -463,6 +464,48 @@ export function createServer(deps: ServerDeps) {
         }
       }
       return json(out.sort(byWaitingAge));
+    }
+
+    // Every board: what each running ticket, chat and huddle is doing now (the Inbox's Status section).
+    if (parts[0] === "status" && m === "GET") {
+      const out: StatusRow[] = [];
+      for (const p of store.listProfiles()) {
+        const base = { profile: p.slug, profileName: p.name };
+        for (const t of store.listTickets(p.slug)) {
+          if (!board.isRunning(p.slug, t.id)) continue;
+          // Only a nudged run's transcript is read: parsing every running transcript on every event is slow.
+          const parsed = !t.lastPrompt?.includes(NUDGE_TEXT) ? null : t.agent === "codex" ? codexSessions.get(p.slug, t.id) : t.sessionId ? sessions.get(t.sessionId) : null;
+          out.push({
+            ...base, kind: t.standalone ? "chat" : "ticket", id: t.id, title: t.title,
+            agent: t.agent === "codex" ? "Codex" : "Claude",
+            startedAt: t.runStartedAt ?? null,
+            costUsd: spend.ticket(p.slug, t.id).costUsd,
+            step: stepLabel(t),
+            steps: board.recentSteps(p.slug, t.id),
+            stalledMinutes: t.stalled?.minutes ?? null,
+            nudge: parsed ? nudgeAnswer(parsed.entries) : null,
+          });
+        }
+        for (const h of store.listHuddles(p.slug)) {
+          if (h.status !== "live") continue;
+          const agents = huddles.view(p.slug, h).participants.filter((x) => x.kind === "agent");
+          const working = agents.filter((x) => x.running);
+          if (!working.length) continue;
+          const steps = working.filter((x) => x.lastActivity).map((x) => `@${x.handle}: ${x.lastActivity}`).slice(-STEP_COUNT);
+          out.push({
+            ...base, kind: "huddle", id: h.hostTicket, huddleId: h.id, title: `Huddle: ${store.getTicket(p.slug, h.hostTicket)?.title ?? h.id}`,
+            agent: `Huddle · ${working.length} working`,
+            startedAt: h.createdAt,
+            costUsd: agents.reduce((sum, x) => sum + (x.costUsd ?? 0) + (x.liveCostUsd ?? 0), 0),
+            step: steps.at(-1) ?? "Working…",
+            steps,
+            stalledMinutes: null,
+            nudge: huddleNudgeAnswer(store.readHuddleMessages(p.slug, h.id)),
+          });
+        }
+      }
+      // Stuck first, then the longest running.
+      return json(out.sort((a, b) => Number(b.stalledMinutes !== null) - Number(a.stalledMinutes !== null) || (a.startedAt ?? "").localeCompare(b.startedAt ?? "")));
     }
 
     if (parts[0] === "notifications") {
@@ -1269,6 +1312,11 @@ export function createServer(deps: ServerDeps) {
       const t = await board.chat(slug, id, text, { fromPlanner: !!(planner || requester) });
       if (requester) store.addComment(slug, id, "ai", `Message sent ${byRequest(requester)}.`);
       return json(view(profile, t), 202);
+    }
+    // Nudge from the Inbox's Status section: only into a run that is still going, so a stale row never starts a new run.
+    if (m === "POST" && action === "nudge") {
+      if (!board.isRunning(slug, id)) throw new HttpError(409, "This run has already finished");
+      return json(view(profile, await board.chat(slug, id, NUDGE_PROMPT)), 202);
     }
     // POST .../fork { model?, text? }: a copy of this chat that continues the same conversation (on another model).
     if (m === "POST" && action === "fork" && parts.length === 5) {

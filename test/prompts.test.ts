@@ -58,9 +58,11 @@ test("summarizeEvent reads Bash commands", () => {
   expect(bash("cd /repo && bun test test")).toBe("Running tests");
   expect(bash("FOO=1 bun run test")).toBe("Running tests");
   expect(bash("git -C /repo status --short")).toBe("Git: status");
-  expect(bash("git commit -m 'x'")).toBe("Git: commit");
+  expect(bash("git commit -m 'x'")).toBe("Saving a snapshot");
+  expect(bash("git push origin HEAD:main")).toBe("Uploading changes");
+  expect(bash("cd /repo && bun run build:web")).toBe("Building");
   expect(bash("rg -n 'summarizeEvent' src")).toBe('Searching for "summarizeEvent"');
-  expect(bash("bunx tsc --noEmit")).toBe("Running tsc");
+  expect(bash("bunx tsc --noEmit")).toBe("Checking types");
   expect(bash("cat <<'EOF' > out.txt")).toBe("Running cat");
 });
 

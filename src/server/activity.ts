@@ -16,6 +16,7 @@ const base = (p: string) => p.replace(/\/+$/, "").split("/").pop() || p;
 const READERS = new Set(["cat", "sed", "head", "tail", "less", "bat", "wc", "nl"]);
 const SEARCHERS = new Set(["grep", "rg", "ag"]);
 const TEST_RE = /^(?:(?:bun|npm|pnpm|yarn)(?: run)? test|npx (?:jest|vitest)|jest|vitest|pytest|go test|cargo test)\b/;
+const BUILD_RE = /^(?:(?:bun|npm|pnpm|yarn) run build|(?:vite|next|cargo|go) build|make)\b/;
 
 /** First real command of a shell line: skips `cd x &&`, env assignments and leading sudo. */
 function mainCommand(cmd: string): string[] {
@@ -36,10 +37,14 @@ function describeBash(cmd: string): string {
   const line = words.join(" ");
   if (!words.length) return `Bash: ${clip(cmd.split("\n")[0])}`;
   if (TEST_RE.test(line)) return "Running tests";
+  if (BUILD_RE.test(line)) return "Building";
   const [w] = words;
+  if (w === "tsc") return "Checking types";
   const args = words.slice(1).filter((a) => !a.startsWith("-"));
   if (w === "git") {
     const sub = words.slice(1).find((a, i, all) => !a.startsWith("-") && !/^-[Cc]$/.test(all[i - 1] ?? ""));
+    if (sub === "push") return "Uploading changes";
+    if (sub === "commit") return "Saving a snapshot";
     return sub ? `Git: ${clip(sub, 30)}` : "Running git";
   }
   if (READERS.has(w)) {

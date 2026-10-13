@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { InboxItem } from "./api";
+import type { InboxItem, StatusRow } from "./api";
 import { BellIcon } from "./icons";
 import { useLayer } from "./layers";
 import { Modal } from "./Modal";
 import { fullTime, OLD_WAIT_MS, timeUntil, waitedFor } from "./time";
+import { RunStatus } from "./RunStatus";
 import { PHONE, useMediaQuery } from "./useMediaQuery";
 import { useNow } from "./useNow";
 
@@ -15,11 +16,14 @@ const keyOf = (i: InboxItem) => `${i.profile}/${i.id}`;
  * Top-bar "N need you" across every board, oldest wait first, each with how long it has waited (marked after 8h).
  * Each entry opens its ticket (Answer/Open), marks it done or snoozes it for a day; snoozed ones sit in a collapsed
  * section with time left and Unsnooze. ↑↓ move, Enter opens, d marks done, s snoozes (or unsnoozes), Esc closes.
+ * Above them, what every run is doing now (RunStatus); the pill shows "N running" when nothing needs you.
  */
-export function Inbox({ items, snoozed = [], onPick, onMarkDone, onSnooze, landOnInbox = false, openRequest }: {
+export function Inbox({ items, snoozed = [], running = [], onPick, onOpenRun, onMarkDone, onSnooze, landOnInbox = false, openRequest }: {
   items: InboxItem[];
   snoozed?: InboxItem[];
+  running?: StatusRow[];
   onPick: (i: InboxItem) => void;
+  onOpenRun: (r: StatusRow) => void;
   onMarkDone: (i: InboxItem) => void;
   onSnooze: (i: InboxItem, on: boolean) => void;
   /** Phones open straight onto what is waiting for you, once per browser session. */
@@ -87,7 +91,7 @@ export function Inbox({ items, snoozed = [], onPick, onMarkDone, onSnooze, landO
   };
 
   // The last entry went (done, snoozed or answered elsewhere): close, or the menu's layer would stay stacked.
-  const empty = !items.length && !snoozed.length;
+  const empty = !items.length && !snoozed.length && !running.length;
   useEffect(() => {
     if (empty) setOpen(false);
   }, [empty]);
@@ -98,10 +102,12 @@ export function Inbox({ items, snoozed = [], onPick, onMarkDone, onSnooze, landO
   const sorted = [...items].sort((a, b) => a.attention.since.localeCompare(b.attention.since));
   const later = [...snoozed].sort((a, b) => a.snoozedUntil!.localeCompare(b.snoozedUntil!));
   const pick = (i: InboxItem) => { setOpen(false); onPick(i); };
+  const openRun = (r: StatusRow) => { setOpen(false); onOpenRun(r); };
+  const label = items.length ? `${items.length} need you` : running.length ? `${running.length} running` : `${snoozed.length} snoozed`;
 
   return (
     <div className="inbox" ref={root}>
-      <button ref={pill} className="inbox-pill" aria-label={items.length ? `${items.length} need you` : `${snoozed.length} snoozed`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}
+      <button ref={pill} className="inbox-pill" aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}
         onKeyDown={(e) => {
           if (e.key === "ArrowDown") {
             e.preventDefault();
@@ -109,13 +115,19 @@ export function Inbox({ items, snoozed = [], onPick, onMarkDone, onSnooze, landO
             requestAnimationFrame(() => focusAt(0));
           }
         }}
-        title="Tickets on any board where Claude is waiting on you">
-        <span className="inbox-text">{items.length ? <><span className="yt-dot" aria-hidden /> {items.length} need you</> : <>{snoozed.length} snoozed</>}</span>
-        <span className="inbox-compact" aria-hidden><BellIcon size={20} /><span className="inbox-count">{items.length > 99 ? "99+" : items.length}</span></span>
+        title="What every run is doing, and tickets on any board where Claude is waiting on you">
+        <span className="inbox-text">{items.length || running.length ? <><span className={`yt-dot${items.length ? "" : " live"}`} aria-hidden /> {label}</> : label}</span>
+        <span className="inbox-compact" aria-hidden><BellIcon size={20} />
+          {(items.length > 0 || running.length > 0) && (
+            <span className={`inbox-count${items.length ? "" : " live"}`}>{Math.min(items.length || running.length, 99)}{(items.length || running.length) > 99 ? "+" : ""}</span>
+          )}
+        </span>
       </button>
       {open && phone && (
-        <Modal title="Needs you" onClose={() => setOpen(false)}>
+        <Modal title={running.length ? "Now" : "Needs you"} onClose={() => setOpen(false)}>
           <div className="sheet-list">
+            <RunStatus rows={running} onOpen={openRun} />
+            {running.length > 0 && <div className="sheet-heading">Needs you</div>}
             {!items.length && <p className="inbox-empty muted small">Nothing needs you right now.</p>}
             {sorted.map((i) => (
               <div key={keyOf(i)} className="inbox-sheet-entry">
@@ -148,6 +160,8 @@ export function Inbox({ items, snoozed = [], onPick, onMarkDone, onSnooze, landO
       )}
       {open && !phone && (
         <div className="inbox-menu" role="menu" ref={menu} onKeyDown={onMenuKey}>
+          <RunStatus rows={running} onOpen={openRun} menu />
+          {running.length > 0 && <div className="inbox-board">Needs you · {items.length}</div>}
           {!items.length && <p className="inbox-empty muted small">Nothing needs you right now.</p>}
           {sorted.map((i) => {
             const old = now - new Date(i.attention.since).getTime() > OLD_WAIT_MS;
