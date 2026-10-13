@@ -1834,8 +1834,8 @@ export class Huddles {
     const config = this.store.config();
     let lastWrite = 0;
     run.handle = startCodexRun({
-      bin: this.opts.codexBin ?? resolveCodexBin(), cwd: dir, input,
-      args: codexArgs({ sessionId: p.sessionId, refine: !p.canEdit, model: p.model ?? config.codexModel, effort: config.codexEffort, writableRoots, instructions: system, mcp: mcpArgv() }),
+      bin: this.opts.codexBin ?? resolveCodexBin(), cwd: dir, input, threadId: p.sessionId,
+      args: codexArgs({ refine: !p.canEdit, model: p.model ?? config.codexModel, effort: config.codexEffort, writableRoots, instructions: system, mcp: mcpArgv() }),
       env: { CKANBAN_OUTPUT_DIR: outputDir, CKANBAN_TICKET: `${slug}/${this.get(slug, hid).hostTicket}`, [HUDDLE_AGENT_ENV]: `${hid}/${handle}/${p.token}` },
       onEvent: (ev) => {
         if (this.shuttingDown) return;

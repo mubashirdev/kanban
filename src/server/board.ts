@@ -1,5 +1,5 @@
 import { cleanTicket } from "./cleanup";
-import { codexArgs, startCodexRun } from "./codex-runner";
+import { codexAnswer, codexArgs, startCodexRun } from "./codex-runner";
 import { cursorArgs, cursorRecap, needsNewCursorChat, startCursorRun, type CursorMode } from "./cursor-runner";
 import { codexRolloutFile } from "./codex-session";
 import { ticketMetadata, type TicketMetadata } from "./ticket-metadata";
@@ -817,9 +817,10 @@ export class Board {
       args: cursor
         ? cursorArgs({ chatId: cursorNewChat ? null : t.cursorChatId, mode: cursorMode, model: t.cursorModel })
         : codex
-        ? codexArgs({ sessionId: t.codexSessionId, refine, model: t.codexModel ?? this.store.config().codexModel, effort: t.codexEffort ?? this.store.config().codexEffort, writableRoots, instructions: systemPrompt, mcp: mcpArgv() })
+        ? codexArgs({ refine, ask: !refine, model: t.codexModel ?? this.store.config().codexModel, effort: t.codexEffort ?? this.store.config().codexEffort, writableRoots, instructions: systemPrompt, mcp: mcpArgv() })
         : buildArgs(session.sessionId, session.existed, (t.model === "default" ? null : t.model) ?? profile.model ?? this.store.config().claudeModel, refine ? "plan" : "bypassPermissions", mcpConfig(), systemPrompt, t.effort ?? this.store.config().claudeEffort, t.outputStyle, forkFrom, cap),
       input: prompt,
+      threadId: t.codexSessionId,
       instructions: cursor ? cursorInstructions : undefined,
       planning: refine,
       // CKANBAN_TICKET marks board runs: the ckanban MCP/CLI refuses board changes there (no runs starting runs).
@@ -2072,12 +2073,13 @@ export class Board {
   answerPermission(slug: string, id: string, askId: string, allow: boolean, always = false): Ticket {
     const run = this.runs.get(this.key(slug, id));
     const pending = run?.asks?.get(askId);
-    if (!run?.asks || !pending || !run.handle?.answer) throw new ConflictError("Claude is no longer waiting for this answer");
-    run.handle.answer(permissionAnswer(askId, pending.request, allow, always));
+    const t = this.store.getTicket(slug, id);
+    const codex = t?.agent === "codex";
+    if (!run?.asks || !pending || !run.handle?.answer) throw new ConflictError(`${codex ? "Codex" : "Claude"} is no longer waiting for this answer`);
+    run.handle.answer(codex ? codexAnswer(askId, allow, always) : permissionAnswer(askId, pending.request, allow, always));
     run.asks.delete(askId);
     const next = { permissionAsk: run.asks.values().next().value?.ask ?? null };
     // A read-only chat's instructions say "don't change files"; approving the plan means "go ahead", so edit access turns on.
-    const t = this.store.getTicket(slug, id);
     if (allow && pending.request?.tool_name === "ExitPlanMode" && t?.standalone && t.access !== "edit") {
       run.handle.send(planApprovedPrompt());
       return this.patch(slug, id, { ...next, access: "edit" });
