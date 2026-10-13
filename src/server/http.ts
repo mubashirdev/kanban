@@ -19,6 +19,8 @@ import { cronError, describeCron, nextRuns, parseCron } from "./cron";
 import { shellQuote } from "./util";
 import { RUN_HEADER, ScheduleError, Scheduler } from "./scheduler";
 import { SnippetError, Snippets } from "./snippets";
+import { TemplateError, Templates } from "./templates";
+import { chatSubdir, FolderError, listFolders, ticketFolder } from "./folders";
 import { HuddleError, Huddles, type Caller } from "./huddle";
 import { HuddleSessionCache, participantSession, participantTool } from "./huddle-session";
 import { HUDDLE_HEADER, SOURCE_HEADER } from "./huddle-roster";
@@ -59,6 +61,8 @@ export interface ServerDeps {
   board: Board;
   port: number;
   webDir: string;
+  /** Where the folder browser starts and stays inside (default: the user's home folder). */
+  home?: string;
   /** Opt-in private LAN access; localhost remains available to the CLI. */
   lan?: LanAccess;
   /** gh stand-ins for the PR box (tests). */
@@ -185,6 +189,7 @@ export function createServer(deps: ServerDeps) {
   const commands = deps.commands ?? new ClaudeCommands(process.env.CKANBAN_CLAUDE_BIN ?? "claude");
   const huddles = deps.huddles ?? new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   const snippets = new Snippets(store, bus);
+  const templates = new Templates(store);
   const windowsFile = join(store.root, "usage-windows.json");
   const usage = new UsageCache(deps.usage ?? fetchUsage, (r) => recordWindow(windowsFile, r));
   const spend = new SpendIndex(store);
@@ -292,7 +297,7 @@ export function createServer(deps: ServerDeps) {
       running,
       /** Its run takes one of the board's maxParallel slots (Planning and peer replies don't). */
       holdsSlot: running && board.holdsSlot(p.slug, t.id),
-      resumeCommand: t.agent === "codex" ? (t.codexSessionId ? `cd ${shellQuote(t.workdir ?? t.worktree ?? p.path)} && codex resume ${shellQuote(t.codexSessionId)}` : null) : t.sessionId ? resumeCommand(t.workdir ?? t.worktree ?? p.path, t.sessionId) : null,
+      resumeCommand: t.agent === "codex" ? (t.codexSessionId ? `cd ${shellQuote(t.workdir ?? t.worktree ?? ticketFolder(p.path, t))} && codex resume ${shellQuote(t.codexSessionId)}` : null) : t.sessionId ? resumeCommand(t.workdir ?? t.worktree ?? ticketFolder(p.path, t), t.sessionId) : null,
       session,
       /** Artifacts and share links, newest first: the Outputs tab's Links, the header chips and the card's ↗ chip. */
       links: ticketLinks(p.slug, t, session),
@@ -564,10 +569,11 @@ export function createServer(deps: ServerDeps) {
           if (typeof b[key] !== "boolean") throw new HttpError(400, `${key} must be true or false`);
           patch[key] = b[key];
         }
+        if (b.quickReplies !== undefined) patch.quickReplies = quickRepliesOf(b.quickReplies);
         store.saveConfig(patch);
       }
-      const { claudeModel = null, codexModel = null, claudeEffort = null, codexEffort = null, cleanup = false, keepAwake = false } = store.config();
-      return json({ claudeModel, codexModel, claudeEffort, codexEffort, cleanup, keepAwake });
+      const { claudeModel = null, codexModel = null, claudeEffort = null, codexEffort = null, cleanup = false, keepAwake = false, quickReplies = null } = store.config();
+      return json({ claudeModel, codexModel, claudeEffort, codexEffort, cleanup, keepAwake, quickReplies });
     }
     if (parts[0] === "away" && parts.length === 1 && m === "GET") {
       return json({
@@ -599,6 +605,25 @@ export function createServer(deps: ServerDeps) {
         return new Response(null, { status: 204 });
       }
       throw new HttpError(404, "not found");
+    }
+
+    // Saved ticket templates (New ticket dialog): GET ?profile=<slug> returns global ones plus that board's.
+    if (parts[0] === "templates") {
+      if (parts.length === 1 && m === "GET") return json(templates.list(url.searchParams.get("profile") ?? undefined));
+      if (parts.length === 1 && m === "POST") return json(templates.create((await body(req)) ?? {}), 201);
+      if (parts.length === 2 && m === "DELETE") {
+        templates.remove(parts[1]);
+        return new Response(null, { status: 204 });
+      }
+      throw new HttpError(404, "not found");
+    }
+
+    // In-page folder browser: inside the home folder, or inside a board's folder with ?profile=<slug>.
+    if (parts[0] === "folders" && parts.length === 1 && m === "GET") {
+      const slug = url.searchParams.get("profile");
+      const profile = slug ? store.getProfile(slug) : null;
+      if (slug && !profile) throw new HttpError(404, `board ${slug} not found`);
+      return json(listFolders(profile?.path ?? deps.home ?? homedir(), url.searchParams.get("path"), url.searchParams.get("hidden") === "1"));
     }
 
     // Schedule form preview: is the expression valid, what it means, when it fires next.
@@ -749,6 +774,7 @@ export function createServer(deps: ServerDeps) {
         if (board.running(slug) > 0) throw new HttpError(409, "board has running tickets");
         store.deleteProfile(slug);
         snippets.dropScope(slug);
+        templates.dropScope(slug);
         shells.kill(slug);
         bus.emit({ type: "profile.updated", slug, profile: null });
         return new Response(null, { status: 204 });
@@ -951,7 +977,7 @@ export function createServer(deps: ServerDeps) {
         let t = await board.createTicket(slug, {
           ...metadata(b), title, body: String(b.body ?? ""), status: standalone ? "backlog" : b.sessionId && !planner ? "backlog" : status, mode, parentId, planKey, dependsOn, needs,
           important: b.important === true,
-          ...(standalone ? { standalone, access: b.access === "edit" ? "edit" : "read", isolated: b.isolated === true } : {}),
+          ...(standalone ? { standalone, access: b.access === "edit" ? "edit" : "read", isolated: b.isolated === true, subdir: b.isolated === true ? undefined : chatSubdir(profile.path, b.subdir) } : {}),
           ...(b.codexSessionId ? { codexSessionId: String(b.codexSessionId) } : {}),
         });
         if (planner) store.addComment(slug, t.id, "ai", `Created by the planner of plan ${planner.id}.`);
@@ -1742,6 +1768,8 @@ export function createServer(deps: ServerDeps) {
         if (e instanceof AgentError) return json({ error: e.message }, e.status);
         if (e instanceof ScheduleError) return json({ error: e.message }, e.status);
         if (e instanceof SnippetError) return json({ error: e.message }, e.status);
+        if (e instanceof TemplateError) return json({ error: e.message }, e.status);
+        if (e instanceof FolderError) return json({ error: e.message }, e.status);
         if (e instanceof HuddleError) return json({ error: e.message }, e.status);
         if (e instanceof URIError) return json({ error: "malformed URL" }, 400);
         console.error(e);
@@ -1787,4 +1815,14 @@ function capValue(v: unknown, allowZero: boolean): number | null {
 function workspaceValue(v: unknown): Workspace {
   if (v !== "worktree" && v !== "folder") throw new HttpError(400, 'workspace must be "worktree" or "folder"');
   return v;
+}
+
+/** The chat's quick replies from a request: trimmed, non-empty; an empty list or null means the built-in ones. */
+function quickRepliesOf(v: unknown): string[] | null {
+  if (v === null) return null;
+  if (!Array.isArray(v) || v.some((r) => typeof r !== "string")) throw new HttpError(400, "quickReplies must be a list of texts, or null");
+  const list = v.map((r: string) => r.trim()).filter(Boolean);
+  if (list.length > 12) throw new HttpError(400, "at most 12 quick replies");
+  if (list.some((r) => r.length > 200)) throw new HttpError(400, "a quick reply may be at most 200 characters");
+  return list.length ? list : null;
 }

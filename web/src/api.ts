@@ -183,6 +183,8 @@ export interface Ticket {
   sessionId: string | null;
   worktree: string | null;
   workdir?: string | null;
+  /** A chat that runs in a subfolder of the board folder (relative path). */
+  subdir?: string | null;
   branch: string | null;
   /** HEAD of the board's folder at the ticket's first run there (its Changes base without a worktree). */
   baseSha?: string | null;
@@ -527,6 +529,26 @@ export interface DefaultModels {
   cleanup?: boolean;
   /** Keep the Mac awake whenever the board is open, not only while work runs. */
   keepAwake?: boolean;
+  /** The chat's quick-reply chips; null: the built-in ones. */
+  quickReplies?: string[] | null;
+}
+
+/** A ticket saved to start from again (New ticket dialog). scope: "global" or a board slug. */
+export interface TicketTemplate {
+  id: string;
+  name: string;
+  title: string;
+  body: string;
+  kind: NonNullable<Ticket["kind"]>;
+  priority: NonNullable<Ticket["priority"]>;
+  scope: string;
+}
+
+export interface FolderList {
+  path: string;
+  root: string;
+  parent: string | null;
+  folders: { name: string; path: string }[];
 }
 
 export interface Away {
@@ -1089,7 +1111,7 @@ export const api = {
     return r.text();
   },
   createTicket: (slug: string, input: {
-    title: string; body: string; status: Status; sessionId?: string; codexSessionId?: string; standalone?: boolean; access?: Ticket["access"]; isolated?: boolean; mode?: TicketMode; important?: boolean; agent?: Ticket["agent"]; priority?: Ticket["priority"]; kind?: Ticket["kind"]; labels?: string[]; parentId?: string; planKey?: string; dependsOn?: string[]; needs?: string[];
+    title: string; body: string; status: Status; sessionId?: string; codexSessionId?: string; standalone?: boolean; access?: Ticket["access"]; isolated?: boolean; subdir?: string; mode?: TicketMode; important?: boolean; agent?: Ticket["agent"]; priority?: Ticket["priority"]; kind?: Ticket["kind"]; labels?: string[]; parentId?: string; planKey?: string; dependsOn?: string[]; needs?: string[];
   }) => req<Ticket>("POST", t(slug), input),
   plan: (slug: string, id: string, action: "start" | "pause" | "resume" | "done" | "concurrency", maxConcurrent?: number) =>
     req<Ticket>("POST", `${t(slug, id)}/plan`, { action, maxConcurrent }),
@@ -1136,6 +1158,17 @@ export const api = {
   createSnippet: (input: SnippetInput) => req<Snippet>("POST", "/api/snippets", input),
   updateSnippet: (id: string, patch: Partial<SnippetInput>) => req<Snippet>("PATCH", `/api/snippets/${encodeURIComponent(id)}`, patch),
   deleteSnippet: (id: string) => req<void>("DELETE", `/api/snippets/${encodeURIComponent(id)}`),
+  templates: (slug: string) => req<TicketTemplate[]>("GET", `/api/templates?profile=${encodeURIComponent(slug)}`),
+  createTemplate: (input: Omit<TicketTemplate, "id">) => req<TicketTemplate>("POST", "/api/templates", input),
+  deleteTemplate: (id: string) => req<void>("DELETE", `/api/templates/${encodeURIComponent(id)}`),
+  /** Folders in `path` (default: the start). Inside the home folder, or inside a board's folder with `profile`. */
+  folders: (path: string | null, opts: { profile?: string; hidden?: boolean } = {}) => {
+    const q = new URLSearchParams();
+    if (path) q.set("path", path);
+    if (opts.profile) q.set("profile", opts.profile);
+    if (opts.hidden) q.set("hidden", "1");
+    return req<FolderList>("GET", `/api/folders?${q}`);
+  },
   schedules: (slug: string) => req<Schedule[]>("GET", sch(slug)),
   createSchedule: (slug: string, input: ScheduleInput) => req<Schedule>("POST", sch(slug), input),
   updateSchedule: (slug: string, id: string, patch: Partial<ScheduleInput & { enabled: boolean }>) => req<Schedule>("PATCH", sch(slug, id), patch),

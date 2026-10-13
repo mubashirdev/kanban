@@ -141,6 +141,8 @@ export interface Ticket {
   worktree: string | null;
   /** Folder of a linked pre-existing Claude session (runs happen here instead of a worktree). */
   workdir?: string | null;
+  /** A chat that runs in a subfolder of the board folder (relative path), like opening Claude there. */
+  subdir?: string | null;
   branch: string | null;
   /** HEAD of the board's folder when the ticket first ran there in place (the Changes tab's base without a worktree). */
   baseSha?: string | null;
@@ -380,6 +382,8 @@ export interface Config {
   keepAwake?: boolean;
   /** The phone's public link, last seen from the ngrok tunnel (see away.ts). */
   publicUrl?: string | null;
+  /** The chat's quick-reply chips; null or missing: the built-in ones. */
+  quickReplies?: string[] | null;
 }
 
 export interface OutputFile {

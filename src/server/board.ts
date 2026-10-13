@@ -15,6 +15,7 @@ import { isSessionLive as psSessionLive, sessionTitle } from "./claude";
 import { addWorktree, branchesWithPrefix, branchExists, isGitRepo, listWorktrees, removeWorktree, repoKind, resolveBaseBranch, worktreeDir, type RepoKind } from "./git";
 import { MOVE_TO_PLANNING_RE, STAY_RE } from "./session";
 import { forkSessionFile } from "./fork";
+import { ticketFolder } from "./folders";
 import { saveMockups } from "./mockups";
 import { macBanner } from "./notify";
 import { type HostHuddle, ticketAttention, userWaitReason } from "./attention";
@@ -497,6 +498,7 @@ export class Board {
     if (this.isRunning(slug, id)) throw new ConflictError("Stop the agent before forking this chat");
     // Claude finds a session by folder, so the copy must run where the original did.
     if (t.worktree || (t.workdir && t.workdir !== profile.path)) throw new Error("Chats in their own worktree can't be forked yet");
+    if (t.subdir) throw new Error("Chats in a subfolder can't be forked yet");
     if (!t.sessionId || !(t.sessionStarted || this.sessionExists(t.sessionId))) throw new Error("Send a first message before forking this chat");
     const copy = await this.createTicket(slug, { title: `Fork of ${t.title}`.slice(0, 80), body: "", status: "backlog", standalone: true, access: t.access });
     this.patch(slug, copy.id, { forkOf: t.sessionId, model: opts.model ?? t.model, effort: t.effort, outputStyle: t.outputStyle });
@@ -1284,7 +1286,7 @@ export class Board {
     if (Object.keys(patch).length) t = this.patch(slug, id, patch);
     const sessionId = t.sessionId!;
     return {
-      dir: t.workdir ?? t.worktree ?? profile.path,
+      dir: t.workdir ?? t.worktree ?? ticketFolder(profile.path, t),
       sessionId,
       // Only a saved session can be resumed (a run stopped in its first second leaves none); a linked one is the user's.
       // Only a saved session can be resumed (a run stopped in its first second leaves none); a linked one is the user's.
@@ -1889,6 +1891,7 @@ export class Board {
     const srcFile = src.sessionId ? claudeSessionFile(src.sessionId) : null;
     if (!src.sessionId || !srcFile) throw new Error("this ticket has no Claude conversation to branch yet");
     if (src.workdir && !existsSync(src.workdir)) throw new Error(`linked session folder no longer exists: ${src.workdir}`);
+    if (src.subdir) throw new Error("Chats in a subfolder can't be branched yet");
 
     const title = `Branch: ${src.title}`;
     const t = this.store.createTicket(slug, { title, body: src.body, status: "planning", mode: src.mode });

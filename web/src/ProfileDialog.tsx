@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type ClaudeProject, type Profile, type RepoKind, type SetupDetection, type Workspace } from "./api";
 import { capInputText, parseCap } from "./capText";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { FolderBrowser } from "./FolderBrowser";
 import { Modal } from "./Modal";
 import { Select } from "./Select";
 import { timeAgo } from "./time";
@@ -10,6 +11,7 @@ import { VersionHistoryOffer } from "./VersionHistoryOffer";
 const MODELS = ["opus", "sonnet", "haiku"];
 const DEFAULT_MAX_PARALLEL = 5;
 
+const coarse = matchMedia("(pointer: coarse)").matches;
 const sameList = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 function folderName(path: string): string {
@@ -50,6 +52,7 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
   const [recent, setRecent] = useState<ClaudeProject[] | null>(null);
   const [filter, setFilter] = useState("");
   const [picking, setPicking] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [ticketCount, setTicketCount] = useState<number | null>(null);
@@ -190,8 +193,14 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
           <div className="path-row">
             <input value={path} onChange={(e) => choose(e.target.value)} placeholder="/Users/you/dev/my-app" spellCheck={false}
               aria-label="Folder path" />
-            <button type="button" className="btn" onClick={browse} disabled={picking}>{picking ? "Choosing…" : "Browse…"}</button>
+            <button type="button" className="btn" onClick={() => setBrowsing(true)}>Browse…</button>
           </div>
+          {/* The Finder picker opens on the Mac's own screen, so it is no use from a phone. */}
+          {!coarse && (
+            <button type="button" className="link-btn small mac-picker" onClick={browse} disabled={picking}>
+              {picking ? "Choosing in Finder…" : "Choose in Finder on the Mac"}
+            </button>
+          )}
           <VersionHistoryOffer path={path} onRepo={setRepo} />
         </div>
 
@@ -348,6 +357,10 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
           </button>
         </div>
       </form>
+      {browsing && (
+        <FolderBrowser title="Choose a folder" start={path || undefined} onClose={() => setBrowsing(false)}
+          onPick={(p) => { setBrowsing(false); choose(p); }} />
+      )}
       {confirmDelete && profile && (
         <ConfirmDialog
           title={`Delete board "${profile.name}"?`}

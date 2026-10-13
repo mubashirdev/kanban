@@ -482,6 +482,24 @@ textarea { resize: vertical; font-size: 13.5px; }
 .picker-path { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .picker-meta { display: flex; gap: 6px; align-items: center; }
 .path-row { display: flex; gap: 8px; }
+.mac-picker { align-self: flex-start; }
+/* in-page folder browser (FolderBrowser.tsx) */
+.folder-browser { display: flex; flex-direction: column; gap: 10px; }
+.folder-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.folder-current { font-family: var(--mono); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-list { max-height: min(52vh, 420px); border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+.folder-row {
+  display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 12px; text-align: left;
+  border: 0; border-bottom: 1px solid var(--border); background: transparent; cursor: pointer; color: inherit;
+}
+.folder-row:last-child { border-bottom: 0; }
+.folder-row:hover { background: var(--surface-2); }
+.folder-row .picker-name { flex: 1; min-width: 0; }
+.folder-row svg { flex: none; color: var(--muted); }
+.folder-up { min-width: 44px; min-height: 44px; }
+/* Also when the browser opens from inside a .form (New chat), whose labels stack. */
+.folder-browser label.folder-hidden { display: flex; flex-direction: row; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; min-height: 44px; }
+.folder-browser label.folder-hidden input { width: auto; flex: none; margin: 0; }
 .path-row input { font-family: var(--mono); font-size: 12.5px; }
 .form .row.two { grid-template-columns: 1fr 1fr; }
 
@@ -2175,6 +2193,8 @@ button.pill:hover { color: var(--text); }
 .starter-foot .send-round { margin-left: auto; }
 .send-round { width: 44px; height: 44px; padding: 0; border-radius: 50%; display: inline-grid; place-items: center; }
 .starter-hint { margin: 0; font-size: 12px; color: var(--muted); }
+.starter-folder { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; min-height: 32px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (pointer: coarse) { .starter-folder, .mac-picker { min-height: 44px; } }
 .unread-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
 .session-head { gap: 8px; padding: 10px 12px; }
 .session-head .title-input { flex: 1; min-width: 0; }
@@ -2355,6 +2375,12 @@ button.pill:hover { color: var(--text); }
 .quick-replies { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 max(28px, calc((100% - var(--read-max)) / 2)) 8px; }
 .quick-replies .chip { min-height: 36px; padding: 6px 14px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text); font-weight: 520; cursor: pointer; }
 .quick-replies .chip:hover { border-color: var(--accent); color: var(--accent); }
+/* A long press opens the editor: no iOS text callout or selection on the way. */
+.quick-replies .chip { -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
+.quick-reply-row { display: flex; gap: 6px; align-items: center; }
+.quick-reply-row input { flex: 1; min-width: 0; }
+.quick-reply-row .icon-btn { min-width: 44px; min-height: 44px; }
+.quick-reply-add { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; }
 @media (max-width: 767px), (pointer: coarse) and (max-width: 900px) { .quick-replies { padding: 0 10px 6px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; } .quick-replies .chip { flex: none; min-height: 40px; } }
 .session-repo { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
 .session-repo select { flex: 1; min-height: 44px; font-size: 16px; }
@@ -3040,7 +3066,19 @@ body { letter-spacing: -0.011em; }
 /* ImagePickButton: picks images where paste and drop don't work (phones) */
 .btn.image-pick { display: inline-flex; align-items: center; gap: 5px; color: var(--text); }
 .desc-editor-foot { align-items: center; }
+.btn.small.desc-editor-mic { margin-left: auto; flex: none; padding: 2px 8px; font-size: 11.5px; display: inline-flex; align-items: center; gap: 5px; }
+.btn.small.desc-editor-mic.listening { color: #fff; background: var(--err); border-color: var(--err); }
 .btn.small.desc-editor-pick { margin-left: auto; flex: none; padding: 2px 8px; font-size: 11.5px; }
+.desc-editor-mic + .desc-editor-pick { margin-left: 0; }
+/* Phones: the hints and the Dictate / Image buttons don't fit one row; let the buttons wrap instead of being cut off. */
+@media (max-width: 767px) { .desc-editor-foot { flex-wrap: wrap; row-gap: 6px; } }
+/* New ticket: the user's saved templates */
+.saved-templates { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.saved-templates .chip.removing { border-color: var(--err); color: var(--err); }
+.save-template-open { align-self: flex-start; }
+.save-template { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 10px; align-items: end; padding: 10px; border: 1px solid var(--border); border-radius: 10px; }
+.save-template-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 6px; }
+@media (pointer: coarse) { .saved-templates .chip, .save-template-open, .save-template-actions .btn { min-height: 44px; } }
 .bug-pick { display: flex; align-items: center; gap: 10px; margin-top: -4px; }
 .cmd-chip.mention { font-size: 0.92em; padding: 0 5px; cursor: help; white-space: nowrap; }
 

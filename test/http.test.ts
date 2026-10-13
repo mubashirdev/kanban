@@ -619,7 +619,7 @@ test("inside a board run only a running plan's planner may change tickets, and o
 });
 
 test("default models and the cleanup switch are saved board-wide, validated, and cleared with null", async () => {
-  expect(await (await fetch(`${base}/api/settings`)).json()).toEqual({ claudeModel: null, codexModel: null, claudeEffort: null, codexEffort: null, cleanup: false, keepAwake: false });
+  expect(await (await fetch(`${base}/api/settings`)).json()).toEqual({ claudeModel: null, codexModel: null, claudeEffort: null, codexEffort: null, cleanup: false, keepAwake: false, quickReplies: null });
   const saved = await fetch(`${base}/api/settings`, json("PATCH", { claudeModel: "sonnet", codexModel: "gpt-5.6-sol", codexEffort: "medium" }));
   expect(await saved.json()).toMatchObject({ claudeModel: "sonnet", codexModel: "gpt-5.6-sol", codexEffort: "medium" });
   expect(store.config()).toMatchObject({ claudeModel: "sonnet", codexModel: "gpt-5.6-sol" });

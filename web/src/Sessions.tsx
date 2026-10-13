@@ -4,9 +4,10 @@ import { autoGrow } from "./autoGrow";
 import { rememberFirstMessage } from "./drafts";
 import { Chat, withoutAgentNotes } from "./Chat";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { FolderBrowser } from "./FolderBrowser";
 import { ForkDialog } from "./ForkDialog";
 import { AgentMark } from "./AgentMark";
-import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, HistoryIcon, MoreIcon, SplitIcon, TrashIcon } from "./icons";
+import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, FolderIcon, HistoryIcon, MoreIcon, SplitIcon, TrashIcon } from "./icons";
 import { useLayer } from "./layers";
 import { Modal } from "./Modal";
 import { ReviewPanel } from "./ReviewPanel";
@@ -218,6 +219,9 @@ export function SessionStarter({ profile, onStarted }: { profile: Profile; onSta
   const [isolated, setIsolated] = usePersistentState<boolean>("esa.session.isolated", () => false, () => false, (v) => typeof v === "boolean");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  // A subfolder of the board folder to run in (e.g. one app of a monorepo); "" is the board folder itself.
+  const [subdir, setSubdir] = useState("");
+  const [browsing, setBrowsing] = useState(false);
   const box = useRef<HTMLTextAreaElement>(null);
   // Only an editing session can change files, so only it needs a separate checkout.
   const worktree = access === "edit" && isolated;
@@ -229,7 +233,7 @@ export function SessionStarter({ profile, onStarted }: { profile: Profile; onSta
     if (!message || busy) return;
     setBusy(true);
     try {
-      const t = await api.createTicket(profile.slug, { title: titleFrom(message), body: "", status: "backlog", standalone: true, access, agent, isolated: worktree });
+      const t = await api.createTicket(profile.slug, { title: titleFrom(message), body: "", status: "backlog", standalone: true, access, agent, isolated: worktree, ...(subdir && !worktree ? { subdir } : {}) });
       rememberFirstMessage(t.id, message);
       await api.chat(profile.slug, t.id, message);
       setText("");
@@ -242,6 +246,7 @@ export function SessionStarter({ profile, onStarted }: { profile: Profile; onSta
   };
 
   return (
+    <>
     <form className="session-starter" onSubmit={(e) => { e.preventDefault(); void start(); }}>
       <label className="sr-only" htmlFor="session-starter-input">First message</label>
       <textarea id="session-starter-input" ref={box} rows={3} autoFocus value={text} disabled={busy} onChange={(e) => setText(e.target.value)}
@@ -270,8 +275,22 @@ export function SessionStarter({ profile, onStarted }: { profile: Profile; onSta
           {busy ? <span className="spinner" /> : <ArrowUpIcon size={18} />}<span className="starter-send-label">Start chat</span>
         </button>
       </div>
+      {!worktree && (
+        <button type="button" className="link-btn small starter-folder" onClick={() => setBrowsing(true)} title="Run in a subfolder of the board folder">
+          <FolderIcon size={14} /> {subdir ? `In ${subdir}` : "In the board folder"} · Change
+        </button>
+      )}
       <p className="starter-hint">{worktree ? "It works on its own branch in a separate copy, so your folder stays untouched." : ACCESS.find((a) => a.id === access)!.hint}</p>
     </form>
+      {browsing && (
+        <FolderBrowser title="Run this chat in" profile={profile.slug} start={subdir ? `${profile.path}/${subdir}` : undefined}
+          onClose={() => setBrowsing(false)}
+          onPick={(path, root) => {
+            setBrowsing(false);
+            setSubdir(path.startsWith(`${root}/`) ? path.slice(root.length + 1) : "");
+          }} />
+      )}
+    </>
   );
 }
 

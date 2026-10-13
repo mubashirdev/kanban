@@ -22,6 +22,7 @@ import { Board } from "./Board";
 import { boardColumnOf, columnNeighbours, columnOrder } from "./columns";
 import { NewTicketDialog } from "./NewTicketDialog";
 import { DailyCostDialog } from "./DailyCostDialog";
+import { QuickRepliesDialog } from "./QuickRepliesDialog";
 import { DefaultModelsDialog } from "./DefaultModelsDialog";
 import { ProfileDialog } from "./ProfileDialog";
 import { SchedulesDialog } from "./SchedulesDialog";
@@ -232,6 +233,7 @@ export function App() {
   const [dismissed, setDismissed] = useState(readDismissed);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [defaultModelsOpen, setDefaultModelsOpen] = useState(false);
+  const [quickRepliesOpen, setQuickRepliesOpen] = useState(false);
   const [dailyCostOpen, setDailyCostOpen] = useState(false);
   // Phones: search and filters sit behind a magnifier until needed.
   const [searchOpen, setSearchOpen] = useState(false);
@@ -911,6 +913,7 @@ export function App() {
           Settings: [
             ...(profile ? [{ label: "Board settings", icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
             { label: "Default models", icon: <SlidersIcon />, onSelect: () => setDefaultModelsOpen(true) },
+            { label: "Quick replies", icon: <ChatIcon />, onSelect: () => setQuickRepliesOpen(true), title: "The one-tap answers a chat offers when the agent asks you something" },
             {
               label: "Appearance", icon: <ContrastIcon />, keepOpen: true, title: "Tap to switch: System, Light, Dark",
               badge: <span className="menu-setting">{THEME_LABEL[theme]}</span>,
@@ -1062,6 +1065,7 @@ export function App() {
       )}
       {dailyCostOpen && <DailyCostDialog onClose={() => setDailyCostOpen(false)} />}
       {defaultModelsOpen && <DefaultModelsDialog onClose={() => setDefaultModelsOpen(false)} />}
+      {quickRepliesOpen && <QuickRepliesDialog onClose={() => setQuickRepliesOpen(false)} />}
       {notificationsOpen && <NotificationsDialog onClose={() => setNotificationsOpen(false)} />}
       {activityOpen && profile && (
         <Modal title="Activity" wide onClose={() => setActivityOpen(false)}>

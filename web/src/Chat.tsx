@@ -16,6 +16,7 @@ import { NewTicketsCard } from "./NewTicketsCard";
 import { KeyHint } from "./KeyHint";
 import { ProposalCard } from "./ProposalCard";
 import { QuestionsForm } from "./QuestionsForm";
+import { DEFAULT_QUICK_REPLIES, QuickRepliesDialog } from "./QuickRepliesDialog";
 import { RecoveryBanner } from "./RecoveryBanner";
 import { SetupRow } from "./SetupRow";
 import { filesByReply } from "./fileCards";
@@ -258,6 +259,10 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     </button>
   );
   const [defaults, setDefaults] = useState<DefaultModels | null>(null);
+  // Holding a quick-reply chip (or right-clicking it) opens the editor instead of sending it.
+  const [editingReplies, setEditingReplies] = useState(false);
+  const hold = useRef<{ timer?: ReturnType<typeof setTimeout>; fired: boolean }>({ fired: false });
+  const endHold = () => clearTimeout(hold.current.timer);
   useEffect(() => { api.settings().then(setDefaults).catch(() => {}); }, [picking]);
   // A blocked run says why in its last board comment; the reply itself may hold only the result line.
   const [blockedReason, setBlockedReason] = useState("");
@@ -545,7 +550,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const lastText = [...entries].reverse().find((e) => e.kind === "text" || e.role === "user");
   const asked = !running && !pending.length && !queued.length && lastText?.role === "assistant" &&
     /\?\s*$/.test(lastText.text.replace(/^.*CKANBAN_RESULT:.*$/m, "").trim().split("\n").filter(Boolean).pop() ?? "");
-  const quickReplies = asked ? ["Yes, go ahead", "No", "Tell me more", ...(/\bcommit/i.test(lastText!.text) ? ["Commit"] : [])] : [];
+  const quickReplies = !asked ? [] : defaults?.quickReplies ?? [...DEFAULT_QUICK_REPLIES, ...(/\bcommit/i.test(lastText!.text) ? ["Commit"] : [])];
 
   const childFor = (d: { title: string }) => tickets.find((t) => t.parentId === ticket.id && t.title === d.title);
   const createChild = async (d: NewTicketDraft) => {
@@ -956,9 +961,18 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       }} />
       {quickReplies.length > 0 && !draft.trim() && (
         <div className="quick-replies" role="group" aria-label="Quick replies">
-          {quickReplies.map((reply) => <button key={reply} type="button" className="chip" onClick={() => send(reply)}>{reply}</button>)}
+          {quickReplies.map((reply) => (
+            <button key={reply} type="button" className="chip" title="Hold to edit quick replies"
+              onClick={() => { if (hold.current.fired) hold.current.fired = false; else send(reply); }}
+              onContextMenu={(e) => { e.preventDefault(); setEditingReplies(true); }}
+              onPointerDown={() => { hold.current = { fired: false, timer: setTimeout(() => { hold.current.fired = true; setEditingReplies(true); }, 500) }; }}
+              onPointerUp={endHold} onPointerLeave={endHold} onPointerCancel={endHold}>
+              {reply}
+            </button>
+          ))}
         </div>
       )}
+      {editingReplies && <QuickRepliesDialog onClose={() => setEditingReplies(false)} onSaved={setDefaults} />}
       {/* One card on phone and desktop, like the Claude app: the text on top, then +, the access shield and the
           model pill, and on the right dictation and one round button (Stop while the agent works). */}
       <div className="composer composer-card" onClick={(e) => { if (!(e.target as HTMLElement).closest("button, textarea, .quick-pick")) composer.current?.focus(); }}>

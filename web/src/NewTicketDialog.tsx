@@ -1,6 +1,6 @@
 import { PRIORITIES, TEMPLATES } from "./ticketTemplates";
-import { useRef, useState } from "react";
-import type { ClaudeSession, Status, TicketMode, Ticket } from "./api";
+import { useEffect, useRef, useState } from "react";
+import { api, type ClaudeSession, type Status, type TicketMode, type Ticket, type TicketTemplate } from "./api";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { useImagePaste } from "./imagePaste";
 import { Modal } from "./Modal";
@@ -45,6 +45,35 @@ export function NewTicketDialog({
   const images = useImagePaste(setBody),
     template = TEMPLATES.find((t) => t.kind === kind)!;
   const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const [saved, setSaved] = useState<TicketTemplate[]>([]),
+    [editingSaved, setEditingSaved] = useState(false),
+    [saving, setSaving] = useState<{ name: string; scope: string } | null>(null);
+  useEffect(() => { api.templates(slug).then(setSaved).catch(() => {}); }, [slug]);
+  const applyTemplate = (t: TicketTemplate) => {
+    setTitle(t.title);
+    setBody(t.body);
+    setKind(t.kind);
+    setPriority(t.priority);
+  };
+  const removeTemplate = async (t: TicketTemplate) => {
+    try {
+      await api.deleteTemplate(t.id);
+      setSaved((list) => list.filter((x) => x.id !== t.id));
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+  const saveTemplate = async () => {
+    if (!saving) return;
+    setError("");
+    try {
+      const t = await api.createTemplate({ name: saving.name, scope: saving.scope, title: title.trim(), body, kind, priority });
+      setSaved((list) => [...list, t].sort((a, b) => a.name.localeCompare(b.name)));
+      setSaving(null);
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
   const startStatus: Status = mode === "interview" ? "planning" : "ready";
   const submit = async (status: Status) => {
     if (busy || !title.trim() || images.uploading) return;
@@ -121,6 +150,20 @@ export function NewTicketDialog({
           }
         }}
       >
+        {saved.length > 0 && (
+          <div className="saved-templates" role="group" aria-label="Your templates">
+            <span className="muted small">Start from</span>
+            {saved.map((t) => (
+              <button key={t.id} type="button" className={`chip${editingSaved ? " removing" : ""}`} disabled={busy}
+                title={editingSaved ? `Delete "${t.name}"` : t.scope === "global" ? "On all boards" : "On this board"}
+                aria-label={editingSaved ? `Delete template ${t.name}` : `Use template ${t.name}`}
+                onClick={() => (editingSaved ? removeTemplate(t) : applyTemplate(t))}>
+                {t.name}{editingSaved && " ×"}
+              </button>
+            ))}
+            <button type="button" className="link-btn small" onClick={() => setEditingSaved((v) => !v)}>{editingSaved ? "Done" : "Edit"}</button>
+          </div>
+        )}
         <div className="field">
           <label htmlFor="new-ticket-title">Title</label>
           <div className="title-row">
@@ -145,6 +188,7 @@ export function NewTicketDialog({
             setValue={setBody}
             images={images}
             inputRef={bodyRef}
+            dictate
             rows={5}
             placeholder="Context, expected result, and acceptance criteria…"
           />
@@ -186,6 +230,33 @@ export function NewTicketDialog({
             </select>
           </label>
         </div>
+        {saving ? (
+          <div className="save-template">
+            <label>
+              Template name
+              <input autoFocus value={saving.name} maxLength={60} placeholder="QA ticket"
+                onChange={(e) => setSaving({ ...saving, name: e.target.value })}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void saveTemplate(); } }} />
+            </label>
+            <label>
+              Show it on
+              <select value={saving.scope} onChange={(e) => setSaving({ ...saving, scope: e.target.value })}>
+                <option value={slug}>This board</option>
+                <option value="global">All boards</option>
+              </select>
+            </label>
+            <div className="save-template-actions">
+              <button type="button" className="btn ghost small" onClick={() => setSaving(null)}>Cancel</button>
+              <button type="button" className="btn small" disabled={!saving.name.trim()} onClick={saveTemplate}>Save template</button>
+            </div>
+          </div>
+        ) : (
+          <button type="button" className="link-btn small save-template-open" disabled={busy || (!title.trim() && !body.trim())}
+            title="Keep this title, description, type and priority to start from next time"
+            onClick={() => setSaving({ name: title.trim().slice(0, 60), scope: slug })}>
+            Save as template
+          </button>
+        )}
         <fieldset className="ticket-workflow" disabled={busy}>
           <legend>How to start</legend>
           <div
