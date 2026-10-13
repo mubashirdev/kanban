@@ -74,8 +74,9 @@ export async function checkTunnel(fetchFn: typeof fetch = fetch): Promise<Tunnel
   let url: string | null = null;
   try {
     const res = await fetchFn(NGROK_API, { signal: AbortSignal.timeout(3000) });
-    const { tunnels = [] } = (await res.json()) as { tunnels?: { public_url?: string }[] };
-    url = tunnels.map((t) => t.public_url).find((u) => u?.startsWith("https://")) ?? null;
+    const { tunnels = [] } = (await res.json()) as { tunnels?: { name?: string; public_url?: string }[] };
+    // The "preview" tunnel is where a ticket's app opens (see README), not the board.
+    url = tunnels.filter((t) => t.name !== "preview").map((t) => t.public_url).find((u) => u?.startsWith("https://")) ?? null;
   } catch {
     return { url: null, up: false };
   }

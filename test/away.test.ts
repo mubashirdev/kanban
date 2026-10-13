@@ -58,7 +58,7 @@ test("tunnel status keeps when it went offline and stays 'none' until a public l
 });
 
 test("tunnel check reads the https link from ngrok's API and treats ngrok error pages as down", async () => {
-  const api = { tunnels: [{ public_url: "http://a.ngrok.app" }, { public_url: "https://a.ngrok.app" }] };
+  const api = { tunnels: [{ name: "preview", public_url: "https://p.ngrok.app" }, { public_url: "http://a.ngrok.app" }, { public_url: "https://a.ngrok.app" }] };
   const fetcher = (page: Response | Error) => (async (url: string | URL | Request) => {
     if (String(url).includes("4040")) return Response.json(api);
     if (page instanceof Error) throw page;

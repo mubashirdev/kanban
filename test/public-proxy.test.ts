@@ -139,3 +139,60 @@ test("Safari installation metadata and app icons load without a session, while a
     expect((await fetch(base + "/icons/esa-apple-touch.png", { headers: { ...probe, "x-kanban-gateway": "wrong" } })).status).toBe(403);
   } finally { secured.stop(true); }
 });
+
+test("previews open on their own origin through a pass from the board, never reach the board, and keep HMR sockets", async () => {
+  const app = Bun.serve({
+    hostname: "127.0.0.1", port: 0,
+    fetch(req, server) {
+      const path = new URL(req.url).pathname;
+      if (path === "/hmr" && server.upgrade(req, { headers: { "sec-websocket-protocol": "vite-hmr" } })) return;
+      if (path === "/old") return new Response(null, { status: 302, headers: { location: `http://localhost:${server.port}/new` } });
+      return Response.json({ host: req.headers.get("host"), origin: req.headers.get("origin"), cookie: req.headers.get("cookie"), secret: req.headers.get("x-kanban-gateway"), path });
+    },
+    websocket: { message(ws, message) { ws.send(`echo ${message}`); } },
+  });
+  const previewOrigin = "https://preview.example.test";
+  const bridge = createPublicProxy({ publicOrigin, previewOrigin, gatewayToken: token, upstream: `http://127.0.0.1:${backend.port}`, port: 0 });
+  try {
+    const base = `http://127.0.0.1:${bridge.port}`;
+    const onPreview = { host: "preview.example.test", "x-kanban-gateway": token };
+    // No pass yet: a plain note, not the app.
+    expect((await fetch(`${base}/`, { headers: onPreview })).status).toBe(401);
+    // The board's own port and the bridge's are refused, before and after entering.
+    expect((await fetch(`${base}/__preview/open/${backend.port}`, { headers, redirect: "manual" })).status).toBe(400);
+    expect((await fetch(`${base}/__preview/open/${bridge.port}`, { headers, redirect: "manual" })).status).toBe(400);
+    const open = await fetch(`${base}/__preview/open/${app.port}`, { headers, redirect: "manual" });
+    expect(open.status).toBe(303);
+    const pass = new URL(open.headers.get("location")!);
+    expect(pass.origin).toBe(previewOrigin);
+    // A forged pass, or one for the board port, gets nothing.
+    const forged = new URLSearchParams(pass.search); forged.set("port", String(backend.port));
+    expect((await fetch(`${base}/__preview/enter?${forged}`, { headers: onPreview, redirect: "manual" })).status).toBe(403);
+    const entered = await fetch(`${base}${pass.pathname}${pass.search}`, { headers: onPreview, redirect: "manual" });
+    expect(entered.status).toBe(303);
+    const cookie = entered.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+    const session = { ...onPreview, cookie: `${cookie}; app=1` };
+    expect(await (await fetch(`${base}/src/main.tsx`, { headers: session })).json()).toEqual({ host: `localhost:${app.port}`, origin: null, cookie: "app=1", secret: null, path: "/src/main.tsx" });
+    const moved = await fetch(`${base}/old`, { headers: session, redirect: "manual" });
+    expect(moved.headers.get("location")).toBe("/new");
+    // The pass opens one port: the app's own code can't switch to the board or another local service.
+    expect((await fetch(`${base}/preview/${backend.port}/`, { headers: session, redirect: "manual" })).status).toBe(403);
+    expect((await fetch(`${base}/preview/${app.port! + 1}/`, { headers: session, redirect: "manual" })).status).toBe(403);
+    const tampered = cookie.replace(`.${app.port}.`, `.${app.port! + 1}.`);
+    expect((await fetch(`${base}/`, { headers: { ...onPreview, cookie: tampered } })).status).toBe(401);
+    const prefixed = await fetch(`${base}/preview/${app.port}//evil.example/x?y=1`, { headers: session, redirect: "manual" });
+    expect(prefixed.headers.get("location")).toBe("/evil.example/x?y=1");
+    // The pass doesn't work on the board's origin, and the preview's cookie doesn't sign in to the board.
+    expect((await fetch(`${base}/__preview/enter${pass.search}`, { headers, redirect: "manual" })).status).not.toBe(303);
+    // Other sites can't open the preview's sockets or post to it.
+    expect((await fetch(`${base}/api`, { method: "POST", headers: { ...session, origin: "https://evil.test" } })).status).toBe(403);
+    const ws = new WebSocket(`ws://127.0.0.1:${bridge.port}/hmr`, { headers: { ...session, origin: previewOrigin }, protocols: ["vite-hmr"] } as any);
+    await new Promise<void>((resolve, reject) => { ws.onopen = () => resolve(); ws.onerror = reject; });
+    expect(ws.protocol).toBe("vite-hmr");
+    const reply = new Promise((resolve) => { ws.onmessage = (event) => resolve(event.data); });
+    ws.send("update"); expect(await reply).toBe("echo update");
+    ws.close();
+  } finally {
+    bridge.stop(true); app.stop(true);
+  }
+});

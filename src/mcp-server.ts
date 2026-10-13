@@ -109,7 +109,7 @@ export interface ToolContext {
     | "listProfiles" | "listTickets" | "getTicket" | "createTicket" | "updateTicket" | "deleteTicket" | "chat" | "stop" | "listComments"
     | "comment" | "reportBug" | "listSchedules" | "createSchedule" | "updateSchedule" | "deleteSchedule" | "runSchedule"
     | "scheduleHistory" | "cronPreview" | "adopt" | "planAction" | "huddleRead" | "huddlePost" | "huddleMode" | "huddleAdd" | "huddleFindings"
-    | "huddleStatus" | "huddleCloseRequest" | "startAutoHuddle"
+    | "huddleStatus" | "huddleCloseRequest" | "startAutoHuddle" | "screenshot"
     | "listHuddlePresets" | "saveHuddlePreset" | "deleteHuddlePreset" | "listHuddleTemplates" | "huddleBrief" | "huddleProposeTeammate">;
   cwd: string;
   env: Record<string, string | undefined>;
@@ -191,6 +191,30 @@ const ARTIFACT_TOOLS: Tool[] = [
       if (r.kind !== "publish") throw new ClientError("artifact publish failed: no link came back");
       // Same wording as the Artifact tool, so the board lists the page on the ticket.
       return r.text;
+    },
+  },
+  {
+    name: "take_screenshot",
+    description:
+      "Take a phone-size and a desktop-size screenshot of an app running on this Mac (a localhost port or link) in Chrome. " +
+      "Both are saved in the ticket's Outputs, where the user sees them inline. Use it to show the user what a change looks like.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number", description: "Local port the app listens on, e.g. 5173." },
+        url: { type: "string", description: "Or a link on this Mac, e.g. http://localhost:5173/settings." },
+        profile: PROFILE,
+        id: { ...ID, description: "Ticket to save the screenshots to. Omit inside a board run to use its own ticket." },
+      },
+    },
+    annotations: { readOnlyHint: true },
+    changes: false,
+    async run(args, ctx) {
+      const slug = await slugFor(args, ctx);
+      const id = str(args, "id", false) ?? runTicketId(ctx);
+      if (!id) throw new ClientError("id is required outside a board run");
+      const { files } = await ctx.client.screenshot(slug, id, { port: args?.port, url: str(args, "url", false) });
+      return `Saved to the ticket's Outputs: ${files.join(", ")}`;
     },
   },
 ];

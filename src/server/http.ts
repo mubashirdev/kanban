@@ -51,6 +51,7 @@ import { nowIso, slugify } from "./util";
 import { authorizeLan, createLanSignIn, type LanAccess } from "./lan";
 import { ClaudeCommands, effortOptions } from "./commands";
 import { applyDetection, detectSetup } from "./worktree-setup";
+import { listeningPorts, previewTarget, takeScreenshots } from "./preview";
 
 export interface ServerDeps {
   store: Store;
@@ -159,6 +160,12 @@ async function body(req: Request): Promise<any> {
   } catch {
     throw new HttpError(400, "invalid JSON body");
   }
+}
+
+function previewUnavailable(): Response {
+  return new Response("<!doctype html><meta name=viewport content='width=device-width'><title>Open the app</title>" +
+    "<p style='font:16px system-ui;margin:2em'>Opening an app works on this Mac, or from your phone through the protected public link with a preview address (see README, Phone access).</p>",
+  { status: 404, headers: { "content-type": "text/html; charset=utf-8" } });
 }
 
 export function createServer(deps: ServerDeps) {
@@ -271,6 +278,8 @@ export function createServer(deps: ServerDeps) {
     results: store.aiComments(slug, t.id),
     shareLinks: t.shareLinks,
   });
+  // Never preview the board itself or its public bridge (board port + 1 by default).
+  const previewBlocked = () => [server.port ?? deps.port, (server.port ?? deps.port) + 1];
   /** hosts: the board's open huddles by host ticket, when the caller already has them (one read per board). */
   const view = (p: Profile, t: Ticket, hosts = board.hostHuddles(p.slug)) => {
     const running = board.isRunning(p.slug, t.id);
@@ -1143,6 +1152,20 @@ export function createServer(deps: ServerDeps) {
         },
       });
     }
+    // The Preview tab: the ticket folder's dev servers, and screenshots of one (also the take_screenshot tool).
+    if (action === "preview" && parts.length === 5 && m === "GET") {
+      const t = store.getTicket(slug, id)!;
+      return json({ ports: await listeningPorts(t.workdir ?? t.worktree ?? profile.path, previewBlocked()) });
+    }
+    if (action === "preview" && parts[5] === "screenshot" && m === "POST") {
+      let target: string;
+      try { target = previewTarget(await body(req), previewBlocked()); } catch (e) { throw new HttpError(400, (e as Error).message); }
+      try {
+        return json({ files: await takeScreenshots(target, store.outputsDir(slug, id), previewBlocked()) });
+      } catch (e) {
+        throw new HttpError(502, `Couldn't take the screenshot of ${target}: ${(e as Error).message.split("\n")[0]}`);
+      }
+    }
     if (action === "diff" && m === "GET") {
       // The Changes tab: the worktree (committed, uncommitted and untracked) against its merge-base with the base branch;
       // a ticket working in the board's folder itself, that folder against its HEAD at the ticket's first run.
@@ -1707,6 +1730,8 @@ export function createServer(deps: ServerDeps) {
         if (denied) return denied;
       }
       const url = new URL(req.url);
+      // The public bridge answers these; reaching the board means there is no preview address in front of it.
+      if (url.pathname.startsWith("/__preview/")) return previewUnavailable();
       if (!url.pathname.startsWith("/api/")) return staticFile(url);
       try {
         return (await api(req, url)) as Response;

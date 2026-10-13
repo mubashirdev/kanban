@@ -1076,6 +1076,8 @@ export const api = {
   linkSession: (slug: string, id: string, sessionId: string | null) =>
     req<Ticket>("POST", `${t(slug, id)}/link-session`, { sessionId }),
   outputs: (slug: string, id: string) => req<OutputFile[]>("GET", `${t(slug, id)}/outputs`),
+  previewPorts: (slug: string, id: string) => req<{ ports: { port: number; command: string }[] }>("GET", `${t(slug, id)}/preview`),
+  screenshot: (slug: string, id: string, port: number) => req<{ files: string[] }>("POST", `${t(slug, id)}/preview/screenshot`, { port }),
   outputUrl: (slug: string, id: string, name: string) => `${t(slug, id)}/outputs/${name.split("/").map(encodeURIComponent).join("/")}`,
   outputDownloadUrl: (slug: string, id: string, name: string) => `${api.outputUrl(slug, id, name)}?download=1`,
   /** Share menu: reveal in Finder, copy the file to the clipboard, or start publishing it as a claude.ai page. */

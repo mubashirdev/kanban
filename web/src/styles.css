@@ -3574,3 +3574,18 @@ button.hd-mode:disabled { cursor: default; }
   .roster-table .roster-select, .roster-table input { width: 100%; }
   .roster-table .roster-select .select-trigger { min-width: 0; width: 100%; }
 }
+
+/* Preview tab: open a ticket's running app, take phone and desktop screenshots. */
+.preview { display: flex; flex-direction: column; gap: 10px; padding: 12px 16px; }
+.preview-head, .preview-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.preview-row { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); }
+.preview-port { font-weight: 600; font-variant-numeric: tabular-nums; }
+.preview-cmd { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-input { width: 170px; }
+.preview .btn { text-decoration: none; }
+.preview-shots { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; }
+.preview-shots a { display: block; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.preview-shots img { display: block; width: 100%; height: auto; }
+.preview-shots .phone { width: 130px; }
+.preview-shots .desktop { width: min(100%, 360px); }
+@media (pointer: coarse) { .preview .btn, .preview-input { min-height: 44px; display: inline-flex; align-items: center; } }
