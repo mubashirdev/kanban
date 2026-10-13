@@ -34,6 +34,8 @@ const clock = (iso: string) => {
   return d.toLocaleString(undefined, sameDay ? { hour: "2-digit", minute: "2-digit" } : { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 };
 const money = (n: number) => `$${n.toFixed(2)}`;
+/** A reason as a sentence: adds a period unless it already ends with punctuation. */
+const sentence = (s: string) => (/[.!?…]$/.test(s) ? s : `${s}.`);
 const STATE_LABEL = { live: "● Live", stopped: "■ Stopped", closed: "Closed" } as const;
 /** The brake banner's headline. */
 const BRAKE_TEXT = {
@@ -181,6 +183,7 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
   seed: { seed: HuddleSeed; n: number } | null;
 }) {
   const [confirm, setConfirm] = useState<"stop" | "close" | null>(null);
+  const [askOpen, setAskOpen] = useState(false);
   // The participant whose session is open beside the feed; Message @handle pre-fills the composer (n: each press).
   const [viewing, setViewing] = useState<string | null>(null);
   const [prefill, setPrefill] = useState<{ handle: string; n: number } | null>(null);
@@ -392,9 +395,15 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
         </div>
       )}
       {h.closeRequest && !closed && (
-        <div className="huddle-close-ask">
-          <b>@{h.closeRequest.by}</b> asks to close the huddle: {h.closeRequest.reason}.{" "}
-          {h.summary ? <>Read the <button className="link-btn" onClick={() => onOpenOutput(h.summary!)}>summary</button> in the ticket's outputs.</> : "The summary is in the ticket's outputs."}
+        <div className={`huddle-close-ask${askOpen ? " open" : ""}`}>
+          {/* One line; a tap shows the whole reason and the summary link. */}
+          <div className="hd-ask-text">
+            <button type="button" className="hd-ask-toggle" aria-expanded={askOpen} onClick={() => setAskOpen(!askOpen)}>
+              <b>@{h.closeRequest.by}</b> asks to close the huddle: {sentence(h.closeRequest.reason)}
+            </button>
+            {askOpen && <> {h.summary ? <>Read the <button className="link-btn" onClick={() => onOpenOutput(h.summary!)}>summary</button> in the ticket's outputs.</> : "The summary is in the ticket's outputs."}</>}
+          </div>
+          {phone && <button className="btn ghost small hd-ask-close" onClick={() => setConfirm("close")}>Close</button>}
         </div>
       )}
       {adding && !closed && <AddAgent key={seed?.n} slug={slug} huddle={h} preset={addSeed ?? undefined} onDone={() => setAdding(false)} onError={onError} />}
@@ -686,12 +695,16 @@ function Feed({ huddle: h, state, handles, scroller, onSeen }: {
       }}>
       {state.hasMore && <button className="btn ghost small load-earlier" onClick={earlier} disabled={loading}>{loading ? "Loading…" : "Load earlier"}</button>}
       {!state.messages.length && <div className="hd-sys">No messages yet.</div>}
-      {state.messages.map((m) => (
+      {state.messages.filter((m) => !isShownCloseAsk(m, h)).map((m) => (
         <Message key={m.seq} m={m} p={byHandle.get(m.from)} handles={handles} forYou={h.status !== "closed" && isForYou(m, h.forYouSince ?? 0)} />
       ))}
     </div>
   );
 }
+
+/** The close request's system line: the banner above the feed already shows it. */
+const isShownCloseAsk = (m: HuddleMessage, h: Huddle) =>
+  m.kind === "system" && h.status !== "closed" && !!h.closeRequest && m.ts >= h.closeRequest.at && m.text.startsWith(`@${h.closeRequest.by} asks to close the huddle:`);
 
 /** forYou: it tags the user since their last post, action or view of the latest message (highlighted, and a stop for "next for you"). */
 function Message({ m, p, handles, forYou }: { m: HuddleMessage; p: HuddleParticipant | undefined; handles: string[]; forYou: boolean }) {

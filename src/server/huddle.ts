@@ -1339,7 +1339,7 @@ export class Huddles {
     // An auto huddle runs while the user is away: its coordinator closes it itself.
     if (h.auto && isCoordinator(h, by)) return this.close(slug, hid, `closed by @main (${why})`);
     this.update(slug, hid, (x) => void (x.closeRequest = { by: by.handle, at: nowIso(), reason: why }));
-    this.system(slug, hid, `@${by.handle} asks to close the huddle: ${why}. The summary is in the host ticket's outputs (${summaryFile(hid)}). @you: press Close huddle to end it; only you can close it.`, [USER_HANDLE]);
+    this.system(slug, hid, `@${by.handle} asks to close the huddle: ${/[.!?…]$/.test(why) ? why : `${why}.`} The summary is in the host ticket's outputs (${summaryFile(hid)}). @you: press Close huddle to end it; only you can close it.`, [USER_HANDLE]);
     return this.get(slug, hid);
   }
 

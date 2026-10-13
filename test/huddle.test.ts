@@ -1144,11 +1144,12 @@ test("huddle_close: only @main and leads ask, after writing the summary; only th
   expect(text(missing)).toContain(summaryFile(h.id));
   mkdirSync(join(store.outputsDir("p", t.id), "huddles", h.id), { recursive: true });
   writeFileSync(join(store.outputsDir("p", t.id), summaryFile(h.id)), "# Summary\n");
-  expect(text(await callTool("huddle_close", { reason: "all reviewed" }, mainCtx(h)))).toContain("Only they close it");
+  expect(text(await callTool("huddle_close", { reason: "all reviewed." }, mainCtx(h)))).toContain("Only they close it");
   const s = store.getHuddle("p", h.id)!;
   expect(s.status).toBe("live");
-  expect(s.closeRequest).toMatchObject({ by: "main", reason: "all reviewed" });
+  expect(s.closeRequest).toMatchObject({ by: "main", reason: "all reviewed." });
   expect(messages(h).at(-1)!.mentions).toEqual(["you"]);
+  expect(messages(h).at(-1)!.text).toContain("asks to close the huddle: all reviewed. The summary");
   // Closing itself stays with the user.
   const res = await fetch(`${client.url}/api/profiles/p/huddles/${h.id}/close`, {
     method: "POST", headers: { "content-type": "application/json", "x-ckanban-run": `p/${t.id}` }, body: "{}",

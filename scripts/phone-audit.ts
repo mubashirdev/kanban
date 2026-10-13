@@ -98,6 +98,7 @@ function seedPolish(id: string) {
     participants: [person("main", "Coordinator", "ticket-main", { ticketId: id }), person("reviewer", "Code reviewer", "agent", { preset: "reviewer" }), person("you", "You", "human")],
     findings: [{ id: "f1", text: "Settings toggle has low contrast in dark mode (settings.ts:1)", by: "reviewer", status: "open", resolvedBy: null, at: at(3) }],
     brief: { text: "Goal: review the settings page before it ships.", by: "main", at: at(0) },
+    closeRequest: { by: "main", at: at(5), reason: "Review done: one finding is fixed and the settings page is ready to ship." },
     createdAt: at(0), updatedAt: at(4),
   }));
   const message = (seq: number, from: string, text: string, mentions: string[], kind = "message") => JSON.stringify({ id: `m${seq}`, seq, ts: at(seq), from, text, mentions, kind, source: "mcp" });
