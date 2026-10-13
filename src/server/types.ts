@@ -374,6 +374,10 @@ export interface Config {
   codexEffort?: Ticket["codexEffort"];
   /** Done tickets and merged folder copies send their screenshots, recordings and traces to the Trash (see cleanup.ts). */
   cleanup?: boolean;
+  /** Keep the Mac awake whenever the daemon runs, not only while work is active (see away.ts). */
+  keepAwake?: boolean;
+  /** The phone's public link, last seen from the ngrok tunnel (see away.ts). */
+  publicUrl?: string | null;
 }
 
 export interface OutputFile {

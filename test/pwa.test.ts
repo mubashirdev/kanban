@@ -127,3 +127,39 @@ test("push notifications tolerate bad payloads, use app icons and only open the 
   let done:Promise<any>|undefined;handlers.notificationclick({notification:{data:{url:"/#/board/ticket"},close:()=>{}},waitUntil:(value:Promise<any>)=>{done=value;}});await done;expect(opened).toEqual([origin+"/#/board/ticket"]);
   handlers.notificationclick({notification:{data:{url:"https://evil.example"},close:()=>{}},waitUntil:()=>{throw new Error("Foreign URL must not be opened");}});expect(opened).toHaveLength(1);
 });
+
+test("PWA shows the offline page for ngrok error pages and the proxy's 502-504, not for other errors", async () => {
+  const w = worker(); await w.lifecycle("install");
+  for (const [status, headers, offline] of [[404, { "ngrok-error-code": "ERR_NGROK_3200" }, true], [502, {}, true], [503, {}, true], [504, {}, true], [404, {}, false], [500, {}, false]] as const) {
+    w.respond(() => new Response("upstream", { status, headers }));
+    expect(await (await w.fetch("/", { mode: "navigate" })!).text()).toBe(offline ? "/offline.html" : "upstream");
+  }
+});
+
+test("offline page says which part is down, retries every 10s and reloads once the board answers", async () => {
+  const html = readFileSync(new URL("../web/public/offline.html", import.meta.url), "utf8");
+  const script = html.match(/<script>([\s\S]*)<\/script>/)![1];
+  const why = { textContent: "" }, retry: { onclick?: () => Promise<void> } = {};
+  let answer: () => Response = () => { throw new Error("network"); };
+  let online = true, reloads = 0, every = 0;
+  runInNewContext(script, {
+    document: { getElementById: (id: string) => (id === "why" ? why : retry) },
+    fetch: async () => answer(), navigator: { get onLine() { return online; } },
+    location: { reload: () => { reloads++; } }, addEventListener: () => {},
+    setInterval: (_: unknown, ms: number) => { every = ms; },
+  });
+  expect(every).toBe(10000);
+  const check = async () => { await retry.onclick!(); };
+  await check();
+  expect(why.textContent).toContain("Can’t reach your Mac");
+  online = false; await check();
+  expect(why.textContent).toContain("Your phone is offline");
+  online = true;
+  answer = () => new Response("", { status: 404, headers: { "ngrok-error-code": "ERR_NGROK_3200" } }); await check();
+  expect(why.textContent).toContain("tunnel is down");
+  answer = () => new Response("", { status: 503 }); await check();
+  expect(why.textContent).toContain("board is starting");
+  expect(reloads).toBe(0);
+  answer = () => new Response("board"); await check();
+  expect(reloads).toBe(1);
+});

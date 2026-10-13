@@ -8,6 +8,7 @@ import { runArtifactJob, type ArtifactJob, type ArtifactOutcome } from "./artifa
 import { ConflictError, recoveryFor, type Board } from "./board";
 import { dailyUsage } from "./usage-daily";
 import { claudeDefaults, listClaudeProjects, listSessions, liveSessionMatch, pickFolder, processCommands } from "./claude";
+import type { TunnelStatus } from "./away";
 import type { Bus, BusEvent } from "./events";
 import { listCommands } from "./slash";
 import { DiffError, folderDiff, ticketDiff } from "./diff";
@@ -88,6 +89,8 @@ export interface ServerDeps {
   /** Phone access over Tailscale (tests pass one with a fake tailscale runner). */
   /** "Needs you" notifications (notify.ts); the daemon passes its started one. */
   notifier?: Notifier;
+  /** Phone access while away (see away.ts); missing when not running as the daemon. */
+  away?: { holding: () => boolean; tunnel: () => TunnelStatus };
 }
 
 /** A Share menu publish in progress, or the error of the last one, per output file. Not persisted. */
@@ -542,14 +545,21 @@ export function createServer(deps: ServerDeps) {
           if (b[key] !== null && !EFFORTS.includes(b[key])) throw new HttpError(400, `Invalid ${key}`);
           patch[key] = b[key] || null;
         }
-        if (b.cleanup !== undefined) {
-          if (typeof b.cleanup !== "boolean") throw new HttpError(400, "cleanup must be true or false");
-          patch.cleanup = b.cleanup;
+        for (const key of ["cleanup", "keepAwake"] as const) {
+          if (b[key] === undefined) continue;
+          if (typeof b[key] !== "boolean") throw new HttpError(400, `${key} must be true or false`);
+          patch[key] = b[key];
         }
         store.saveConfig(patch);
       }
-      const { claudeModel = null, codexModel = null, claudeEffort = null, codexEffort = null, cleanup = false } = store.config();
-      return json({ claudeModel, codexModel, claudeEffort, codexEffort, cleanup });
+      const { claudeModel = null, codexModel = null, claudeEffort = null, codexEffort = null, cleanup = false, keepAwake = false } = store.config();
+      return json({ claudeModel, codexModel, claudeEffort, codexEffort, cleanup, keepAwake });
+    }
+    if (parts[0] === "away" && parts.length === 1 && m === "GET") {
+      return json({
+        keepAwake: !!store.config().keepAwake, holding: deps.away?.holding() ?? false,
+        tunnel: deps.away?.tunnel() ?? { state: "none", since: null, url: null },
+      });
     }
 
     // Connections panel: is `ckanban mcp` registered with Claude Code / Codex, and (un)register it.

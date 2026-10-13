@@ -1,3 +1,4 @@
+import type { TunnelStatus } from "./away";
 import type { HuddleView } from "./huddle";
 import type { McpState } from "./mcp";
 import type { SessionSummary } from "./session";
@@ -20,6 +21,8 @@ export type BusEvent =
   | { type: "snippets.updated" }
   /** A daemon restart is waiting for `waiting` active runs; nothing new starts until then. */
   | { type: "restart.updated"; pending: boolean; waiting: number }
+  /** The phone's public link went online or offline (see away.ts). */
+  | { type: "tunnel.updated"; tunnel: TunnelStatus }
   /** A huddle's status, roster or findings changed. */
   | { type: "huddle.updated"; profile: string; huddle: HuddleView }
   /** A message was posted in a huddle. */

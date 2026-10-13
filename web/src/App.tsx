@@ -10,10 +10,12 @@ import { avatarColor, avatarLetter } from "./avatar";
 import { BugReportDialog } from "./BugReportDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
 import { HeaderMenu, withSections } from "./HeaderMenu";
-import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, ColumnsIcon, ContrastIcon, CopyIcon, DollarIcon, GearIcon, HistoryIcon, KeyboardIcon, PlusIcon, PlugIcon, RefreshIcon, SearchIcon, SlidersIcon, TeamIcon, TerminalIcon, TrashIcon } from "./icons";
+import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, ColumnsIcon, ContrastIcon, CopyIcon, DeviceIcon, DollarIcon, GearIcon, HistoryIcon, KeyboardIcon, PlusIcon, PlugIcon, RefreshIcon, SearchIcon, SlidersIcon, TeamIcon, TerminalIcon, TrashIcon } from "./icons";
 import { buzz } from "./haptics";
 import { Inbox } from "./Inbox";
 import { AlertsDialog } from "./AlertsDialog";
+import { AwayDialog } from "./AwayDialog";
+import { phoneAccessLabel, type TunnelStatus } from "./awayText";
 import { UsagePill } from "./UsagePill";
 import { anyLayerOpen } from "./layers";
 import { Board } from "./Board";
@@ -218,8 +220,11 @@ export function App() {
   const [mode, setMode] = usePersistentState<"board" | "chats">("esa.mode", () => "board", () => false, (v) => v === "board" || v === "chats");
   const [theme, setTheme] = useState(themeChoice);
   const [cleanup, setCleanup] = useState<boolean | null>(null);
+  const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
+  const [awayOpen, setAwayOpen] = useState(false);
   useEffect(() => {
     api.settings().then((s) => setCleanup(!!s.cleanup), () => {});
+    api.away().then((a) => setTunnel(a.tunnel), () => {});
   }, []);
   const [layout, setLayout] = useState<"board" | "list">("board");
   const [metadataFilter, setMetadataFilter] = useState<WorkspaceFilter>(EMPTY_FILTER);
@@ -544,6 +549,10 @@ export function App() {
         }
         if (e.type === "restart.updated") {
           setRestart({ pending: e.pending, waiting: e.waiting });
+          return;
+        }
+        if (e.type === "tunnel.updated") {
+          setTunnel(e.tunnel);
           return;
         }
         if (e.type === "profile.updated") {
@@ -874,11 +883,12 @@ export function App() {
             <PlusIcon size={21} className="icon new-ticket-symbol" /><span className="new-ticket-label">{mode === "chats" ? "New chat" : "New ticket"}</span>
           </button>
         )}
-        <HeaderMenu alert={compact && (scheduleErrors > 0 || mcpAttention > 0)} items={withSections({
+        <HeaderMenu alert={tunnel?.state === "offline" || (compact && (scheduleErrors > 0 || mcpAttention > 0))} items={withSections({
           "Needs you": [
             ...(compact && scheduleErrors ? [{ label: `${scheduleErrors} schedule${scheduleErrors === 1 ? "" : "s"} could not start`, icon: <RefreshIcon />, onSelect: () => setSchedulesOpen(true) }] : []),
             ...(compact && mcpAttention ? [{ label: connectionsReason(mcp!.servers), icon: <PlugIcon />, onSelect: () => setConnections(true) }] : []),
             ...(pwa.waiting ? [{ label: "Reload app update", icon: <CheckIcon />, onSelect: pwa.update }] : []),
+            ...(tunnel?.state === "offline" ? [{ label: phoneAccessLabel(tunnel), icon: <DeviceIcon />, onSelect: () => setAwayOpen(true) }] : []),
           ],
           Tools: [
             ...(compact && profile ? [
@@ -915,6 +925,10 @@ export function App() {
               title: "When a ticket is done, its screenshots, recordings and traces go to the Trash. Once a day, old leftovers and merged folder copies go too.",
               badge: <span className="menu-setting">{cleanup ? "On" : "Off"}</span>,
               onSelect: () => api.updateSettings({ cleanup: !cleanup }).then((s) => setCleanup(!!s.cleanup), () => {}),
+            }] : []),
+            ...(tunnel?.state !== "offline" ? [{
+              label: tunnel?.state === "online" ? phoneAccessLabel(tunnel) : "Mac sleep & phone access", icon: <DeviceIcon />,
+              onSelect: () => setAwayOpen(true), title: "Keep the Mac awake and check the link your phone uses",
             }] : []),
             { label: "Notifications", icon: <BellIcon />, onSelect: () => setNotificationsOpen(true) },
             { label: "Mac & webhook alerts", icon: <BellIcon />, onSelect: () => setAlertsOpen(true), title: "macOS banner and ntfy / webhook when a ticket needs you" },
@@ -1028,6 +1042,7 @@ export function App() {
           {layout === "list" ? <TicketList tickets={shownTickets} onOpen={openTicket} /> : <Board key={profile.slug} tickets={shownTickets} filtered={filtering} huddles={huddles} onOpenHuddle={openHuddle} slug={slug ?? undefined} onOpen={(id) => openTicket(id)} onMove={move} onAdd={() => setNewTicket(true)} restartPending={restart.pending} />}
         </>
       )}
+      {awayOpen && <AwayDialog tunnel={tunnel} onClose={() => setAwayOpen(false)} />}
       {alertsOpen && <AlertsDialog profile={profile?.slug ?? null} onClose={() => setAlertsOpen(false)} />}
 
       {dockOpen && profile && (

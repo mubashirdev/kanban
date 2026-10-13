@@ -2,6 +2,7 @@ import type { SlashCommand } from "./slashText";
 import type { TicketUsage, UsageResult } from "./usage";
 import type { Status } from "./columns";
 import type { PrStatus } from "./prText";
+import type { TunnelStatus } from "./awayText";
 export type { PrCheck, PrStatus } from "./prText";
 export type { Status } from "./columns";
 /** limit: the run hit the Claude usage/spend limit (see Ticket.limit). */
@@ -524,6 +525,15 @@ export interface DefaultModels {
   codexEffort: string | null;
   /** Done tickets send their screenshots, recordings and traces to the Trash (with a daily sweep of leftovers). */
   cleanup?: boolean;
+  /** Keep the Mac awake whenever the board is open, not only while work runs. */
+  keepAwake?: boolean;
+}
+
+export interface Away {
+  keepAwake: boolean;
+  /** The board is keeping the Mac awake right now. */
+  holding: boolean;
+  tunnel: TunnelStatus;
 }
 
 export interface AgentStatus {
@@ -860,6 +870,7 @@ export type BusEvent =
   | { type: "snippets.updated" }
   | { type: "schedule.updated"; profile: string; id: string; schedule: Omit<Schedule, "summary" | "active"> | null }
   | { type: "restart.updated"; pending: boolean; waiting: number }
+  | { type: "tunnel.updated"; tunnel: TunnelStatus }
   | { type: "huddle.updated"; profile: string; huddle: Huddle }
   | { type: "huddle.message"; profile: string; huddleId: string; message: HuddleMessage }
   | { type: "huddle.activity"; profile: string; huddleId: string; handle: string; lastActivity: string | null; liveCostUsd?: number; contextTokens?: number }
@@ -1143,6 +1154,7 @@ export const api = {
   agents: () => req<AgentStatus[]>("GET", "/api/agents"),
   dailyUsage: () => req<DayUsage[]>("GET", "/api/daily-usage"),
   settings: () => req<DefaultModels>("GET", "/api/settings"),
+  away: () => req<Away>("GET", "/api/away"),
   updateSettings: (patch: Partial<DefaultModels>) => req<DefaultModels>("PATCH", "/api/settings", patch),
   agentInstall: (id: AgentStatus["id"]) => req<AgentStatus[]>("POST", `/api/agents/${id}/install`),
   agentUninstall: (id: AgentStatus["id"]) => req<AgentStatus[]>("POST", `/api/agents/${id}/uninstall`),

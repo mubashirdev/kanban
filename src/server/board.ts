@@ -2099,7 +2099,7 @@ export class Board {
   }
 
   /** Board runs plus other active work a restart waits for. */
-  private activeWork(): number {
+  activeWork(): number {
     return this.runs.size + this.restartBusy.reduce((n, f) => n + f(), 0);
   }
 

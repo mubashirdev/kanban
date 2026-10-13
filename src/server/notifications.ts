@@ -121,7 +121,7 @@ export class Notifications {
       await this.send(subscription, JSON.stringify(payload), {
         vapidDetails: {
           subject:
-            process.env.CKANBAN_PUSH_SUBJECT ?? "https://kanban-muba.ngrok.app",
+            process.env.CKANBAN_PUSH_SUBJECT ?? this.store.config().publicUrl ?? "https://kanban-muba.ngrok.app",
           ...this.keys!,
         },
         TTL: 3600,

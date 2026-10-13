@@ -619,7 +619,7 @@ test("inside a board run only a running plan's planner may change tickets, and o
 });
 
 test("default models and the cleanup switch are saved board-wide, validated, and cleared with null", async () => {
-  expect(await (await fetch(`${base}/api/settings`)).json()).toEqual({ claudeModel: null, codexModel: null, claudeEffort: null, codexEffort: null, cleanup: false });
+  expect(await (await fetch(`${base}/api/settings`)).json()).toEqual({ claudeModel: null, codexModel: null, claudeEffort: null, codexEffort: null, cleanup: false, keepAwake: false });
   const saved = await fetch(`${base}/api/settings`, json("PATCH", { claudeModel: "sonnet", codexModel: "gpt-5.6-sol", codexEffort: "medium" }));
   expect(await saved.json()).toMatchObject({ claudeModel: "sonnet", codexModel: "gpt-5.6-sol", codexEffort: "medium" });
   expect(store.config()).toMatchObject({ claudeModel: "sonnet", codexModel: "gpt-5.6-sol" });
@@ -630,6 +630,9 @@ test("default models and the cleanup switch are saved board-wide, validated, and
   expect(await (await fetch(`${base}/api/settings`, json("PATCH", { cleanup: true }))).json()).toMatchObject({ cleanup: true });
   expect(store.config().cleanup).toBe(true);
   expect((await fetch(`${base}/api/settings`, json("PATCH", { cleanup: "yes" }))).status).toBe(400);
+  expect(await (await fetch(`${base}/api/settings`, json("PATCH", { keepAwake: true }))).json()).toMatchObject({ keepAwake: true });
+  expect((await fetch(`${base}/api/settings`, json("PATCH", { keepAwake: 1 }))).status).toBe(400);
+  expect(await (await fetch(`${base}/api/away`)).json()).toEqual({ keepAwake: true, holding: false, tunnel: { state: "none", since: null, url: null } });
 });
 
 test("Claude model list for the defaults dialog comes from the live catalog, without the 'default' entry", async () => {

@@ -47,10 +47,13 @@ self.addEventListener('fetch', event => {
   const request = event.request, url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin) return;
   if (request.mode === 'navigate' && (url.pathname === '/' || url.pathname === '/index.html')) {
-    event.respondWith(fetch(request).catch(async () => {
+    const offline = async () => {
       const response = await (await caches.open(CACHE)).match('/offline.html');
       return response || new Response('Kanban is offline. Reconnect and try again.', { status: 503, headers: { 'content-type': 'text/plain' } });
-    }));
+    };
+    // ngrok's error pages (Mac asleep, tunnel down) and the proxy's 502-504 also get the self-retrying offline page.
+    event.respondWith(fetch(request).then(response =>
+      response.headers.has('ngrok-error-code') || [502, 503, 504].includes(response.status) ? offline() : response, offline));
   } else if (!url.search && allowed.has(url.pathname)) {
     event.respondWith((async () => {
       const cache = await caches.open(CACHE), saved = await cache.match(url.pathname);
