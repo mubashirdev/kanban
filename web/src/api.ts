@@ -483,6 +483,14 @@ export interface ClaudeSession {
   ticket: { id: string; title: string } | null;
 }
 
+/** A Claude session the user started in a terminal on this Mac (Chats: On this Mac). */
+export interface TerminalSession extends ClaudeSession {
+  /** The folder it runs in. */
+  cwd: string;
+  /** Open in a terminal and waiting on the user (a question, a permission or another dialog). */
+  needsYou: boolean;
+}
+
 export type McpStatus = "connected" | "needs_auth" | "failed" | "pending" | "unknown";
 export type McpScope = "user" | "local" | "project" | "claude.ai" | "other";
 export type McpTransport = "stdio" | "http" | "sse";
@@ -1090,6 +1098,10 @@ export const api = {
   ticket: (slug: string, id: string) => req<Ticket>("GET", t(slug, id)),
   quickChat: (slug: string) => req<QuickChat>("GET", `/api/profiles/${encodeURIComponent(slug)}/claude/session`),
   sessions: (slug: string) => req<ClaudeSession[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/sessions`),
+  terminalSessions: (slug: string) => req<TerminalSession[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/terminal-sessions`),
+  terminalConversation: (slug: string, id: string, before?: number) =>
+    req<{ entries: SessionEntry[]; start: number; total: number; title: string | null }>(
+      "GET", `/api/profiles/${encodeURIComponent(slug)}/terminal-sessions/${id}${before !== undefined ? `?before=${before}` : ""}`),
   codexSessions: (slug: string) => req<ClaudeSession[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/codex-sessions`),
   branchTicket: (slug: string, id: string) => req<{ ticket: Ticket; warning: string | null }>("POST", `${t(slug, id)}/branch`),
   /** external: the session is open in a terminal the board can't close (nothing changed). */

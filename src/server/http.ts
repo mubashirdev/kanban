@@ -7,7 +7,7 @@ import { basename, isAbsolute, join, normalize } from "node:path";
 import { runArtifactJob, type ArtifactJob, type ArtifactOutcome } from "./artifact";
 import { ConflictError, recoveryFor, type Board } from "./board";
 import { dailyUsage } from "./usage-daily";
-import { claudeDefaults, listClaudeProjects, listSessions, liveSessionMatch, pickFolder, processCommands } from "./claude";
+import { claudeDefaults, listClaudeProjects, listSessions, listTerminalSessions, liveSessionMatch, pickFolder, processCommands } from "./claude";
 import type { TunnelStatus } from "./away";
 import type { Bus, BusEvent } from "./events";
 import { listCommands } from "./slash";
@@ -798,6 +798,29 @@ export function createServer(deps: ServerDeps) {
         live: liveSessionMatch(commands, s),
         ticket: linked.has(s.id) ? { id: linked.get(s.id)!.id, title: linked.get(s.id)!.title } : null,
       })));
+    }
+
+    // /profiles/:p/terminal-sessions — Claude sessions the user started in a terminal, in any folder (Chats: On this Mac).
+    // The board's own helper sessions run under its data folder and are left out.
+    if (parts[2] === "terminal-sessions" && parts.length === 3 && m === "GET") {
+      const linked = new Map(store.listTickets(slug).filter((t) => t.sessionId).map((t) => [t.sessionId!, t]));
+      return json(listTerminalSessions(await processCommands(), {}, [store.root]).map((s) => {
+        const t = linked.get(s.id);
+        return { ...s, ticket: t ? { id: t.id, title: t.title } : null };
+      }));
+    }
+
+    // /profiles/:p/terminal-sessions/:id — that session's conversation, read-only, a page at a time (newest last)
+    if (parts[2] === "terminal-sessions" && parts.length === 4 && m === "GET") {
+      if (!/^[0-9a-f-]{36}$/i.test(parts[3])) throw new HttpError(400, "invalid session id");
+      const parsed = sessions.get(parts[3]);
+      if (!parsed) throw new HttpError(404, "session not found");
+      const all = parsed.entries;
+      const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 100));
+      const before = url.searchParams.has("before") ? Number(url.searchParams.get("before")) : all.length;
+      const end = Math.max(0, Math.min(all.length, before));
+      const start = Math.max(0, end - limit);
+      return json({ entries: all.slice(start, end), start, total: all.length, title: parsed.title });
     }
 
     if (parts[2] === "codex-sessions" && parts.length === 3 && m === "GET") {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { listCommands } from "../src/server/slash";
+import { encodeProjectDir } from "../src/server/claude";
 import { Board, ConflictError, recoveryFor, SESSION_OPEN_MSG } from "../src/server/board";
 import { Bus } from "../src/server/events";
 import { run, worktreeDir } from "../src/server/git";
@@ -816,6 +817,18 @@ test("linked session runs in profile folder with --resume and no worktree", asyn
   const got = store.getTicket("p", t.id)!;
   expect(got.worktree).toBeNull();
   expect(got.status).toBe("review");
+});
+
+test("a linked session from another folder runs in that folder", async () => {
+  await setup();
+  const other = tempDir("ck-other-");
+  const id = "22222222-2222-3333-4444-555555555555";
+  const dir = join(process.env.CLAUDE_CONFIG_DIR!, "projects", encodeProjectDir(other));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${id}.jsonl`), JSON.stringify({ type: "user", cwd: other, entrypoint: "cli", message: { role: "user", content: "hi" } }) + "\n");
+  const t = await board.createTicket("p", { title: "From the terminal", body: "", status: "review" });
+  await board.linkSession("p", t.id, id);
+  expect(store.getTicket("p", t.id)!.workdir).toBe(other);
 });
 
 test("run refuses when the linked session is still open in a terminal", async () => {

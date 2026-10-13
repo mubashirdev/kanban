@@ -1,6 +1,6 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { run } from "./git";
 
 export interface ClaudeProject {
@@ -112,30 +112,194 @@ export function listSessions(projectPath: string, d: Dirs = {}, limit = 50): Cla
     return [];
   }
   files.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
-  return files.slice(0, limit).map(({ id, file, mtime }) => {
-    let title: string | null = null;
-    let aiTitle: string | null = null;
-    let firstPrompt: string | null = null;
-    let raw = "";
+  return files.slice(0, limit).map(({ id, file, mtime }) => ({ id, ...sessionNames(file), lastActive: mtime.toISOString() }));
+}
+
+/** A session's name (custom or AI title) and its first real prompt. */
+function sessionNames(file: string): { title: string | null; firstPrompt: string | null } {
+  let title: string | null = null;
+  let aiTitle: string | null = null;
+  let firstPrompt: string | null = null;
+  let raw = "";
+  try {
+    raw = readFileSync(file, "utf8");
+  } catch {}
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    const isTitle = line.includes('"custom-title"') || line.includes('"ai-title"');
+    if (!isTitle && (firstPrompt || !line.includes('"user"'))) continue;
+    let ev: any;
     try {
-      raw = readFileSync(file, "utf8");
-    } catch {}
-    for (const line of raw.split("\n")) {
-      if (!line) continue;
-      const isTitle = line.includes('"custom-title"') || line.includes('"ai-title"');
-      if (!isTitle && (firstPrompt || !line.includes('"user"'))) continue;
-      let ev: any;
-      try {
-        ev = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      if (ev.type === "custom-title" && typeof ev.customTitle === "string") title = ev.customTitle;
-      else if (ev.type === "ai-title" && typeof ev.aiTitle === "string") aiTitle = ev.aiTitle;
-      else if (!firstPrompt && ev.type === "user" && ev.message?.role === "user") firstPrompt = promptText(ev.message.content);
+      ev = JSON.parse(line);
+    } catch {
+      continue;
     }
-    return { id, title: title ?? aiTitle, firstPrompt, lastActive: mtime.toISOString() };
-  });
+    if (ev.type === "custom-title" && typeof ev.customTitle === "string") title = ev.customTitle;
+    else if (ev.type === "ai-title" && typeof ev.aiTitle === "string") aiTitle = ev.aiTitle;
+    else if (!firstPrompt && ev.type === "user" && ev.message?.role === "user") firstPrompt = promptText(ev.message.content);
+  }
+  return { title: title ?? aiTitle, firstPrompt };
+}
+
+export interface TerminalSession extends ClaudeSession {
+  /** The folder it runs in. */
+  cwd: string;
+  /** Open in a terminal now. */
+  live: boolean;
+  /** Open and waiting on the user: a question, a permission or another dialog. */
+  needsYou: boolean;
+}
+
+/** How a session was started and where, from the first lines of its file. */
+export function sessionOrigin(head: string): { entrypoint: string | null; cwd: string | null } {
+  const field = (name: string) => {
+    const m = new RegExp(`"${name}":"((?:[^"\\\\]|\\\\.)*)"`).exec(head);
+    if (!m) return null;
+    try {
+      return JSON.parse(`"${m[1]}"`) as string;
+    } catch {
+      return null;
+    }
+  };
+  return { entrypoint: field("entrypoint"), cwd: field("cwd") };
+}
+
+/**
+ * Started by the user in a terminal: the board's own runs (sdk-cli), the desktop app and SDK scripts (Hindsight's
+ * survey runs) are left out, and so are helper sessions the board starts under its own data folder.
+ */
+export function isTerminalSession(o: { entrypoint: string | null; cwd: string | null }, skip: string[] = []): boolean {
+  return o.entrypoint === "cli" && !!o.cwd && !skip.some((p) => o.cwd === p || o.cwd!.startsWith(`${p}/`));
+}
+
+function readHead(file: string, bytes = 65536): string {
+  let fd: number | null = null;
+  try {
+    fd = openSync(file, "r");
+    const buf = Buffer.alloc(bytes);
+    return buf.toString("utf8", 0, readSync(fd, buf, 0, bytes, 0));
+  } catch {
+    return "";
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+}
+
+function pidAlive(pid: unknown): boolean {
+  if (typeof pid !== "number") return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Claude Code keeps a status file per open interactive session (~/.claude/sessions/<pid>.json); by session id. */
+export function openSessions(d: Dirs = {}): Map<string, { status?: string }> {
+  const dir = join(configDirOf(d), "sessions");
+  const out = new Map<string, { status?: string }>();
+  let names: string[] = [];
+  try {
+    names = readdirSync(dir);
+  } catch {}
+  for (const n of names) {
+    if (!/^\d+\.json$/.test(n)) continue;
+    const s = readJson(join(dir, n));
+    if (typeof s?.sessionId === "string" && pidAlive(s.pid)) out.set(s.sessionId, s);
+  }
+  return out;
+}
+
+/** A question or plan approval the session asked and got no answer to yet (older Claude Code has no status file). */
+export function pendingQuestion(tail: string): boolean {
+  const asked = new Set<string>();
+  for (const line of tail.split("\n")) {
+    if (!line.includes("tool_")) continue;
+    let ev: any;
+    try {
+      ev = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const content = ev.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const b of content) {
+      if (b?.type === "tool_use" && (b.name === "AskUserQuestion" || b.name === "ExitPlanMode")) asked.add(b.id);
+      else if (b?.type === "tool_result") asked.delete(b.tool_use_id);
+    }
+  }
+  return asked.size > 0;
+}
+
+function readTail(file: string, bytes = 65536): string {
+  let fd: number | null = null;
+  try {
+    const size = statSync(file).size;
+    fd = openSync(file, "r");
+    const buf = Buffer.alloc(Math.min(bytes, size));
+    return buf.toString("utf8", 0, readSync(fd, buf, 0, buf.length, size - buf.length));
+  } catch {
+    return "";
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+}
+
+// Where and how a session started never changes; titles are re-read when the file does.
+const origins = new Map<string, { entrypoint: string | null; cwd: string | null }>();
+const names = new Map<string, { key: string; title: string | null; firstPrompt: string | null }>();
+
+/** The most recent sessions the user started in a terminal, across all folders, newest first. */
+export function listTerminalSessions(commands: string[], d: Dirs = {}, skip: string[] = [], limit = 20): TerminalSession[] {
+  const root = join(configDirOf(d), "projects");
+  const files: { id: string; file: string; mtime: Date; size: number }[] = [];
+  let dirs: string[] = [];
+  try {
+    dirs = readdirSync(root);
+  } catch {}
+  for (const dir of dirs) {
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(join(root, dir));
+    } catch {}
+    for (const f of entries) {
+      if (!f.endsWith(".jsonl")) continue;
+      try {
+        const st = statSync(join(root, dir, f));
+        files.push({ id: f.slice(0, -6), file: join(root, dir, f), mtime: st.mtime, size: st.size });
+      } catch {}
+    }
+  }
+  files.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+  const open = openSessions(d);
+  const out: TerminalSession[] = [];
+  const seen = new Set<string>();
+  for (const { id, file, mtime, size } of files) {
+    if (out.length >= limit) break;
+    // A project folder can be linked under a second name (a renamed folder): the same session twice.
+    if (seen.has(id)) continue;
+    seen.add(id);
+    let origin = origins.get(file);
+    if (!origin) {
+      origin = sessionOrigin(readHead(file));
+      // A file too new to have its first message yet is checked again next time.
+      if (origin.entrypoint) origins.set(file, origin);
+    }
+    if (!isTerminalSession(origin, skip)) continue;
+    const key = `${size}:${mtime.getTime()}`;
+    let n = names.get(file);
+    if (n?.key !== key) {
+      n = { key, ...sessionNames(file) };
+      names.set(file, n);
+    }
+    const live = open.has(id) || liveSessionMatch(commands, { id, title: n.title });
+    out.push({
+      id, title: n.title, firstPrompt: n.firstPrompt, lastActive: mtime.toISOString(), cwd: origin.cwd!, live,
+      needsYou: live && (open.get(id)?.status === "waiting" || pendingQuestion(readTail(file))),
+    });
+  }
+  return out;
 }
 
 /** True if any process command line looks like a claude CLI resuming this session (by id or title). */
@@ -158,4 +322,15 @@ export async function isSessionLive(id: string, title: string | null): Promise<b
 
 export function sessionTitle(projectPath: string, id: string, d: Dirs = {}): string | null {
   return listSessions(projectPath, d, 500).find((s) => s.id === id)?.title ?? null;
+}
+
+/** The folder a session file belongs to (Claude resumes it only from there); null when it's gone or unclear. */
+export function sessionFolder(file: string): string | null {
+  const { cwd } = sessionOrigin(readHead(file));
+  if (!cwd || !existsSync(cwd)) return null;
+  let dir = dirname(file);
+  try {
+    dir = realpathSync(dir);
+  } catch {}
+  return encodeProjectDir(cwd) === basename(dir) ? cwd : null;
 }

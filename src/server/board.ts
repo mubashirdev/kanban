@@ -11,7 +11,7 @@ import { expandCodexCommand } from "./codex-commands";
 import { commitAll, createPr, pushBranch } from "./git-actions";
 import { copyAttachments, deleteAttachments, localizeImages, referencedAttachments } from "./attachments";
 import type { Bus } from "./events";
-import { isSessionLive as psSessionLive, sessionTitle } from "./claude";
+import { isSessionLive as psSessionLive, sessionFolder, sessionTitle } from "./claude";
 import { addWorktree, branchesWithPrefix, branchExists, isGitRepo, listWorktrees, removeWorktree, repoKind, resolveBaseBranch, worktreeDir, type RepoKind } from "./git";
 import { MOVE_TO_PLANNING_RE, STAY_RE } from "./session";
 import { forkSessionFile } from "./fork";
@@ -1840,7 +1840,7 @@ export class Board {
     return referencedAttachments(...texts);
   }
 
-  /** Attach a Claude session the user already started in the profile folder (null unlinks). */
+  /** Attach a Claude session the user already started, in the profile folder or any other (null unlinks). */
   async linkSession(slug: string, id: string, sessionId: string | null): Promise<Ticket> {
     const profile = this.store.getProfile(slug);
     const t = this.store.getTicket(slug, id);
@@ -1854,7 +1854,13 @@ export class Board {
     return this.patch(slug, id, sessionId === null
       ? { sessionId: null, workdir: null }
       // Linked work already exists and the next step is the user's: land in Review ("Your turn").
-      : { sessionId, workdir: profile.path, worktree: null, runCount: 0, lastRunAt: new Date().toISOString(), status: "review" });
+      : { sessionId, workdir: this.linkedFolder(sessionId) ?? profile.path, worktree: null, runCount: 0, lastRunAt: new Date().toISOString(), status: "review" });
+  }
+
+  /** Claude resumes a session only from the folder it was started in (a terminal session in another project). */
+  private linkedFolder(sessionId: string): string | null {
+    const file = claudeSessionFile(sessionId);
+    return file ? sessionFolder(file) : null;
   }
 
   /** Commit, push or open a PR from the Changes pane, in the ticket's own folder. */

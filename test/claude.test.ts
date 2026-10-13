@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claudeDefaults, encodeProjectDir, listClaudeProjects } from "../src/server/claude";
 import { tempDir } from "./helpers";
@@ -87,4 +87,87 @@ test("liveSessionMatch finds claude processes by id or title", () => {
   expect(liveSessionMatch(ps, { id: "aaaaaaaa-0000-0000-0000-000000000001", title: null })).toBe(true);
   expect(liveSessionMatch(ps, { id: "bbbb", title: "Other" })).toBe(false);
   expect(liveSessionMatch(["vim --resume Other"], { id: "bbbb", title: "Other" })).toBe(false);
+});
+
+import { isTerminalSession, listTerminalSessions, pendingQuestion, sessionFolder, sessionOrigin } from "../src/server/claude";
+
+test("isTerminalSession keeps only sessions the user started in a terminal", () => {
+  expect(isTerminalSession({ entrypoint: "cli", cwd: "/Users/x/travelz" })).toBe(true);
+  expect(isTerminalSession({ entrypoint: "sdk-cli", cwd: "/Users/x/travelz" })).toBe(false);
+  expect(isTerminalSession({ entrypoint: "sdk-py", cwd: "/Users/x" })).toBe(false);
+  expect(isTerminalSession({ entrypoint: "claude-desktop", cwd: "/Users/x" })).toBe(false);
+  expect(isTerminalSession({ entrypoint: null, cwd: "/Users/x" })).toBe(false);
+  expect(isTerminalSession({ entrypoint: "cli", cwd: null })).toBe(false);
+  expect(isTerminalSession({ entrypoint: "cli", cwd: "/Users/x/.claude-kanban/artifact-helper" }, ["/Users/x/.claude-kanban"])).toBe(false);
+  expect(isTerminalSession({ entrypoint: "cli", cwd: "/Users/x/.claude-kanban-other" }, ["/Users/x/.claude-kanban"])).toBe(true);
+});
+
+test("sessionOrigin reads entrypoint and folder from the first lines", () => {
+  const head = [
+    JSON.stringify({ type: "file-history-snapshot" }),
+    JSON.stringify({ type: "user", cwd: "/Users/x/my \"app\"", entrypoint: "cli", message: { role: "user", content: "hi" } }),
+  ].join("\n");
+  expect(sessionOrigin(head)).toEqual({ entrypoint: "cli", cwd: "/Users/x/my \"app\"" });
+  expect(sessionOrigin("")).toEqual({ entrypoint: null, cwd: null });
+});
+
+test("pendingQuestion: an unanswered AskUserQuestion or plan approval", () => {
+  const use = (id: string, name: string) => JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id, name, input: {} }] } });
+  const result = (id: string) => JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } });
+  expect(pendingQuestion([use("a", "AskUserQuestion")].join("\n"))).toBe(true);
+  expect(pendingQuestion([use("a", "AskUserQuestion"), result("a")].join("\n"))).toBe(false);
+  expect(pendingQuestion([use("p", "ExitPlanMode")].join("\n"))).toBe(true);
+  expect(pendingQuestion([use("b", "Bash")].join("\n"))).toBe(false);
+  expect(pendingQuestion("{broken")).toBe(false);
+});
+
+test("listTerminalSessions: newest terminal sessions across folders, board runs left out", () => {
+  const configDir = tempDir();
+  const write = (folder: string, id: string, entrypoint: string, day: string, extra: object[] = []) => {
+    const dir = join(configDir, "projects", encodeProjectDir(folder));
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `${id}.jsonl`);
+    writeFileSync(file, [
+      JSON.stringify({ type: "user", cwd: folder, entrypoint, message: { role: "user", content: `work in ${folder}` } }),
+      ...extra.map((e) => JSON.stringify(e)),
+    ].join("\n") + "\n");
+    utimesSync(file, new Date(day), new Date(day));
+    return file;
+  };
+  const id = (n: number) => `0000000${n}-0000-0000-0000-000000000000`;
+  write("/Users/x/travelz", id(1), "cli", "2026-10-01");
+  write("/Users/x/travelz/api", id(2), "cli", "2026-10-03", [{ type: "ai-title", aiTitle: "Fix the API" }]);
+  write("/Users/x/kanban", id(3), "sdk-cli", "2026-10-04");
+  write("/Users/x", id(4), "sdk-py", "2026-10-05");
+  write("/Users/x/.claude-kanban/artifact-helper", id(5), "cli", "2026-10-06");
+  write("/Users/x/app", id(6), "cli", "2026-10-02", [{ type: "assistant", message: { content: [{ type: "tool_use", id: "q", name: "AskUserQuestion", input: {} }] } }]);
+  // A renamed project folder linked under its old name lists the same sessions twice.
+  symlinkSync(join(configDir, "projects", encodeProjectDir("/Users/x/travelz")), join(configDir, "projects", "-Users-x-old-travelz"));
+  // Open in a terminal (Claude Code's status file), waiting on a permission prompt.
+  mkdirSync(join(configDir, "sessions"));
+  writeFileSync(join(configDir, "sessions", `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: id(1), status: "waiting" }));
+
+  const list = listTerminalSessions([`claude --resume ${id(6)}`], { configDir }, ["/Users/x/.claude-kanban"]);
+  expect(list.map((s) => s.id)).toEqual([id(2), id(6), id(1)]);
+  expect(list[0]).toMatchObject({ title: "Fix the API", firstPrompt: "work in /Users/x/travelz/api", cwd: "/Users/x/travelz/api", live: false, needsYou: false });
+  expect(list[1]).toMatchObject({ live: true, needsYou: true });
+  expect(list[2]).toMatchObject({ live: true, needsYou: true });
+  expect(listTerminalSessions([], { configDir }, [], 1).map((s) => s.id)).toEqual([id(5)]);
+});
+
+test("sessionFolder: the folder Claude can resume the session from", () => {
+  const configDir = tempDir();
+  const folder = tempDir();
+  const dir = join(configDir, "projects", encodeProjectDir(folder));
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "s.jsonl");
+  writeFileSync(file, JSON.stringify({ type: "user", cwd: folder, entrypoint: "cli" }) + "\n");
+  expect(sessionFolder(file)).toBe(folder);
+  const elsewhere = join(configDir, "projects", "-other", "s.jsonl");
+  mkdirSync(join(configDir, "projects", "-other"));
+  writeFileSync(elsewhere, JSON.stringify({ type: "user", cwd: folder }) + "\n");
+  expect(sessionFolder(elsewhere)).toBeNull();
+  const linked = join(configDir, "projects", "-linked");
+  symlinkSync(dir, linked);
+  expect(sessionFolder(join(linked, "s.jsonl"))).toBe(folder);
 });

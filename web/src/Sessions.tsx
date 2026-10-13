@@ -10,6 +10,7 @@ import { AgentMark } from "./AgentMark";
 import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, FolderIcon, HistoryIcon, MoreIcon, SplitIcon, TrashIcon } from "./icons";
 import { useLayer } from "./layers";
 import { Modal } from "./Modal";
+import { OnThisMac } from "./OnThisMac";
 import { ReviewPanel } from "./ReviewPanel";
 import { HuddlePanel } from "./HuddlePanel";
 import { members, useHuddle } from "./huddle";
@@ -160,6 +161,7 @@ export function ChatsView({ profile, sessions, tickets, openId, wide, onOpen, on
             ))}
           </ul>
         )}
+        <OnThisMac profile={profile} onOpenChat={onOpen} />
         <button className="link-btn small chat-resume" onClick={() => setResuming(true)}><HistoryIcon size={14} /> Resume a session from a terminal</button>
       </section>
       {wide && (
