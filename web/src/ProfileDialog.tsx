@@ -43,7 +43,7 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
   const [repo, setRepo] = useState<RepoKind | null>(null);
   const noHistory = repo === "plain" || repo === "empty";
   const shownWorkspace: Workspace = noHistory ? "folder" : workspace;
-  const [stallText, setStallText] = useState(String(profile?.stallMinutes ?? 20));
+  const [stallText, setStallText] = useState(String(profile?.stallMinutes ?? 10));
   const stallMinutes = Number(stallText);
   const stallError = /^\d+$/.test(stallText.trim()) && stallMinutes <= 1440 ? null : "Minutes from 0 (off) to 1440";
   const [claudeModel, setClaudeModel] = useState<string | null>(null);
@@ -283,7 +283,7 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
                 aria-invalid={!!stallError} aria-describedby={stallError ? "stall-error" : "stall-hint"} />
               {stallError
                 ? <span id="stall-error" className="field-error">{stallError}</span>
-                : <span id="stall-hint" className="muted small">A silent run lands in the Inbox with Stop / Keep waiting / Restart; nothing is killed. Runs waiting on background tasks don't count. 0: off.</span>}
+                : <span id="stall-hint" className="muted small">A silent run sends one phone alert and lands in the Inbox with Stop / Keep waiting / Restart; nothing is killed. Runs waiting on background tasks don't count. 0: off.</span>}
             </label>
             <div className="form-section">
               <span>Worktree setup</span>

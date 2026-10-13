@@ -2021,6 +2021,7 @@ button.pill:hover { color: var(--text); }
 .notification-options label { display: flex; flex-direction: row; align-items: center; gap: 12px; padding: 12px 14px; background: var(--bg); font-size: 15px; font-weight: 500; }
 .notification-options label:first-of-type { border-radius: 12px 12px 0 0; }
 .notification-options label:last-of-type { border-radius: 0 0 12px 12px; }
+.notification-options label:only-of-type { border-radius: 12px; }
 .notification-options label + label { border-top: 0.5px solid var(--border); }
 .notification-options input { width: auto; }
 

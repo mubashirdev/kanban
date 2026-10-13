@@ -1121,6 +1121,7 @@ export const api = {
   subscribePush: (input: unknown) => req<{ok:boolean}>("POST", "/api/notifications", input),
   unsubscribePush: (endpoint: string) => req<{ok:boolean}>("DELETE", "/api/notifications", {endpoint}),
   testPush: (endpoint: string) => req<{ok:boolean}>("POST", "/api/notifications/test", {endpoint}),
+  pushPresence: (endpoint: string, visible: boolean) => req<{ok:boolean}>("POST", "/api/notifications/presence", {endpoint, visible}),
   workspaceActivity: (slug: string) => req<{id:string;title:string;at:string;changes:string[]}[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/activity`),
   /** Skills and commands in the board's folder: the `/` picker of descriptions not tied to a ticket yet. */
   boardCommands: (slug: string) => req<SlashCommand[]>("GET", `/api/profiles/${slug}/commands`),

@@ -185,6 +185,28 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const [showWarnDetails, setShowWarnDetails] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null);
   useNow();
+  // A phone alert's link ends in /approve or /reply: land on the permission card or in the composer, once.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const land = () => {
+      const parts = location.hash.split("/");
+      const focus = parts[3];
+      if (decodeURIComponent(parts[2] ?? "") !== ticket.id || (focus !== "approve" && focus !== "reply")) return;
+      history.replaceState(null, "", parts.slice(0, 3).join("/"));
+      // The chat and its permission card render once the session loads: try for a few seconds.
+      let tries = 0;
+      const go = () => {
+        const card = document.querySelector(".ask-card");
+        if (focus === "approve" && card) return card.scrollIntoView({ block: "center" });
+        if (focus === "reply" && composer.current) return composer.current.focus();
+        if (++tries < 20) timer = setTimeout(go, 250);
+      };
+      go();
+    };
+    land();
+    window.addEventListener("hashchange", land);
+    return () => { clearTimeout(timer); window.removeEventListener("hashchange", land); };
+  }, [ticket.id]);
   // Sent messages not yet in the session file (the server's queue covers ones Claude hasn't read).
   // steer: sent while Claude was working, so it waits for the server queue instead of joining the timeline.
   const [pending, setPending] = useState<{ text: string; steer: boolean }[]>(() => takeFirstMessage(ticket.id));

@@ -463,6 +463,11 @@ export function createServer(deps: ServerDeps) {
           notifications.unsubscribe(String((await body(req)).endpoint ?? ""));
           return json({ ok: true });
         }
+        if (parts.length === 2 && parts[1] === "presence" && m === "POST") {
+          const b = await body(req);
+          notifications.presence(String(b.endpoint ?? ""), b.visible === true);
+          return json({ ok: true });
+        }
         if (parts.length === 2 && parts[1] === "test" && m === "POST") {
           await notifications.test(String((await body(req)).endpoint ?? ""));
           return json({ ok: true });

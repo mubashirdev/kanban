@@ -82,6 +82,8 @@ export interface PermissionAsk {
   detail: string;
   /** ExitPlanMode: the plan Claude wants approved. */
   plan?: string;
+  /** Bash: the command's first line (detail prefers Claude's description). Phone alerts name it. */
+  command?: string;
   /** Claude offered a rule so it stops asking for the same thing ("Always allow" for this chat). */
   canAlways: boolean;
   at: string;

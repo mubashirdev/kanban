@@ -246,7 +246,8 @@ test("push covers new tickets and planning questions, avoids old events, busy ru
     sent.push(JSON.parse(payload));
     return {} as any;
   });
-  push.subscribe(subscription());
+  // Titles and details turned off on this device.
+  push.subscribe({ ...subscription(), details: false });
   const summaries = new Map<string, any>();
   const stop = push.start(
     bus,
