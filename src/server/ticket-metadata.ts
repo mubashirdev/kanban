@@ -7,7 +7,7 @@ export const TICKET_KINDS = [
   "research",
 ] as const;
 export type TicketMetadata = {
-  agent?: "claude" | "codex" | "cursor";
+  agent?: "claude" | "codex";
   priority?: typeof PRIORITIES[number];
   kind?: typeof TICKET_KINDS[number];
   labels?: string[];
@@ -17,7 +17,7 @@ export type TicketMetadata = {
 export function ticketMetadata(input: Record<string, unknown>): TicketMetadata {
   const patch: TicketMetadata = {};
   if (input.agent !== undefined) {
-    if (input.agent !== "claude" && input.agent !== "codex" && input.agent !== "cursor")
+    if (input.agent !== "claude" && input.agent !== "codex")
       throw new Error("Choose an available coding agent");
     patch.agent = input.agent;
   }

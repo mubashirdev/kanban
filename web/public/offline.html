@@ -9,36 +9,14 @@
     :root{color-scheme:light;--bg:#f2f2f7;--surface:#ffffff;--text:#1c1c1e;--muted:#555b64;--border:#d4d4d9;--accent:#0071e3}
     @media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#0b0b0d;--surface:#1c1c1e;--text:#f5f5f7;--muted:#959daa;--border:#38383a;--accent:#0a84ff}}
     *{box-sizing:border-box}body{margin:0;min-height:100svh;display:grid;place-items:center;padding:24px;font:16px/1.6 system-ui,sans-serif;background:var(--bg);color:var(--text)}
-    main{width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:24px;padding:32px}img{border-radius:16px}h1{font-size:26px;line-height:1.2;letter-spacing:-.5px;margin:24px 0 12px}p{color:var(--muted);margin:0 0 24px}button{width:100%;min-height:48px;padding:12px 16px;border:0;border-radius:10px;background:var(--accent);color:white;font:600 16px system-ui,sans-serif;cursor:pointer}button:focus-visible{outline:3px solid var(--accent);outline-offset:4px}.note{font-size:13px;margin:20px 0 0}#why{color:var(--text);font-weight:600;margin-bottom:8px}
+    main{width:100%;max-width:420px;background:var(--surface);border:1px solid var(--border);border-radius:24px;padding:32px}img{border-radius:16px}h1{font-size:26px;line-height:1.2;letter-spacing:-.5px;margin:24px 0 12px}p{color:var(--muted);margin:0 0 24px}button{width:100%;min-height:48px;padding:12px 16px;border:0;border-radius:10px;background:var(--accent);color:white;font:600 16px system-ui,sans-serif;cursor:pointer}button:focus-visible{outline:3px solid var(--accent);outline-offset:4px}.note{font-size:13px;margin:20px 0 0}
   </style>
 </head>
 <body><main>
-  <img src="/icons/esa-192.png" width="64" height="64" alt="Muba AI" />
+  <img src="/icons/esa-192.png?v=7" width="64" height="64" alt="Muba AI" />
   <h1>Reconnect to your board</h1>
-  <p id="why" role="status">Checking the connection…</p>
-  <p>This page tries again every 10 seconds and opens your board as soon as it’s back.</p>
-  <button type="button" id="retry">Try again now</button>
+  <p>Muba AI couldn’t reach your Mac. Check your connection and make sure your Mac is awake and online.</p>
+  <button type="button" onclick="location.reload()">Try again</button>
   <p class="note">Your tickets and Claude sessions stay on your Mac.</p>
-</main>
-<script>
-// Shown by the service worker when the board can't be reached. A 503 without ngrok's error header comes from the
-// public proxy while the board itself restarts; ngrok's own error pages mean the Mac or the tunnel is down.
-const why = document.getElementById('why');
-const mac = 'Can’t reach your Mac (asleep, offline, or the tunnel is down).';
-async function check() {
-  try {
-    const res = await fetch('/', { cache: 'no-store', credentials: 'include', redirect: 'manual' });
-    const ngrokError = res.headers.has('ngrok-error-code');
-    if (!ngrokError && ![502, 503, 504].includes(res.status)) return location.reload();
-    why.textContent = !ngrokError && res.status === 503 ? 'Your Mac is on, but the board is starting.' : mac;
-  } catch {
-    why.textContent = navigator.onLine ? mac : 'Your phone is offline. Connect to Wi-Fi or mobile data.';
-  }
-}
-document.getElementById('retry').onclick = check;
-addEventListener('online', check);
-setInterval(check, 10000);
-check();
-</script>
-</body>
+</main></body>
 </html>

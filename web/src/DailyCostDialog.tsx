@@ -25,7 +25,7 @@ export function DailyCostDialog({ onClose }: { onClose: () => void }) {
           <>
             <p className="daily-total"><b>{money(total)}</b> <span className="muted">in the last {days.length} days</span></p>
             <ul className="daily-list">
-              {days.map((d, i) => d.claudeRuns + d.codexRuns + d.cursorRuns === 0 ? (
+              {days.map((d, i) => d.claudeRuns + d.codexRuns === 0 ? (
                 <li key={d.date} className="daily-row quiet">
                   <span className="daily-day">{dayLabel(d.date, i)}</span>
                   <span>No runs</span>
@@ -37,11 +37,11 @@ export function DailyCostDialog({ onClose }: { onClose: () => void }) {
                     <span className="daily-amount">{money(d.costUsd)}</span>
                   </div>
                   <div className="daily-bar" aria-hidden><span style={{ width: `${(d.costUsd / maxCost) * 100}%` }} /></div>
-                  <div className="daily-meta muted">{d.claudeRuns} Claude · {d.codexRuns} Codex{d.cursorRuns ? ` · ${d.cursorRuns} Cursor` : ""} runs · {duration(d.seconds)}</div>
+                  <div className="daily-meta muted">{d.claudeRuns} Claude · {d.codexRuns} Codex runs · {duration(d.seconds)}</div>
                 </li>
               ))}
             </ul>
-            <p className="muted small">What these runs would cost on the pay-per-use API, as Claude Code reports it. On a Claude subscription you don’t pay this; it shows how much work ran. Claude runs only: Codex and Cursor don’t report a cost.</p>
+            <p className="muted small">What these runs would cost on the pay-per-use API, as Claude Code reports it. On a Claude subscription you don’t pay this; it shows how much work ran. Claude runs only: Codex doesn’t report a cost.</p>
           </>
         )}
       </div>

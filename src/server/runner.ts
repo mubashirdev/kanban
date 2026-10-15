@@ -31,7 +31,7 @@ export const BACKGROUND_GRACE_MS = 10_000;
 /** How long a monitor-mode huddle session stays open between turns before it exits (later messages resume it). */
 export const MONITOR_IDLE_MS = 30 * 60_000;
 /** Board setting "Stall after": minutes without stream output before a run counts as stalled (0: never). */
-export const DEFAULT_STALL_MINUTES = 10;
+export const DEFAULT_STALL_MINUTES = 20;
 const TASK_DONE = new Set(["completed", "failed", "killed", "stopped"]);
 
 const STDERR_TAIL = 2048;
@@ -100,7 +100,6 @@ export function describeAsk(requestId: string, request: any): PermissionAsk {
   const plan = request?.tool_name === "ExitPlanMode" && typeof input.plan === "string" ? { plan: input.plan } : {};
   return {
     id: requestId, tool: String(request?.tool_name ?? ""), detail: detail.trim().split("\n")[0].slice(0, 300), ...plan,
-    ...(typeof input.command === "string" && input.command.trim() ? { command: input.command.trim().split("\n")[0].slice(0, 300) } : {}),
     canAlways: Array.isArray(request?.permission_suggestions) && request.permission_suggestions.length > 0, at: new Date().toISOString(),
   };
 }

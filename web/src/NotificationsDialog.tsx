@@ -1,20 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { Modal } from "./Modal";
-const ALL_ON = {
-  attention: true,
-  completed: true,
-  failed: true,
-  stuck: true,
-  waiting: true,
-};
-const TOPIC_LABELS = {
-  attention: "Questions, approvals and blocked work",
-  completed: "Work ready for review",
-  failed: "Failed runs",
-  stuck: "Stuck runs (no progress for a while)",
-  waiting: "Runs that finished but wait for you",
-};
 export function NotificationsDialog({ onClose }: { onClose: () => void }) {
   const supported =
     window.isSecureContext &&
@@ -31,20 +17,16 @@ export function NotificationsDialog({ onClose }: { onClose: () => void }) {
   const [topics, setTopics] = useState(() => {
     try {
       return {
-        ...ALL_ON,
+        ...{ attention: true, completed: true, failed: true },
         ...JSON.parse(localStorage.getItem("esa.push.topics") ?? "{}"),
       };
     } catch {
-      return ALL_ON;
+      return { attention: true, completed: true, failed: true };
     }
   });
-  const [details, setDetails] = useState(
-    () => localStorage.getItem("esa.push.details") !== "false"
-  );
   const remember = () => {
     try {
       localStorage.setItem("esa.push.topics", JSON.stringify(topics));
-      localStorage.setItem("esa.push.details", String(details));
     } catch {}
   };
   useEffect(() => {
@@ -108,7 +90,7 @@ export function NotificationsDialog({ onClose }: { onClose: () => void }) {
         applicationServerKey: bytes,
       });
       try {
-        await api.subscribePush({ ...sub.toJSON(), topics, details });
+        await api.subscribePush({ ...sub.toJSON(), topics });
       } catch (e) {
         await sub.unsubscribe();
         throw e;
@@ -122,9 +104,9 @@ export function NotificationsDialog({ onClose }: { onClose: () => void }) {
       <div className="form">
         <p>
           Get notified when work needs your input, finishes, or fails—even when
-          the app is closed. Alerts stay quiet on this device while Muba AI is
-          open on its screen. Your phone decides how it alerts you: a sound
-          when the ringer is on, a vibration when it&rsquo;s on silent.
+          the app is closed. Ticket titles and chat contents stay out of
+          notifications. Your phone decides how it alerts you: a sound when the
+          ringer is on, a vibration when it&rsquo;s on silent.
         </p>
         {!supported ? (
           <div className="banner info">
@@ -135,37 +117,23 @@ export function NotificationsDialog({ onClose }: { onClose: () => void }) {
           <>
             <fieldset disabled={busy} className="notification-options">
               <legend>Notify me about</legend>
-              {(Object.keys(TOPIC_LABELS) as (keyof typeof TOPIC_LABELS)[]).map(
-                (topic) => (
-                  <label key={topic}>
-                    <input
-                      type="checkbox"
-                      checked={topics[topic]}
-                      onChange={(e) =>
-                        setTopics({ ...topics, [topic]: e.target.checked })
-                      }
-                    />
-                    {TOPIC_LABELS[topic]}
-                  </label>
-                )
-              )}
+              {(["attention", "completed", "failed"] as const).map((topic) => (
+                <label key={topic}>
+                  <input
+                    type="checkbox"
+                    checked={topics[topic]}
+                    onChange={(e) =>
+                      setTopics({ ...topics, [topic]: e.target.checked })
+                    }
+                  />
+                  {topic === "attention"
+                    ? "Questions and blocked work"
+                    : topic === "completed"
+                    ? "Work ready for review"
+                    : "Failed runs"}
+                </label>
+              ))}
             </fieldset>
-            <fieldset disabled={busy} className="notification-options">
-              <legend>Alert text</legend>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={details}
-                  onChange={(e) => setDetails(e.target.checked)}
-                />
-                Show ticket titles and details in alerts
-              </label>
-            </fieldset>
-            <p className="muted small">
-              {details
-                ? "Alerts name the ticket and what it needs, e.g. \u201cBash: git push origin main\u201d. Anyone who sees your lock screen can read them."
-                : "Alerts only say that something needs you. Ticket titles and chat contents stay out."}
-            </p>
             {loading ? (
               <p role="status">Checking this device…</p>
             ) : subscription ? (
@@ -178,7 +146,6 @@ export function NotificationsDialog({ onClose }: { onClose: () => void }) {
                       await api.subscribePush({
                         ...subscription.toJSON(),
                         topics,
-                        details,
                       });
                       remember();
                       setMessage("Preferences saved.");

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "./api";
 import { Modal } from "./Modal";
 
 interface InstallPrompt extends Event {
@@ -85,20 +84,6 @@ export function usePwa() {
       };
     }).catch(() => { /* The website still works if installation is unavailable. */ });
     return () => { cancelled = true; cleanup(); };
-  }, []);
-
-  // While the board is on screen, tell the server so this device's push alerts stay quiet (it already sees them).
-  useEffect(() => {
-    if (!window.isSecureContext || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
-    const tell = async () => {
-      const sub = await (await navigator.serviceWorker.getRegistration("/"))?.pushManager.getSubscription();
-      if (sub) await api.pushPresence(sub.endpoint, document.visibilityState === "visible");
-    };
-    const ping = () => { tell().catch(() => {}); };
-    ping();
-    const interval = setInterval(() => { if (document.visibilityState === "visible") ping(); }, 20_000);
-    document.addEventListener("visibilitychange", ping);
-    return () => { clearInterval(interval); document.removeEventListener("visibilitychange", ping); };
   }, []);
 
   return {

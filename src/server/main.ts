@@ -13,7 +13,7 @@ import { McpManager } from "./mcp";
 import { startPoller } from "./prpoller";
 import { Notifier } from "./notify";
 import { Scheduler } from "./scheduler";
-import { CodexSessions, otherAgent } from "./codex-session";
+import { CodexSessions } from "./codex-session";
 import { LimitWatcher } from "./limit";
 import { startHuddleSessionWatcher } from "./huddle-session";
 import { SessionCache, startSessionWatcher } from "./session";
@@ -26,7 +26,6 @@ import { isPrivateIPv4 } from "./lan";
 import { ClaudeCommands } from "./commands";
 import { detectMissing } from "./worktree-setup";
 import { startCleanupSweeper } from "./cleanup";
-import { KeepAwake, startKeepAwake, startTunnelWatch } from "./away";
 
 export async function startDaemon(): Promise<void> {
   // Board runs and other children inherit this; an older launchd plist starts the daemon with no locale.
@@ -73,17 +72,11 @@ export async function startDaemon(): Promise<void> {
   const commands = new ClaudeCommands(process.env.CKANBAN_CLAUDE_BIN ?? "claude");
   const notifications = new Notifications(store);
   const stopNotifications = notifications.start(bus, (slug, id) => board.isRunning(slug, id), (slug, ticket) => {
-    if (!otherAgent(ticket)) return ticket.sessionId ? sessions.summary(ticket.sessionId) : null;
+    if (ticket.agent !== "codex") return ticket.sessionId ? sessions.summary(ticket.sessionId) : null;
     const parsed = codexSessions.get(slug, ticket.id);
     return parsed ? { ...parsed, updatedAt: ticket.updatedAt } : null;
   });
-  const awake = new KeepAwake();
-  const tunnel = startTunnelWatch(config.publicUrl ?? null, (status) => {
-    if (status.url && status.url !== store.config().publicUrl) store.saveConfig({ publicUrl: status.url });
-    bus.emit({ type: "tunnel.updated", tunnel: status });
-  });
-  const server = createServer({ store, bus, board, port, webDir, lan, sessions, terminals, shells, mcp, scheduler, huddles, commands, notifications, codexSessions, assets: WEB_ASSETS, restart, notifier,
-    away: { holding: () => awake.holding, tunnel: tunnel.status } });
+  const server = createServer({ store, bus, board, port, webDir, lan, sessions, terminals, shells, mcp, scheduler, huddles, commands, notifications, codexSessions, assets: WEB_ASSETS, restart, notifier });
   console.log(`ckanban v${VERSION} listening on http://localhost:${server.port} (data: ${store.root})`);
   if (lan?.trustedNetwork) console.log(`Wi-Fi preview: http://${lan.host}:${server.port}/`);
   else if (lan) {
@@ -106,8 +99,6 @@ export async function startDaemon(): Promise<void> {
   const stopMcp = mcp.start();
   // After recover(): what already waits when the daemon starts doesn't notify again.
   const stopNotifier = notifier.start();
-  // caffeinate is macOS only.
-  const stopAwake = process.platform === "darwin" ? startKeepAwake(awake, () => !!store.config().keepAwake || board.activeWork() > 0) : () => {};
 
   const shutdown = async () => {
     console.log("ckanban shutting down");
@@ -122,8 +113,6 @@ export async function startDaemon(): Promise<void> {
     shells.killAll();
     stopMcp();
     stopNotifier();
-    stopAwake();
-    tunnel.stop();
     await Promise.all([board.shutdown(), huddles.shutdown()]);
     server.stop(true);
     process.exit(0);

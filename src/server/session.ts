@@ -306,8 +306,6 @@ export interface ParsedSession {
   lastMessage: SessionMessage | null;
   /** Questions Claude asked since the user's last message. */
   openQuestions: number;
-  /** The first of them, for phone alerts. */
-  firstQuestion?: string;
   /** Latest ticket proposal since the user's last message. */
   pendingProposal: TicketProposal | null;
   /** Latest proposed new tickets since the user's last message (some may already be created). */
@@ -323,7 +321,6 @@ export interface SessionSummary {
   artifacts: SessionArtifact[];
   updatedAt: string;
   openQuestions: number;
-  firstQuestion?: string;
   pendingProposal: TicketProposal | null;
   pendingNewTickets: TicketProposal[];
   pendingTeammates: string[];
@@ -664,7 +661,7 @@ function dropBlockedMoves(entries: SessionEntry[]): void {
   });
 }
 
-function pendingSince(entries: SessionEntry[]): Pick<ParsedSession, "openQuestions" | "firstQuestion" | "pendingProposal" | "pendingNewTickets" | "pendingTeammates"> {
+function pendingSince(entries: SessionEntry[]): Pick<ParsedSession, "openQuestions" | "pendingProposal" | "pendingNewTickets" | "pendingTeammates"> {
   let lastUser = -1;
   entries.forEach((e, i) => {
     // Messages from other tickets don't answer what Claude asked the user.
@@ -673,7 +670,6 @@ function pendingSince(entries: SessionEntry[]): Pick<ParsedSession, "openQuestio
   const after = entries.slice(lastUser + 1);
   return {
     openQuestions: after.reduce((n, e) => n + (e.questions?.length ?? 0), 0),
-    firstQuestion: after.find((e) => e.questions?.length)?.questions![0].question,
     pendingProposal: after.findLast((e) => e.proposal)?.proposal ?? null,
     pendingNewTickets: after.findLast((e) => e.newTickets)?.newTickets ?? [],
     pendingTeammates: after.filter((e) => e.teammate).map((e) => e.uuid),
@@ -756,7 +752,7 @@ export class SessionCache {
     } catch {}
     return {
       title: p.title, lastMessage: p.lastMessage, artifacts: p.artifacts, updatedAt,
-      openQuestions: p.openQuestions, firstQuestion: p.firstQuestion, pendingProposal: p.pendingProposal, pendingNewTickets: p.pendingNewTickets, pendingTeammates: p.pendingTeammates,
+      openQuestions: p.openQuestions, pendingProposal: p.pendingProposal, pendingNewTickets: p.pendingNewTickets, pendingTeammates: p.pendingTeammates,
     };
   }
 }

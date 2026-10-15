@@ -180,7 +180,7 @@ test("a Codex teammate runs on Codex with the board's tools, resumes its thread 
     huddles.post("p", h.id, you(h), "@reviewer please check auth.ts");
     await idle();
     expect(runs()).toHaveLength(2);
-    expect(runs()[1].resume).toBe("12345678-1234-1234-1234-123456789abc");
+    expect(runs()[1].args.slice(0, 3)).toEqual(["exec", "resume", "12345678-1234-1234-1234-123456789abc"]);
     expect(runs()[1].prompt).toContain("@you: @reviewer please check auth.ts");
   } finally {
     delete process.env.FAKE_CODEX_LOG;

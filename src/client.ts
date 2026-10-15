@@ -251,8 +251,6 @@ export class BoardClient {
   listProfiles = () => this.req<ProfileInfo[]>("GET", "/api/profiles");
   listTickets = (slug: string) => this.req<TicketInfo[]>("GET", this.t(slug));
   getTicket = (slug: string, id: string) => this.req<TicketInfo>("GET", this.t(slug, id));
-  screenshot = (slug: string, id: string, target: { port?: number; url?: string }) =>
-    this.req<{ files: string[] }>("POST", `${this.t(slug, id)}/preview/screenshot`, target);
   // `run` (a board run's CKANBAN_TICKET): the daemon only lets a running plan's planner change its own children.
   createTicket = (
     slug: string,

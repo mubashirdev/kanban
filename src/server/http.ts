@@ -7,8 +7,7 @@ import { basename, isAbsolute, join, normalize } from "node:path";
 import { runArtifactJob, type ArtifactJob, type ArtifactOutcome } from "./artifact";
 import { ConflictError, recoveryFor, type Board } from "./board";
 import { dailyUsage } from "./usage-daily";
-import { claudeDefaults, listClaudeProjects, listSessions, listTerminalSessions, liveSessionMatch, pickFolder, processCommands } from "./claude";
-import type { TunnelStatus } from "./away";
+import { claudeDefaults, listClaudeProjects, listSessions, liveSessionMatch, pickFolder, processCommands } from "./claude";
 import type { Bus, BusEvent } from "./events";
 import { listCommands } from "./slash";
 import { DiffError, folderDiff, ticketDiff } from "./diff";
@@ -19,8 +18,6 @@ import { cronError, describeCron, nextRuns, parseCron } from "./cron";
 import { shellQuote } from "./util";
 import { RUN_HEADER, ScheduleError, Scheduler } from "./scheduler";
 import { SnippetError, Snippets } from "./snippets";
-import { TemplateError, Templates } from "./templates";
-import { chatSubdir, FolderError, listFolders, ticketFolder } from "./folders";
 import { HuddleError, Huddles, type Caller } from "./huddle";
 import { HuddleSessionCache, participantSession, participantTool } from "./huddle-session";
 import { HUDDLE_HEADER, SOURCE_HEADER } from "./huddle-roster";
@@ -32,12 +29,11 @@ import { AttachmentError, attachmentFile, attachmentType, IMAGE_TYPES, saveAttac
 import { FileError, listDir, openWithSystem, readFileForView } from "./files";
 import { McpError, McpManager } from "./mcp";
 import { Notifier } from "./notify";
-import { AGENT_IDS, AgentError, AgentRegistry, agentLabel, type AgentId } from "./agents";
+import { AGENT_IDS, AgentError, AgentRegistry, type AgentId } from "./agents";
 import { codexModels } from "./codex-catalog";
 import { codexCommands, codexSkills } from "./codex-commands";
 import { searchFiles } from "./git-actions";
-import { CodexSessions, listCodexSessions, otherAgent } from "./codex-session";
-import { cursorModels } from "./cursor-runner";
+import { CodexSessions, listCodexSessions } from "./codex-session";
 import { collectLinks } from "./links";
 import { searchBoard } from "./search";
 import { SessionCache, mergeCommandEntries, type SessionSummary } from "./session";
@@ -46,7 +42,6 @@ import type { TerminalWatcher } from "./terminals";
 import { attachmentHeader, canCopyFile, copyFileToClipboard, markdownPage, markdownTitle, revealFile, ShareError } from "./share";
 import { UpdateChecker } from "./update";
 import { SpendIndex } from "./spend";
-import { huddleNudgeAnswer, NUDGE_PROMPT, NUDGE_TEXT, nudgeAnswer, STEP_COUNT, stepLabel, type StatusRow } from "./status";
 import { ClaudeLogIndex, readWindows, recordWindow, ticketRuns, ticketUsage, UsageCache, windowsNeeded } from "./ticket-usage";
 import { fetchUsage, type UsageResult } from "./usage";
 import type { Store } from "./store";
@@ -55,7 +50,6 @@ import { nowIso, slugify } from "./util";
 import { authorizeLan, createLanSignIn, type LanAccess } from "./lan";
 import { ClaudeCommands, effortOptions } from "./commands";
 import { applyDetection, detectSetup } from "./worktree-setup";
-import { listeningPorts, previewTarget, takeScreenshots } from "./preview";
 
 export interface ServerDeps {
   store: Store;
@@ -63,8 +57,6 @@ export interface ServerDeps {
   board: Board;
   port: number;
   webDir: string;
-  /** Where the folder browser starts and stays inside (default: the user's home folder). */
-  home?: string;
   /** Opt-in private LAN access; localhost remains available to the CLI. */
   lan?: LanAccess;
   /** gh stand-ins for the PR box (tests). */
@@ -96,8 +88,6 @@ export interface ServerDeps {
   /** Phone access over Tailscale (tests pass one with a fake tailscale runner). */
   /** "Needs you" notifications (notify.ts); the daemon passes its started one. */
   notifier?: Notifier;
-  /** Phone access while away (see away.ts); missing when not running as the daemon. */
-  away?: { holding: () => boolean; tunnel: () => TunnelStatus };
 }
 
 /** A Share menu publish in progress, or the error of the last one, per output file. Not persisted. */
@@ -168,12 +158,6 @@ async function body(req: Request): Promise<any> {
   }
 }
 
-function previewUnavailable(): Response {
-  return new Response("<!doctype html><meta name=viewport content='width=device-width'><title>Open the app</title>" +
-    "<p style='font:16px system-ui;margin:2em'>Opening an app works on this Mac, or from your phone through the protected public link with a preview address (see README, Phone access).</p>",
-  { status: 404, headers: { "content-type": "text/html; charset=utf-8" } });
-}
-
 export function createServer(deps: ServerDeps) {
   if (deps.lan && !/^[a-f0-9]{64}$/.test(deps.lan.token)) throw new Error("LAN access requires a 256-bit hex token");
   if (deps.lan?.pairingCode && !/^[a-f0-9]{12}$/.test(deps.lan.pairingCode)) throw new Error("LAN pairing requires a 48-bit hex code");
@@ -191,7 +175,6 @@ export function createServer(deps: ServerDeps) {
   const commands = deps.commands ?? new ClaudeCommands(process.env.CKANBAN_CLAUDE_BIN ?? "claude");
   const huddles = deps.huddles ?? new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   const snippets = new Snippets(store, bus);
-  const templates = new Templates(store);
   const windowsFile = join(store.root, "usage-windows.json");
   const usage = new UsageCache(deps.usage ?? fetchUsage, (r) => recordWindow(windowsFile, r));
   const spend = new SpendIndex(store);
@@ -285,13 +268,11 @@ export function createServer(deps: ServerDeps) {
     results: store.aiComments(slug, t.id),
     shareLinks: t.shareLinks,
   });
-  // Never preview the board itself or its public bridge (board port + 1 by default).
-  const previewBlocked = () => [server.port ?? deps.port, (server.port ?? deps.port) + 1];
   /** hosts: the board's open huddles by host ticket, when the caller already has them (one read per board). */
   const view = (p: Profile, t: Ticket, hosts = board.hostHuddles(p.slug)) => {
     const running = board.isRunning(p.slug, t.id);
-    const codexParsed = otherAgent(t) ? codexSessions.get(p.slug, t.id) : null;
-    const session = otherAgent(t) ? (codexParsed ? { ...codexParsed, updatedAt: t.updatedAt } : null) : t.sessionId ? sessions.summary(t.sessionId) : null;
+    const codexParsed = t.agent === "codex" ? codexSessions.get(p.slug, t.id) : null;
+    const session = t.agent === "codex" ? (codexParsed ? { ...codexParsed, updatedAt: t.updatedAt } : null) : t.sessionId ? sessions.summary(t.sessionId) : null;
     const huddle = hosts.get(t.id);
     const { attention, snoozed } = withSnooze(t, session, ticketAttention(store, p.slug, t, session, running, huddle), Date.now(), huddle);
     return {
@@ -299,9 +280,7 @@ export function createServer(deps: ServerDeps) {
       running,
       /** Its run takes one of the board's maxParallel slots (Planning and peer replies don't). */
       holdsSlot: running && board.holdsSlot(p.slug, t.id),
-      resumeCommand: t.agent === "codex" ? (t.codexSessionId ? `cd ${shellQuote(t.workdir ?? t.worktree ?? ticketFolder(p.path, t))} && codex resume ${shellQuote(t.codexSessionId)}` : null)
-        : t.agent === "cursor" ? (t.cursorChatId ? `cd ${shellQuote(t.workdir ?? t.worktree ?? ticketFolder(p.path, t))} && cursor-agent --resume ${shellQuote(t.cursorChatId)}` : null)
-        : t.sessionId ? resumeCommand(t.workdir ?? t.worktree ?? ticketFolder(p.path, t), t.sessionId) : null,
+      resumeCommand: t.agent === "codex" ? (t.codexSessionId ? `cd ${shellQuote(t.workdir ?? t.worktree ?? p.path)} && codex resume ${shellQuote(t.codexSessionId)}` : null) : t.sessionId ? resumeCommand(t.workdir ?? t.worktree ?? p.path, t.sessionId) : null,
       session,
       /** Artifacts and share links, newest first: the Outputs tab's Links, the header chips and the card's ↗ chip. */
       links: ticketLinks(p.slug, t, session),
@@ -469,48 +448,6 @@ export function createServer(deps: ServerDeps) {
       return json(out.sort(byWaitingAge));
     }
 
-    // Every board: what each running ticket, chat and huddle is doing now (the Inbox's Status section).
-    if (parts[0] === "status" && m === "GET") {
-      const out: StatusRow[] = [];
-      for (const p of store.listProfiles()) {
-        const base = { profile: p.slug, profileName: p.name };
-        for (const t of store.listTickets(p.slug)) {
-          if (!board.isRunning(p.slug, t.id)) continue;
-          // Only a nudged run's transcript is read: parsing every running transcript on every event is slow.
-          const parsed = !t.lastPrompt?.includes(NUDGE_TEXT) ? null : otherAgent(t) ? codexSessions.get(p.slug, t.id) : t.sessionId ? sessions.get(t.sessionId) : null;
-          out.push({
-            ...base, kind: t.standalone ? "chat" : "ticket", id: t.id, title: t.title,
-            agent: agentLabel(t.agent),
-            startedAt: t.runStartedAt ?? null,
-            costUsd: spend.ticket(p.slug, t.id).costUsd,
-            step: stepLabel(t),
-            steps: board.recentSteps(p.slug, t.id),
-            stalledMinutes: t.stalled?.minutes ?? null,
-            nudge: parsed ? nudgeAnswer(parsed.entries) : null,
-          });
-        }
-        for (const h of store.listHuddles(p.slug)) {
-          if (h.status !== "live") continue;
-          const agents = huddles.view(p.slug, h).participants.filter((x) => x.kind === "agent");
-          const working = agents.filter((x) => x.running);
-          if (!working.length) continue;
-          const steps = working.filter((x) => x.lastActivity).map((x) => `@${x.handle}: ${x.lastActivity}`).slice(-STEP_COUNT);
-          out.push({
-            ...base, kind: "huddle", id: h.hostTicket, huddleId: h.id, title: `Huddle: ${store.getTicket(p.slug, h.hostTicket)?.title ?? h.id}`,
-            agent: `Huddle · ${working.length} working`,
-            startedAt: h.createdAt,
-            costUsd: agents.reduce((sum, x) => sum + (x.costUsd ?? 0) + (x.liveCostUsd ?? 0), 0),
-            step: steps.at(-1) ?? "Working…",
-            steps,
-            stalledMinutes: null,
-            nudge: huddleNudgeAnswer(store.readHuddleMessages(p.slug, h.id)),
-          });
-        }
-      }
-      // Stuck first, then the longest running.
-      return json(out.sort((a, b) => Number(b.stalledMinutes !== null) - Number(a.stalledMinutes !== null) || (a.startedAt ?? "").localeCompare(b.startedAt ?? "")));
-    }
-
     if (parts[0] === "notifications") {
       if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "Notification preferences are only available outside a run");
       if (parts.length === 1 && m === "GET") return json({ publicKey: notifications.publicKey() });
@@ -521,11 +458,6 @@ export function createServer(deps: ServerDeps) {
         }
         if (parts.length === 1 && m === "DELETE") {
           notifications.unsubscribe(String((await body(req)).endpoint ?? ""));
-          return json({ ok: true });
-        }
-        if (parts.length === 2 && parts[1] === "presence" && m === "POST") {
-          const b = await body(req);
-          notifications.presence(String(b.endpoint ?? ""), b.visible === true);
           return json({ ok: true });
         }
         if (parts.length === 2 && parts[1] === "test" && m === "POST") {
@@ -610,29 +542,20 @@ export function createServer(deps: ServerDeps) {
           if (b[key] !== null && !EFFORTS.includes(b[key])) throw new HttpError(400, `Invalid ${key}`);
           patch[key] = b[key] || null;
         }
-        for (const key of ["cleanup", "keepAwake"] as const) {
-          if (b[key] === undefined) continue;
-          if (typeof b[key] !== "boolean") throw new HttpError(400, `${key} must be true or false`);
-          patch[key] = b[key];
+        if (b.cleanup !== undefined) {
+          if (typeof b.cleanup !== "boolean") throw new HttpError(400, "cleanup must be true or false");
+          patch.cleanup = b.cleanup;
         }
-        if (b.quickReplies !== undefined) patch.quickReplies = quickRepliesOf(b.quickReplies);
         store.saveConfig(patch);
       }
-      const { claudeModel = null, codexModel = null, claudeEffort = null, codexEffort = null, cleanup = false, keepAwake = false, quickReplies = null } = store.config();
-      return json({ claudeModel, codexModel, claudeEffort, codexEffort, cleanup, keepAwake, quickReplies });
-    }
-    if (parts[0] === "away" && parts.length === 1 && m === "GET") {
-      return json({
-        keepAwake: !!store.config().keepAwake, holding: deps.away?.holding() ?? false,
-        tunnel: deps.away?.tunnel() ?? { state: "none", since: null, url: null },
-      });
+      const { claudeModel = null, codexModel = null, claudeEffort = null, codexEffort = null, cleanup = false } = store.config();
+      return json({ claudeModel, codexModel, claudeEffort, codexEffort, cleanup });
     }
 
     // Connections panel: is `ckanban mcp` registered with Claude Code / Codex, and (un)register it.
     if (parts[0] === "agents") {
       if (parts.length === 1 && m === "GET") return json(await agents.status());
       if (parts.length === 3 && parts[1] === "codex" && parts[2] === "models" && m === "GET") return json(codexModels());
-      if (parts.length === 3 && parts[1] === "cursor" && parts[2] === "models" && m === "GET") return json(await cursorModels());
       const id = parts[1] as AgentId;
       if (parts.length === 3 && m === "POST" && AGENT_IDS.includes(id) && (parts[2] === "install" || parts[2] === "uninstall")) {
         await (parts[2] === "install" ? agents.install(id) : agents.uninstall(id));
@@ -652,25 +575,6 @@ export function createServer(deps: ServerDeps) {
         return new Response(null, { status: 204 });
       }
       throw new HttpError(404, "not found");
-    }
-
-    // Saved ticket templates (New ticket dialog): GET ?profile=<slug> returns global ones plus that board's.
-    if (parts[0] === "templates") {
-      if (parts.length === 1 && m === "GET") return json(templates.list(url.searchParams.get("profile") ?? undefined));
-      if (parts.length === 1 && m === "POST") return json(templates.create((await body(req)) ?? {}), 201);
-      if (parts.length === 2 && m === "DELETE") {
-        templates.remove(parts[1]);
-        return new Response(null, { status: 204 });
-      }
-      throw new HttpError(404, "not found");
-    }
-
-    // In-page folder browser: inside the home folder, or inside a board's folder with ?profile=<slug>.
-    if (parts[0] === "folders" && parts.length === 1 && m === "GET") {
-      const slug = url.searchParams.get("profile");
-      const profile = slug ? store.getProfile(slug) : null;
-      if (slug && !profile) throw new HttpError(404, `board ${slug} not found`);
-      return json(listFolders(profile?.path ?? deps.home ?? homedir(), url.searchParams.get("path"), url.searchParams.get("hidden") === "1"));
     }
 
     // Schedule form preview: is the expression valid, what it means, when it fires next.
@@ -821,7 +725,6 @@ export function createServer(deps: ServerDeps) {
         if (board.running(slug) > 0) throw new HttpError(409, "board has running tickets");
         store.deleteProfile(slug);
         snippets.dropScope(slug);
-        templates.dropScope(slug);
         shells.kill(slug);
         bus.emit({ type: "profile.updated", slug, profile: null });
         return new Response(null, { status: 204 });
@@ -845,29 +748,6 @@ export function createServer(deps: ServerDeps) {
         live: liveSessionMatch(commands, s),
         ticket: linked.has(s.id) ? { id: linked.get(s.id)!.id, title: linked.get(s.id)!.title } : null,
       })));
-    }
-
-    // /profiles/:p/terminal-sessions — Claude sessions the user started in a terminal, in any folder (Chats: On this Mac).
-    // The board's own helper sessions run under its data folder and are left out.
-    if (parts[2] === "terminal-sessions" && parts.length === 3 && m === "GET") {
-      const linked = new Map(store.listTickets(slug).filter((t) => t.sessionId).map((t) => [t.sessionId!, t]));
-      return json(listTerminalSessions(await processCommands(), {}, [store.root]).map((s) => {
-        const t = linked.get(s.id);
-        return { ...s, ticket: t ? { id: t.id, title: t.title } : null };
-      }));
-    }
-
-    // /profiles/:p/terminal-sessions/:id — that session's conversation, read-only, a page at a time (newest last)
-    if (parts[2] === "terminal-sessions" && parts.length === 4 && m === "GET") {
-      if (!/^[0-9a-f-]{36}$/i.test(parts[3])) throw new HttpError(400, "invalid session id");
-      const parsed = sessions.get(parts[3]);
-      if (!parsed) throw new HttpError(404, "session not found");
-      const all = parsed.entries;
-      const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 100));
-      const before = url.searchParams.has("before") ? Number(url.searchParams.get("before")) : all.length;
-      const end = Math.max(0, Math.min(all.length, before));
-      const start = Math.max(0, end - limit);
-      return json({ entries: all.slice(start, end), start, total: all.length, title: parsed.title });
     }
 
     if (parts[2] === "codex-sessions" && parts.length === 3 && m === "GET") {
@@ -1040,14 +920,14 @@ export function createServer(deps: ServerDeps) {
           if (running) mode = "auto";
         }
         if (parentId && !store.getTicket(slug, parentId)) throw new HttpError(400, `parent ticket ${parentId} not found`);
-        if ((b.agent === "codex" || b.agent === "cursor") && b.sessionId) throw new HttpError(400, "Existing Claude sessions can only be linked to Claude tickets");
+        if (b.agent === "codex" && b.sessionId) throw new HttpError(400, "Existing Claude sessions cannot be linked to Codex tickets");
         if (b.codexSessionId !== undefined && (b.agent !== "codex" || !/^[a-f0-9-]{36}$/i.test(String(b.codexSessionId)))) throw new HttpError(400, "Use a Codex session id with a Codex session");
         // A standalone session never sits in a running column: messages start its runs.
         const standalone = b.standalone === true && !planner;
         let t = await board.createTicket(slug, {
           ...metadata(b), title, body: String(b.body ?? ""), status: standalone ? "backlog" : b.sessionId && !planner ? "backlog" : status, mode, parentId, planKey, dependsOn, needs,
           important: b.important === true,
-          ...(standalone ? { standalone, access: b.access === "edit" ? "edit" : "read", isolated: b.isolated === true, subdir: b.isolated === true ? undefined : chatSubdir(profile.path, b.subdir) } : {}),
+          ...(standalone ? { standalone, access: b.access === "edit" ? "edit" : "read", isolated: b.isolated === true } : {}),
           ...(b.codexSessionId ? { codexSessionId: String(b.codexSessionId) } : {}),
         });
         if (planner) store.addComment(slug, t.id, "ai", `Created by the planner of plan ${planner.id}.`);
@@ -1080,10 +960,9 @@ export function createServer(deps: ServerDeps) {
         const onlyImportant = Object.keys(b).length > 0 && Object.keys(b).every((k) => k === "important");
         const { planner, requester } = own && onlyImportant ? {} : runRights(req, slug, target);
         const patch: Parameters<Board["updateTicket"]>[2] = metadata(b);
-        for (const key of ["codexModel", "codexEffort", "cursorModel"]) if (key in b && b[key] !== null && typeof b[key] !== "string") throw new HttpError(400, `Invalid ${key}`);
+        for (const key of ["codexModel", "codexEffort"]) if (key in b && b[key] !== null && typeof b[key] !== "string") throw new HttpError(400, `Invalid ${key}`);
         if (b.codexModel === null || typeof b.codexModel === "string") patch.codexModel = b.codexModel;
         if (b.codexEffort === null || typeof b.codexEffort === "string") patch.codexEffort = b.codexEffort;
-        if (b.cursorModel === null || typeof b.cursorModel === "string") patch.cursorModel = b.cursorModel;
         if (b.access === "read" || b.access === "edit") patch.access = b.access;
         if (typeof b.readAt === "string" && !Number.isNaN(Date.parse(b.readAt))) patch.readAt = b.readAt;
         if (b.standalone === false) patch.standalone = false;
@@ -1160,9 +1039,6 @@ export function createServer(deps: ServerDeps) {
         const skills = codexSkills(cwd).map((skill) => ({ name: skill.name, description: skill.description, argumentHint: "", aliases: [], builtin: false, insert: `$${skill.name} ` }));
         return json({ commands: [...codexCommands(), ...skills], models: [], efforts: [], outputStyles: [], defaultModel: store.config().codexModel ?? null });
       }
-      if (ticket.agent === "cursor") {
-        return json({ commands: codexCommands().filter((c) => c.name !== "effort"), models: [], efforts: [], outputStyles: [], defaultModel: null });
-      }
       try {
         const plan = ticket.status === "backlog" || ticket.status === "planning", refresh = url.searchParams.get("refresh") === "1";
         const catalog = commands.catalog ? await commands.catalog(cwd, plan, refresh) : { commands: await commands.get(cwd, plan, refresh), models: [] };
@@ -1172,7 +1048,7 @@ export function createServer(deps: ServerDeps) {
       } catch (error) { throw new HttpError(503, (error as Error).message); }
     }
     if (["model", "effort", "output-style"].includes(action) && parts.length === 5 && m === "POST") {
-      if (otherAgent(store.getTicket(slug, id)!)) throw new HttpError(400, "Use the chat's agent settings");
+      if (store.getTicket(slug,id)?.agent === "codex") throw new HttpError(400, "Use Codex ticket settings");
       if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "Claude settings are only available outside a board run");
       const b = await body(req), ticket = store.getTicket(slug, id)!;
       const field = action === "output-style" ? "outputStyle" : action;
@@ -1252,20 +1128,6 @@ export function createServer(deps: ServerDeps) {
         },
       });
     }
-    // The Preview tab: the ticket folder's dev servers, and screenshots of one (also the take_screenshot tool).
-    if (action === "preview" && parts.length === 5 && m === "GET") {
-      const t = store.getTicket(slug, id)!;
-      return json({ ports: await listeningPorts(t.workdir ?? t.worktree ?? profile.path, previewBlocked()) });
-    }
-    if (action === "preview" && parts[5] === "screenshot" && m === "POST") {
-      let target: string;
-      try { target = previewTarget(await body(req), previewBlocked()); } catch (e) { throw new HttpError(400, (e as Error).message); }
-      try {
-        return json({ files: await takeScreenshots(target, store.outputsDir(slug, id), previewBlocked()) });
-      } catch (e) {
-        throw new HttpError(502, `Couldn't take the screenshot of ${target}: ${(e as Error).message.split("\n")[0]}`);
-      }
-    }
     if (action === "diff" && m === "GET") {
       // The Changes tab: the worktree (committed, uncommitted and untracked) against its merge-base with the base branch;
       // a ticket working in the board's folder itself, that folder against its HEAD at the ticket's first run.
@@ -1291,8 +1153,8 @@ export function createServer(deps: ServerDeps) {
     if (action === "conversation" && m === "GET") {
       // Read-only view of the ticket's Claude session file (terminal chat + board runs), newest last.
       const t = store.getTicket(slug, id)!;
-      const parsed = otherAgent(t) ? codexSessions.get(slug, id) : t.sessionId ? sessions.get(t.sessionId) : null;
-      const all = mergeCommandEntries(parsed?.entries ?? [], otherAgent(t) ? [] : store.readCommandEntries(slug, id).filter((entry) => entry.sessionId === t.sessionId));
+      const parsed = t.agent === "codex" ? codexSessions.get(slug, id) : t.sessionId ? sessions.get(t.sessionId) : null;
+      const all = mergeCommandEntries(parsed?.entries ?? [], t.agent === "codex" ? [] : store.readCommandEntries(slug, id).filter((entry) => entry.sessionId === t.sessionId));
       const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 100));
       const before = url.searchParams.has("before") ? Number(url.searchParams.get("before")) : all.length;
       const end = Math.max(0, Math.min(all.length, before));
@@ -1320,11 +1182,6 @@ export function createServer(deps: ServerDeps) {
       const t = await board.chat(slug, id, text, { fromPlanner: !!(planner || requester) });
       if (requester) store.addComment(slug, id, "ai", `Message sent ${byRequest(requester)}.`);
       return json(view(profile, t), 202);
-    }
-    // Nudge from the Inbox's Status section: only into a run that is still going, so a stale row never starts a new run.
-    if (m === "POST" && action === "nudge") {
-      if (!board.isRunning(slug, id)) throw new HttpError(409, "This run has already finished");
-      return json(view(profile, await board.chat(slug, id, NUDGE_PROMPT)), 202);
     }
     // POST .../fork { model?, text? }: a copy of this chat that continues the same conversation (on another model).
     if (m === "POST" && action === "fork" && parts.length === 5) {
@@ -1835,8 +1692,6 @@ export function createServer(deps: ServerDeps) {
         if (denied) return denied;
       }
       const url = new URL(req.url);
-      // The public bridge answers these; reaching the board means there is no preview address in front of it.
-      if (url.pathname.startsWith("/__preview/")) return previewUnavailable();
       if (!url.pathname.startsWith("/api/")) return staticFile(url);
       try {
         return (await api(req, url)) as Response;
@@ -1847,8 +1702,6 @@ export function createServer(deps: ServerDeps) {
         if (e instanceof AgentError) return json({ error: e.message }, e.status);
         if (e instanceof ScheduleError) return json({ error: e.message }, e.status);
         if (e instanceof SnippetError) return json({ error: e.message }, e.status);
-        if (e instanceof TemplateError) return json({ error: e.message }, e.status);
-        if (e instanceof FolderError) return json({ error: e.message }, e.status);
         if (e instanceof HuddleError) return json({ error: e.message }, e.status);
         if (e instanceof URIError) return json({ error: "malformed URL" }, 400);
         console.error(e);
@@ -1894,14 +1747,4 @@ function capValue(v: unknown, allowZero: boolean): number | null {
 function workspaceValue(v: unknown): Workspace {
   if (v !== "worktree" && v !== "folder") throw new HttpError(400, 'workspace must be "worktree" or "folder"');
   return v;
-}
-
-/** The chat's quick replies from a request: trimmed, non-empty; an empty list or null means the built-in ones. */
-function quickRepliesOf(v: unknown): string[] | null {
-  if (v === null) return null;
-  if (!Array.isArray(v) || v.some((r) => typeof r !== "string")) throw new HttpError(400, "quickReplies must be a list of texts, or null");
-  const list = v.map((r: string) => r.trim()).filter(Boolean);
-  if (list.length > 12) throw new HttpError(400, "at most 12 quick replies");
-  if (list.some((r) => r.length > 200)) throw new HttpError(400, "a quick reply may be at most 200 characters");
-  return list.length ? list : null;
 }

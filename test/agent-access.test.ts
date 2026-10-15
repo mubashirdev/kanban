@@ -111,7 +111,6 @@ test("bodyFrom: --body, --body-file, stdin, not both", () => {
 test("agentsFrom defaults to both", () => {
   expect(agentsFrom(parseArgs([]))).toEqual(["claude", "codex"]);
   expect(agentsFrom(parseArgs(["--codex"]))).toEqual(["codex"]);
-  expect(agentsFrom(parseArgs(["--cursor"]))).toEqual(["cursor"]);
 });
 
 // --- MCP tool handlers (client mocked) ----------------------------------------------------------
@@ -227,10 +226,10 @@ test("every tool advertises a profile argument; change tools are flagged", () =>
   for (const t of TOOLS.filter((t) => t.name !== "list_profiles" && !PLANNING.includes(t.name))) expect(t.inputSchema.properties.profile).toBeDefined();
   expect(TOOLS.filter((t) => !t.changes).map((t) => t.name).sort()).toEqual([
     "ask_questions", "get_ticket", "huddle_read", "list_huddle_presets", "list_profiles", "list_schedules", "list_tickets", "propose_branch", "propose_delete", "propose_huddle",
-    "propose_teammate", "propose_ticket", "propose_tickets", "publish_artifact", "read_artifact", "report_bug", "schedule_history", "take_screenshot",
+    "propose_teammate", "propose_ticket", "propose_tickets", "publish_artifact", "read_artifact", "report_bug", "schedule_history",
   ]);
-  // Read tools run in a Planning chat (plan mode) without a permission ask (take_screenshot only writes to Outputs); report_bug files an issue, so it asks.
-  const READ = ["get_ticket", "huddle_read", "list_huddle_presets", "list_profiles", "list_schedules", "list_tickets", "schedule_history", "take_screenshot"];
+  // Read tools run in a Planning chat (plan mode) without a permission ask; report_bug files an issue, so it asks.
+  const READ = ["get_ticket", "huddle_read", "list_huddle_presets", "list_profiles", "list_schedules", "list_tickets", "schedule_history"];
   expect(TOOLS.filter((t) => t.annotations?.readOnlyHint).map((t) => t.name).sort()).toEqual([...READ, ...PLANNING].sort());
   // Huddle tools work inside runs: the daemon checks who the run is (lead, coordinator, the participant itself).
   expect(TOOLS.filter((t) => t.allowInRun).map((t) => t.name).sort()).toEqual([
@@ -363,15 +362,12 @@ test("agents API reports status and registers Codex", async () => {
   const s2 = createServer({
     store: new Store(tempDir("ck-home-")), bus: new Bus(), board: new Board(new Store(tempDir()), new Bus(), { claudeBin: "/bin/false" }),
     port: 0, webDir: tempDir(),
-    agents: new AgentRegistry({ claudeBin: "/bin/false", codexBin: "no-such-codex", claudeConfig: join(home, ".claude.json"), codexConfig, cursorBin: "no-such-cursor", cursorConfig: join(home, ".cursor/mcp.json"), serverArgv: ["/bin/ck", "mcp"] }),
+    agents: new AgentRegistry({ claudeBin: "/bin/false", codexBin: "no-such-codex", claudeConfig: join(home, ".claude.json"), codexConfig, serverArgv: ["/bin/ck", "mcp"] }),
   });
   try {
     const base = `http://127.0.0.1:${s2.port}/api/agents`;
     const before: any = await (await fetch(base)).json();
-    expect(before.map((a: any) => [a.id, a.installed])).toEqual([["claude", false], ["codex", false], ["cursor", false]]);
-    const cursor: any = await (await fetch(`${base}/cursor/install`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).json();
-    expect(cursor[2]).toMatchObject({ available: false, installed: true, current: true, command: "/bin/ck mcp" });
-    expect(JSON.parse(readFileSync(join(home, ".cursor/mcp.json"), "utf8")).mcpServers.ckanban.env.CKANBAN_TICKET).toBe("${env:CKANBAN_TICKET}");
+    expect(before.map((a: any) => [a.id, a.installed])).toEqual([["claude", false], ["codex", false]]);
     const r = await fetch(`${base}/codex/install`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     const after: any = await r.json();
     expect(after[1]).toMatchObject({ installed: true, current: true, command: "/bin/ck mcp" });

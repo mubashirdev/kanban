@@ -2,7 +2,6 @@ import type { SlashCommand } from "./slashText";
 import type { TicketUsage, UsageResult } from "./usage";
 import type { Status } from "./columns";
 import type { PrStatus } from "./prText";
-import type { TunnelStatus } from "./awayText";
 export type { PrCheck, PrStatus } from "./prText";
 export type { Status } from "./columns";
 /** limit: the run hit the Claude usage/spend limit (see Ticket.limit). */
@@ -156,10 +155,8 @@ export interface SearchHit {
 }
 
 export interface Ticket {
-  agent?: "claude" | "codex" | "cursor";
+  agent?: "claude" | "codex";
   codexSessionId?: string | null;
-  cursorChatId?: string | null;
-  cursorModel?: string | null;
   codexModel?: string | null;
   lastPrompt?: string | null;
   codexEffort?: "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | null;
@@ -185,8 +182,6 @@ export interface Ticket {
   sessionId: string | null;
   worktree: string | null;
   workdir?: string | null;
-  /** A chat that runs in a subfolder of the board folder (relative path). */
-  subdir?: string | null;
   branch: string | null;
   /** HEAD of the board's folder at the ticket's first run there (its Changes base without a worktree). */
   baseSha?: string | null;
@@ -485,14 +480,6 @@ export interface ClaudeSession {
   ticket: { id: string; title: string } | null;
 }
 
-/** A Claude session the user started in a terminal on this Mac (Chats: On this Mac). */
-export interface TerminalSession extends ClaudeSession {
-  /** The folder it runs in. */
-  cwd: string;
-  /** Open in a terminal and waiting on the user (a question, a permission or another dialog). */
-  needsYou: boolean;
-}
-
 export type McpStatus = "connected" | "needs_auth" | "failed" | "pending" | "unknown";
 export type McpScope = "user" | "local" | "project" | "claude.ai" | "other";
 export type McpTransport = "stdio" | "http" | "sse";
@@ -528,7 +515,7 @@ export interface McpAddInput {
 }
 
 /** An outside agent that can use the board through `ckanban mcp`. */
-export interface DayUsage { date: string; claudeRuns: number; codexRuns: number; cursorRuns: number; costUsd: number; seconds: number }
+export interface DayUsage { date: string; claudeRuns: number; codexRuns: number; costUsd: number; seconds: number }
 
 export interface DefaultModels {
   claudeModel: string | null;
@@ -537,39 +524,10 @@ export interface DefaultModels {
   codexEffort: string | null;
   /** Done tickets send their screenshots, recordings and traces to the Trash (with a daily sweep of leftovers). */
   cleanup?: boolean;
-  /** Keep the Mac awake whenever the board is open, not only while work runs. */
-  keepAwake?: boolean;
-  /** The chat's quick-reply chips; null: the built-in ones. */
-  quickReplies?: string[] | null;
-}
-
-/** A ticket saved to start from again (New ticket dialog). scope: "global" or a board slug. */
-export interface TicketTemplate {
-  id: string;
-  name: string;
-  title: string;
-  body: string;
-  kind: NonNullable<Ticket["kind"]>;
-  priority: NonNullable<Ticket["priority"]>;
-  scope: string;
-}
-
-export interface FolderList {
-  path: string;
-  root: string;
-  parent: string | null;
-  folders: { name: string; path: string }[];
-}
-
-export interface Away {
-  keepAwake: boolean;
-  /** The board is keeping the Mac awake right now. */
-  holding: boolean;
-  tunnel: TunnelStatus;
 }
 
 export interface AgentStatus {
-  id: "claude" | "codex" | "cursor";
+  id: "claude" | "codex";
   label: string;
   available: boolean;
   installed: boolean;
@@ -902,7 +860,6 @@ export type BusEvent =
   | { type: "snippets.updated" }
   | { type: "schedule.updated"; profile: string; id: string; schedule: Omit<Schedule, "summary" | "active"> | null }
   | { type: "restart.updated"; pending: boolean; waiting: number }
-  | { type: "tunnel.updated"; tunnel: TunnelStatus }
   | { type: "huddle.updated"; profile: string; huddle: Huddle }
   | { type: "huddle.message"; profile: string; huddleId: string; message: HuddleMessage }
   | { type: "huddle.activity"; profile: string; huddleId: string; handle: string; lastActivity: string | null; liveCostUsd?: number; contextTokens?: number }
@@ -939,28 +896,6 @@ export interface InboxItem {
   attention: Attention;
   /** Snoozed from the Inbox until then: listed apart, not counted. */
   snoozedUntil?: string;
-}
-
-/** What the Inbox's Status section asks a run with Nudge (the server matches the same text to find the answer). */
-export const NUDGE_TEXT = "Give me a 2-line status: what's done, what's left, any blocker";
-
-/** One running ticket, chat or huddle on any board, for the Inbox's Status section (see src/server/status.ts). */
-export interface StatusRow {
-  kind: "ticket" | "chat" | "huddle";
-  profile: string;
-  profileName: string;
-  /** The ticket (for a huddle: its host ticket). */
-  id: string;
-  huddleId?: string;
-  title: string;
-  agent: string;
-  startedAt: string | null;
-  costUsd: number;
-  step: string;
-  /** Newest last. */
-  steps: string[];
-  stalledMinutes: number | null;
-  nudge: { at: string; answer: string | null } | null;
 }
 
 /** A ticket on any board, as the ⌘K command bar lists it. */
@@ -1122,10 +1057,6 @@ export const api = {
   ticket: (slug: string, id: string) => req<Ticket>("GET", t(slug, id)),
   quickChat: (slug: string) => req<QuickChat>("GET", `/api/profiles/${encodeURIComponent(slug)}/claude/session`),
   sessions: (slug: string) => req<ClaudeSession[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/sessions`),
-  terminalSessions: (slug: string) => req<TerminalSession[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/terminal-sessions`),
-  terminalConversation: (slug: string, id: string, before?: number) =>
-    req<{ entries: SessionEntry[]; start: number; total: number; title: string | null }>(
-      "GET", `/api/profiles/${encodeURIComponent(slug)}/terminal-sessions/${id}${before !== undefined ? `?before=${before}` : ""}`),
   codexSessions: (slug: string) => req<ClaudeSession[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/codex-sessions`),
   branchTicket: (slug: string, id: string) => req<{ ticket: Ticket; warning: string | null }>("POST", `${t(slug, id)}/branch`),
   /** external: the session is open in a terminal the board can't close (nothing changed). */
@@ -1134,8 +1065,6 @@ export const api = {
   linkSession: (slug: string, id: string, sessionId: string | null) =>
     req<Ticket>("POST", `${t(slug, id)}/link-session`, { sessionId }),
   outputs: (slug: string, id: string) => req<OutputFile[]>("GET", `${t(slug, id)}/outputs`),
-  previewPorts: (slug: string, id: string) => req<{ ports: { port: number; command: string }[] }>("GET", `${t(slug, id)}/preview`),
-  screenshot: (slug: string, id: string, port: number) => req<{ files: string[] }>("POST", `${t(slug, id)}/preview/screenshot`, { port }),
   outputUrl: (slug: string, id: string, name: string) => `${t(slug, id)}/outputs/${name.split("/").map(encodeURIComponent).join("/")}`,
   outputDownloadUrl: (slug: string, id: string, name: string) => `${api.outputUrl(slug, id, name)}?download=1`,
   /** Share menu: reveal in Finder, copy the file to the clipboard, or start publishing it as a claude.ai page. */
@@ -1147,11 +1076,11 @@ export const api = {
     return r.text();
   },
   createTicket: (slug: string, input: {
-    title: string; body: string; status: Status; sessionId?: string; codexSessionId?: string; standalone?: boolean; access?: Ticket["access"]; isolated?: boolean; subdir?: string; mode?: TicketMode; important?: boolean; agent?: Ticket["agent"]; priority?: Ticket["priority"]; kind?: Ticket["kind"]; labels?: string[]; parentId?: string; planKey?: string; dependsOn?: string[]; needs?: string[];
+    title: string; body: string; status: Status; sessionId?: string; codexSessionId?: string; standalone?: boolean; access?: Ticket["access"]; isolated?: boolean; mode?: TicketMode; important?: boolean; agent?: Ticket["agent"]; priority?: Ticket["priority"]; kind?: Ticket["kind"]; labels?: string[]; parentId?: string; planKey?: string; dependsOn?: string[]; needs?: string[];
   }) => req<Ticket>("POST", t(slug), input),
   plan: (slug: string, id: string, action: "start" | "pause" | "resume" | "done" | "concurrency", maxConcurrent?: number) =>
     req<Ticket>("POST", `${t(slug, id)}/plan`, { action, maxConcurrent }),
-  updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "important" | "runCapUsd" | "priority" | "kind" | "labels" | "agent" | "codexModel" | "codexEffort" | "cursorModel" | "access" | "readAt" | "standalone" | "needs">> & { expectedBody?: string }) =>
+  updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "important" | "runCapUsd" | "priority" | "kind" | "labels" | "agent" | "codexModel" | "codexEffort" | "access" | "readAt" | "standalone" | "needs">> & { expectedBody?: string }) =>
     req<Ticket>("PATCH", t(slug, id), patch),
   deleteTicket: (slug: string, id: string) => req<void>("DELETE", t(slug, id)),
   /** Inbox Snooze: hide what the ticket waits for now for a day (or until its state changes). */
@@ -1165,8 +1094,6 @@ export const api = {
   diff: (slug: string, id: string, ignoreWhitespace: boolean) =>
     req<TicketDiff>("GET", `${t(slug, id)}/diff${ignoreWhitespace ? "?w=1" : ""}`),
   chat: (slug: string, id: string, text: string) => req<Ticket>("POST", `${t(slug, id)}/chat`, { text }),
-  /** Asks a running ticket or chat for a 2-line status (409 once the run has finished). */
-  nudge: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/nudge`),
   fork: (slug: string, id: string, input: { model?: string; text?: string }) => req<Ticket>("POST", `${t(slug, id)}/fork`, input),
   search: (slug: string, q: string) => req<SearchHit[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/search?q=${encodeURIComponent(q)}`),
   sendQueued: (slug: string, id: string, msgId: string) => req<Ticket>("POST", `${t(slug, id)}/queued/${msgId}`),
@@ -1183,7 +1110,6 @@ export const api = {
   subscribePush: (input: unknown) => req<{ok:boolean}>("POST", "/api/notifications", input),
   unsubscribePush: (endpoint: string) => req<{ok:boolean}>("DELETE", "/api/notifications", {endpoint}),
   testPush: (endpoint: string) => req<{ok:boolean}>("POST", "/api/notifications/test", {endpoint}),
-  pushPresence: (endpoint: string, visible: boolean) => req<{ok:boolean}>("POST", "/api/notifications/presence", {endpoint, visible}),
   workspaceActivity: (slug: string) => req<{id:string;title:string;at:string;changes:string[]}[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/activity`),
   /** Skills and commands in the board's folder: the `/` picker of descriptions not tied to a ticket yet. */
   boardCommands: (slug: string) => req<SlashCommand[]>("GET", `/api/profiles/${slug}/commands`),
@@ -1191,23 +1117,11 @@ export const api = {
   /** Cost, tokens and ≈ share of the 5h plan window per run. */
   ticketUsage: (slug: string, id: string) => req<TicketUsage>("GET", `${t(slug, id)}/usage`),
   inbox: () => req<InboxItem[]>("GET", "/api/inbox"),
-  runStatus: () => req<StatusRow[]>("GET", "/api/status"),
   allTickets: () => req<TicketRow[]>("GET", "/api/tickets"),
   snippets: (slug: string) => req<Snippet[]>("GET", `/api/snippets?profile=${encodeURIComponent(slug)}`),
   createSnippet: (input: SnippetInput) => req<Snippet>("POST", "/api/snippets", input),
   updateSnippet: (id: string, patch: Partial<SnippetInput>) => req<Snippet>("PATCH", `/api/snippets/${encodeURIComponent(id)}`, patch),
   deleteSnippet: (id: string) => req<void>("DELETE", `/api/snippets/${encodeURIComponent(id)}`),
-  templates: (slug: string) => req<TicketTemplate[]>("GET", `/api/templates?profile=${encodeURIComponent(slug)}`),
-  createTemplate: (input: Omit<TicketTemplate, "id">) => req<TicketTemplate>("POST", "/api/templates", input),
-  deleteTemplate: (id: string) => req<void>("DELETE", `/api/templates/${encodeURIComponent(id)}`),
-  /** Folders in `path` (default: the start). Inside the home folder, or inside a board's folder with `profile`. */
-  folders: (path: string | null, opts: { profile?: string; hidden?: boolean } = {}) => {
-    const q = new URLSearchParams();
-    if (path) q.set("path", path);
-    if (opts.profile) q.set("profile", opts.profile);
-    if (opts.hidden) q.set("hidden", "1");
-    return req<FolderList>("GET", `/api/folders?${q}`);
-  },
   schedules: (slug: string) => req<Schedule[]>("GET", sch(slug)),
   createSchedule: (slug: string, input: ScheduleInput) => req<Schedule>("POST", sch(slug), input),
   updateSchedule: (slug: string, id: string, patch: Partial<ScheduleInput & { enabled: boolean }>) => req<Schedule>("PATCH", sch(slug, id), patch),
@@ -1226,11 +1140,9 @@ export const api = {
   mcpConfig: (name: string) => req<McpConfig>("GET", `/api/mcp/${encodeURIComponent(name)}/config`),
   mcpUpdate: (name: string, input: McpAddInput) => req<McpState>("PUT", `/api/mcp/${encodeURIComponent(name)}`, input),
   codexModels: () => req<{value:string;displayName:string;efforts:string[]}[]>("GET", "/api/agents/codex/models"),
-  cursorModels: () => req<{value:string;displayName:string}[]>("GET", "/api/agents/cursor/models"),
   agents: () => req<AgentStatus[]>("GET", "/api/agents"),
   dailyUsage: () => req<DayUsage[]>("GET", "/api/daily-usage"),
   settings: () => req<DefaultModels>("GET", "/api/settings"),
-  away: () => req<Away>("GET", "/api/away"),
   updateSettings: (patch: Partial<DefaultModels>) => req<DefaultModels>("PATCH", "/api/settings", patch),
   agentInstall: (id: AgentStatus["id"]) => req<AgentStatus[]>("POST", `/api/agents/${id}/install`),
   agentUninstall: (id: AgentStatus["id"]) => req<AgentStatus[]>("POST", `/api/agents/${id}/uninstall`),

@@ -17,7 +17,7 @@ import { newId, newTicketId, nowIso } from "./util";
 const DEFAULT_CONFIG: Config = { port: 7777, prPollMinutes: 5 };
 
 export function defaultRoot(): string {
-  return process.env.CKANBAN_HOME || join(homedir(), ".claude-kanban");
+  return process.env.CKANBAN_HOME ?? join(homedir(), ".claude-kanban");
 }
 
 export function atomicWrite(file: string, content: string) {
@@ -167,7 +167,7 @@ export class Store {
 
   createTicket(
     slug: string,
-    input: TicketMetadata & { title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; parentId?: string; planKey?: string; dependsOn?: string[]; needs?: string[]; important?: boolean; standalone?: boolean; access?: "read" | "edit"; isolated?: boolean; subdir?: string; codexSessionId?: string },
+    input: TicketMetadata & { title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; parentId?: string; planKey?: string; dependsOn?: string[]; needs?: string[]; important?: boolean; standalone?: boolean; access?: "read" | "edit"; isolated?: boolean; codexSessionId?: string },
   ): Ticket {
     const at = nowIso();
     const t: Ticket = {
@@ -178,7 +178,7 @@ export class Store {
       ...(input.parentId ? { parentId: input.parentId } : {}),
       ...(input.planKey ? { planKey: input.planKey } : {}),
       ...(input.dependsOn?.length ? { dependsOn: input.dependsOn } : {}),
-      ...(input.standalone ? { standalone: true, access: input.access ?? "read", readAt: at, ...(input.isolated ? { isolated: true } : {}), ...(input.subdir ? { subdir: input.subdir } : {}) } : {}),
+      ...(input.standalone ? { standalone: true, access: input.access ?? "read", readAt: at, ...(input.isolated ? { isolated: true } : {}) } : {}),
       ...(input.codexSessionId ? { codexSessionId: input.codexSessionId } : {}),
       ...(input.needs?.length ? { needs: input.needs } : {}),
       ...(input.important ? { important: true } : {}),

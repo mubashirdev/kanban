@@ -1,9 +1,7 @@
 import type { RunHandle, RunOutput } from "./runner";
-/** Runs `codex app-server` (JSON-RPC over stdio); the thread to resume goes to startCodexRun. */
 export function codexArgs(options: {
+  sessionId?: string | null;
   refine: boolean;
-  /** Commands and edits outside the sandbox ask the user (a permission card) instead of failing. */
-  ask?: boolean;
   model?: string | null;
   effort?: string | null;
   writableRoots?: string[];
@@ -12,15 +10,16 @@ export function codexArgs(options: {
   /** The ckanban MCP server's command line: the board's tools, with the run's identity env passed through. */
   mcp?: string[];
 }) {
-  const args = [
-    "app-server",
+  const args = ["exec"];
+  if (options.sessionId) args.push("resume", options.sessionId);
+  args.push(
+    "--json",
+    "--skip-git-repo-check",
     "-c",
-    `approval_policy="${options.ask ? "on-request" : "never"}"`,
+    'approval_policy="never"',
     "-c",
-    `sandbox_mode="${options.refine ? "read-only" : "workspace-write"}"`,
-  ];
-  // The user's own config may send asks to Codex's automatic reviewer; board asks go to the user.
-  if (options.ask) args.push("-c", 'approvals_reviewer="user"');
+    `sandbox_mode="${options.refine ? "read-only" : "workspace-write"}"`
+  );
   if (!options.refine) {
     args.push("-c", "sandbox_workspace_write.network_access=true");
     if (options.writableRoots?.length)
@@ -39,13 +38,14 @@ export function codexArgs(options: {
       "-c", `mcp_servers.ckanban.command=${JSON.stringify(command)}`,
       "-c", `mcp_servers.ckanban.args=${JSON.stringify(rest)}`,
       "-c", `mcp_servers.ckanban.env_vars=${JSON.stringify(MCP_ENV)}`,
-      // Board tools never need a card: without this Codex would ask (or, with approval_policy never, refuse) every one that changes something.
+      // Runs never prompt (approval_policy never), so Codex would refuse every board tool that changes something.
       "-c", 'mcp_servers.ckanban.default_tools_approval_mode="approve"'
     );
   }
-  if (options.model) args.push("-c", `model=${JSON.stringify(options.model)}`);
+  if (options.model) args.push("--model", options.model);
   if (options.effort)
     args.push("-c", `model_reasoning_effort="${options.effort}"`);
+  args.push("-");
   return args;
 }
 /** What tells the ckanban MCP server which run (and huddle agent) is calling. Codex doesn't pass env to MCP servers by itself. */
@@ -60,73 +60,17 @@ export function readableError(message: string): string {
   } catch {}
   // An older CLI rejects models a newer one knows (e.g. the config's default model).
   if (/model is not supported|model metadata .* not found/i.test(text)) text += " Update Codex (run `codex update`) or choose another model in the chat settings.";
-  // An older CLI doesn't know the app-server methods or settings board runs use.
-  else if (/method not found|unknown variant/i.test(text)) text += " Update Codex (run `codex update`).";
   return text;
 }
 
-
-/** A single action is the command without Codex's shell wrapper (`/bin/zsh -lc '...'`); several keep the whole line. */
-function shownCommand(item: any): string {
-  const actions = item?.commandActions;
-  return actions?.length === 1 && actions[0].command ? actions[0].command : item?.command ?? "";
-}
-
-/**
- * A Codex approval request in the shape of Claude's permission ask (see describeAsk), so it shows as the same card.
- * Null: not an approval the card can answer.
- */
-export function codexAsk(method: string, params: any): any {
-  const description = typeof params?.reason === "string" ? params.reason : undefined;
-  // "Always" = acceptForSession: it lasts for this run only and is never saved to Codex's rules.
-  const always = ["session"];
-  if (method === "item/commandExecution/requestApproval")
-    return { tool_name: "Bash", description, input: { command: shownCommand(params) }, permission_suggestions: always };
-  if (method === "item/fileChange/requestApproval")
-    return { tool_name: "Edit", description, input: { file_path: params?.grantRoot ?? "" }, permission_suggestions: always };
-  return null;
-}
-
-/** The JSON-RPC answer to a Codex approval request. Deny lets Codex carry on without it. */
-export function codexAnswer(requestId: string, allow: boolean, always = false) {
-  return { id: requestId, result: { decision: !allow ? "decline" : always ? "acceptForSession" : "accept" } };
-}
-
-/** Codex thread items as the stream events the board shows for Claude (tool calls, results, replies). */
-export function codexItemEvents(method: string, item: any): any[] {
-  const toolUse = (name: string, input: unknown) => [{ type: "assistant", message: { content: [{ type: "tool_use", id: item.id, name, input }] } }];
-  const toolResult = (content: string, failed: boolean) =>
-    [{ type: "user", message: { content: [{ type: "tool_result", tool_use_id: item.id, content, is_error: failed }] } }];
-  if (method === "item/started") {
-    if (item?.type === "commandExecution") return toolUse("Bash", { command: shownCommand(item) });
-    if (item?.type === "mcpToolCall") return toolUse(`mcp__${item.server}__${item.tool}`, item.arguments ?? {});
-    return [];
-  }
-  if (method !== "item/completed") return [];
-  if (item?.type === "agentMessage") return [{ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: item.text ?? "" }] } }];
-  if (item?.type === "commandExecution")
-    return toolResult(item.aggregatedOutput ?? (item.status === "declined" ? "Denied" : ""), item.status !== "completed" || item.exitCode !== 0);
-  if (item?.type === "mcpToolCall")
-    return toolResult(item.result?.content?.map((c: any) => c.text ?? "").join("\n") ?? item.error?.message ?? "", item.status === "failed");
-  if (item?.type === "fileChange") return toolUse("Edit", { file_path: item.changes?.map((c: any) => c.path).join(", ") ?? "files" });
-  return [];
-}
-
-/**
- * One turn per process: `codex app-server` starts or resumes the thread and runs the prompt, then exits when its
- * input closes. Later messages stay in the durable board queue. Approval requests go to onPermission and wait.
- */
+/** Codex exec accepts one prompt per process. Later messages stay in the durable board queue. */
 export function startCodexRun(options: {
   bin: string;
   cwd: string;
   args: string[];
   input: string;
-  /** The Codex thread to resume (the ticket's codexSessionId). */
-  threadId?: string | null;
   env?: Record<string, string>;
   onEvent: (event: any) => void;
-  /** An approval request (see codexAsk) or, with cancelled, one Codex no longer waits for. False: declined at once. */
-  onPermission?: (requestId: string, request: any, cancelled?: boolean) => boolean;
 }): RunHandle {
   let process: ReturnType<typeof Bun.spawn> | null = null,
     stopped = false;
@@ -143,43 +87,6 @@ export function startCodexRun(options: {
     events.push(value);
     options.onEvent(value);
   };
-  // JSON-RPC: our requests waiting for a reply, and Codex's approval requests waiting for the user (ask id -> request id).
-  const replies = new Map<number, (message: any) => void>();
-  const asks = new Map<string, string | number>();
-  let nextId = 0;
-  let turnDone = () => {};
-  const turnFinished = new Promise<void>((resolve) => (turnDone = resolve));
-  const write = (message: object) => {
-    const stdin = process!.stdin as import("bun").FileSink;
-    stdin.write(JSON.stringify(message) + "\n");
-    stdin.flush();
-  };
-  const request = (method: string, params: object) =>
-    new Promise<any>((resolve, reject) => {
-      const id = ++nextId;
-      replies.set(id, (message) => (message.error ? reject(new Error(message.error.message ?? "Codex error")) : resolve(message.result)));
-      write({ id, method, params });
-    });
-  const serverRequest = (message: any) => {
-    const ask = codexAsk(message.method, message.params);
-    const key = String(message.id);
-    if (ask && options.onPermission?.(key, ask)) asks.set(key, message.id);
-    else if (ask) write({ ...codexAnswer(key, false), id: message.id });
-    else write({ id: message.id, error: { code: -32601, message: "The board can't answer this request" } });
-  };
-  const notification = (method: string, params: any) => {
-    for (const event of codexItemEvents(method, params?.item)) emit(event);
-    if (method === "item/completed" && params?.item?.type === "agentMessage") finalText = params.item.text ?? "";
-    if (method === "serverRequest/resolved") {
-      const key = String(params?.requestId);
-      if (asks.delete(key)) options.onPermission?.(key, null, true);
-    }
-    if (method === "error" && !params?.willRetry) failure = readableError(params?.error?.message ?? "Codex turn failed");
-    if (method === "turn/completed") {
-      if (params?.turn?.status === "failed") failure = readableError(params.turn.error?.message ?? "Codex turn failed");
-      turnDone();
-    }
-  };
   const done = (async (): Promise<RunOutput> => {
     try {
       process = Bun.spawn([options.bin, ...options.args], {
@@ -190,6 +97,8 @@ export function startCodexRun(options: {
         stderr: "pipe",
         detached: true,
       });
+      (process.stdin as import("bun").FileSink).write(options.input);
+      (process.stdin as import("bun").FileSink).end();
       emit({
         type: "user",
         isReplay: true,
@@ -205,17 +114,108 @@ export function startCodexRun(options: {
           decoder = new TextDecoder();
         let buffer = "";
         const line = (value: string) => {
-          let message: any;
+          let event: any;
           try {
-            message = JSON.parse(value);
+            event = JSON.parse(value);
           } catch {
             return;
           }
-          if (!message.method) {
-            replies.get(message.id)?.(message);
-            replies.delete(message.id);
-          } else if (message.id !== undefined) serverRequest(message);
-          else notification(message.method, message.params);
+          if (
+            event.type === "thread.started" &&
+            typeof event.thread_id === "string"
+          )
+            emit({ type: "codex.thread", sessionId: event.thread_id });
+          if (
+            event.type === "item.started" &&
+            event.item?.type === "command_execution"
+          )
+            emit({
+              type: "assistant",
+              message: {
+                content: [
+                  {
+                    type: "tool_use",
+                    id: event.item.id,
+                    name: "Bash",
+                    input: { command: event.item.command },
+                  },
+                ],
+              },
+            });
+          if (event.type === "item.started" && event.item?.type === "mcp_tool_call")
+            emit({
+              type: "assistant",
+              message: {
+                content: [
+                  {
+                    type: "tool_use",
+                    id: event.item.id,
+                    name: `mcp__${event.item.server}__${event.item.tool}`,
+                    input: event.item.arguments ?? {},
+                  },
+                ],
+              },
+            });
+          if (event.type === "item.completed") {
+            const item = event.item;
+            if (item?.type === "agent_message") {
+              finalText = item.text ?? "";
+              emit({
+                type: "assistant",
+                message: {
+                  role: "assistant",
+                  content: [{ type: "text", text: finalText }],
+                },
+              });
+            } else if (item?.type === "command_execution")
+              emit({
+                type: "user",
+                message: {
+                  content: [
+                    {
+                      type: "tool_result",
+                      tool_use_id: item.id,
+                      content: item.aggregated_output ?? "",
+                      is_error: item.exit_code !== 0,
+                    },
+                  ],
+                },
+              });
+            else if (item?.type === "mcp_tool_call")
+              emit({
+                type: "user",
+                message: {
+                  content: [
+                    {
+                      type: "tool_result",
+                      tool_use_id: item.id,
+                      content: item.result?.content?.map((c: any) => c.text ?? "").join("\n") ?? item.error?.message ?? "",
+                      is_error: item.status === "failed",
+                    },
+                  ],
+                },
+              });
+            else if (item?.type === "file_change")
+              emit({
+                type: "assistant",
+                message: {
+                  content: [
+                    {
+                      type: "tool_use",
+                      id: item.id,
+                      name: "Edit",
+                      input: {
+                        file_path:
+                          item.changes?.map((c: any) => c.path).join(", ") ??
+                          "files",
+                      },
+                    },
+                  ],
+                },
+              });
+          }
+          if (event.type === "turn.failed" || event.type === "error")
+            failure = readableError(event.error?.message ?? event.message ?? "Codex turn failed");
         };
         while (true) {
           const { value, done } = await reader.read();
@@ -233,30 +233,6 @@ export function startCodexRun(options: {
           }
         }
         if (buffer.trim()) line(buffer);
-        // Codex is gone: nothing will answer what is still waiting.
-        for (const reply of replies.values()) reply({ error: { message: "Codex exited" } });
-        replies.clear();
-        asks.clear();
-        turnDone();
-      })();
-      const talk = (async () => {
-        try {
-          await request("initialize", { clientInfo: { name: "ckanban", version: "1" }, capabilities: null });
-          write({ method: "initialized" });
-          const opened = options.threadId
-            ? await request("thread/resume", { threadId: options.threadId, cwd: options.cwd })
-            : await request("thread/start", { cwd: options.cwd });
-          const threadId = opened.thread.id;
-          emit({ type: "codex.thread", sessionId: threadId });
-          await request("turn/start", { threadId, input: [{ type: "text", text: options.input, text_elements: [] }] });
-          await turnFinished;
-        } catch (error) {
-          failure ||= readableError((error as Error).message);
-        } finally {
-          try {
-            (process!.stdin as import("bun").FileSink).end();
-          } catch {}
-        }
       })();
       const [code, stderr] = await Promise.all([
         process.exited,
@@ -276,7 +252,6 @@ export function startCodexRun(options: {
           return tail;
         })(),
         stdout,
-        talk,
       ]);
       const failed = code !== 0 || !!failure;
       emit({
@@ -299,12 +274,6 @@ export function startCodexRun(options: {
   return {
     done,
     send: () => false,
-    answer(response: any) {
-      const id = asks.get(response?.id);
-      if (id === undefined || !process) return;
-      asks.delete(response.id);
-      write({ ...response, id });
-    },
     endWhenIdle() {},
     keepWaiting() {},
     get stopped() {

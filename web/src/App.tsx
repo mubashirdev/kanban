@@ -5,24 +5,21 @@ import { ChatsView, NewSessionDialog, SessionView } from "./Sessions";
 import { Modal } from "./Modal";
 import { usePersistentState } from "./usePersistentState";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, copy, COLUMNS, onReconnect, subscribe, waitsForSlot, type Health, type InboxItem, type McpServer, type McpState, type Profile, type Schedule, type Status, type StatusRow, type Ticket } from "./api";
+import { api, copy, COLUMNS, onReconnect, subscribe, waitsForSlot, type Health, type InboxItem, type McpServer, type McpState, type Profile, type Schedule, type Status, type Ticket } from "./api";
 import { avatarColor, avatarLetter } from "./avatar";
 import { BugReportDialog } from "./BugReportDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
 import { HeaderMenu, withSections } from "./HeaderMenu";
-import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, ColumnsIcon, ContrastIcon, CopyIcon, DeviceIcon, DollarIcon, GearIcon, HistoryIcon, KeyboardIcon, PlusIcon, PlugIcon, RefreshIcon, SearchIcon, SlidersIcon, TeamIcon, TerminalIcon, TrashIcon } from "./icons";
+import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, ColumnsIcon, ContrastIcon, CopyIcon, DollarIcon, GearIcon, HistoryIcon, KeyboardIcon, PlusIcon, PlugIcon, RefreshIcon, SearchIcon, SlidersIcon, TeamIcon, TerminalIcon, TrashIcon } from "./icons";
 import { buzz } from "./haptics";
 import { Inbox } from "./Inbox";
 import { AlertsDialog } from "./AlertsDialog";
-import { AwayDialog } from "./AwayDialog";
-import { phoneAccessLabel, type TunnelStatus } from "./awayText";
 import { UsagePill } from "./UsagePill";
 import { anyLayerOpen } from "./layers";
 import { Board } from "./Board";
 import { boardColumnOf, columnNeighbours, columnOrder } from "./columns";
 import { NewTicketDialog } from "./NewTicketDialog";
 import { DailyCostDialog } from "./DailyCostDialog";
-import { QuickRepliesDialog } from "./QuickRepliesDialog";
 import { DefaultModelsDialog } from "./DefaultModelsDialog";
 import { ProfileDialog } from "./ProfileDialog";
 import { SchedulesDialog } from "./SchedulesDialog";
@@ -221,11 +218,8 @@ export function App() {
   const [mode, setMode] = usePersistentState<"board" | "chats">("esa.mode", () => "board", () => false, (v) => v === "board" || v === "chats");
   const [theme, setTheme] = useState(themeChoice);
   const [cleanup, setCleanup] = useState<boolean | null>(null);
-  const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
-  const [awayOpen, setAwayOpen] = useState(false);
   useEffect(() => {
     api.settings().then((s) => setCleanup(!!s.cleanup), () => {});
-    api.away().then((a) => setTunnel(a.tunnel), () => {});
   }, []);
   const [layout, setLayout] = useState<"board" | "list">("board");
   const [metadataFilter, setMetadataFilter] = useState<WorkspaceFilter>(EMPTY_FILTER);
@@ -233,7 +227,6 @@ export function App() {
   const [dismissed, setDismissed] = useState(readDismissed);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [defaultModelsOpen, setDefaultModelsOpen] = useState(false);
-  const [quickRepliesOpen, setQuickRepliesOpen] = useState(false);
   const [dailyCostOpen, setDailyCostOpen] = useState(false);
   // Phones: search and filters sit behind a magnifier until needed.
   const [searchOpen, setSearchOpen] = useState(false);
@@ -302,20 +295,10 @@ export function App() {
   }, [loadSchedules]);
 
   const [snoozed, setSnoozed] = useState<InboxItem[]>([]);
-  const [runRows, setRunRows] = useState<StatusRow[]>([]);
   const loadInbox = useCallback(() => quiet(api.inbox, "the inbox", (list) => {
     setInbox(list.filter((i) => !i.snoozedUntil));
     setSnoozed(list.filter((i) => i.snoozedUntil));
   }), []);
-  // The Inbox's Status section: refetched when a run, chat or huddle reports a step (no polling).
-  const statusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const refreshStatusSoon = useCallback(() => {
-    if (statusTimer.current) return;
-    statusTimer.current = setTimeout(() => {
-      statusTimer.current = null;
-      quiet(api.runStatus, "what is running", setRunRows);
-    }, 400);
-  }, []);
   const refreshInboxSoon = useCallback(() => {
     if (inboxTimer.current) return;
     inboxTimer.current = setTimeout(() => {
@@ -327,11 +310,10 @@ export function App() {
   useEffect(() => {
     loadProfiles().catch((e) => setError(e.message));
     loadInbox();
-    refreshStatusSoon();
     quiet(api.health, "tool checks", setHealth);
     quiet(api.version, "the version", setVersion);
     quiet(api.mcp, "connections", setMcp);
-  }, [loadProfiles, loadInbox, refreshStatusSoon]);
+  }, [loadProfiles, loadInbox]);
   // First visit with no boards yet: open New board straight away (it lists recent Claude Code folders).
   const autoOpened = useRef(false);
   useEffect(() => {
@@ -409,13 +391,12 @@ export function App() {
     api.restartState().then(setRestart).catch(() => {});
     loadProfiles().catch(() => {});
     loadInbox();
-    refreshStatusSoon();
     api.mcp().then(setMcp).catch(() => {});
     if (slug) {
       api.tickets(slug).then(setTickets).catch(() => {});
       loadSchedules(slug);
     }
-  }), [slug, loadProfiles, loadInbox, refreshStatusSoon, loadSchedules]);
+  }), [slug, loadProfiles, loadInbox, loadSchedules]);
 
   const needYou = inbox.length;
   // A snooze ends by itself: reload when the first one runs out (the server only counts it again then).
@@ -565,10 +546,6 @@ export function App() {
           setRestart({ pending: e.pending, waiting: e.waiting });
           return;
         }
-        if (e.type === "tunnel.updated") {
-          setTunnel(e.tunnel);
-          return;
-        }
         if (e.type === "profile.updated") {
           loadProfiles().catch(() => {});
           refreshInboxSoon();
@@ -582,7 +559,6 @@ export function App() {
           if (before !== undefined && now && now !== before && !e.ticket.running) buzz([30, 60, 30]);
         }
         if (e.type === "ticket.updated" || e.type === "ticket.deleted" || e.type === "session.updated" || e.type === "huddle.updated") refreshInboxSoon();
-        if (e.type === "ticket.updated" || e.type === "ticket.deleted" || e.type === "session.updated" || e.type === "huddle.updated" || e.type === "huddle.message" || e.type === "huddle.activity") refreshStatusSoon();
         if (e.type === "schedule.updated" && e.profile === slug) refreshSchedulesSoon(slug);
         if (e.type === "ticket.updated" && e.profile === slug && e.ticket.scheduleId) refreshSchedulesSoon(slug);
         if (e.type === "ticket.updated" && e.profile === slug) {
@@ -602,7 +578,7 @@ export function App() {
           setTickets((ts) => ts.filter((t) => t.id !== e.id));
         }
       }),
-    [slug, loadProfiles, refreshInboxSoon, refreshStatusSoon, refreshSchedulesSoon],
+    [slug, loadProfiles, refreshInboxSoon, refreshSchedulesSoon],
   );
 
   const profile = useMemo(() => profiles?.find((p) => p.slug === slug) ?? null, [profiles, slug]);
@@ -760,8 +736,10 @@ export function App() {
     loadInbox();
   };
 
-  // The hash change switches the board too; setting the board first would let the URL sync drop the ticket.
-  const openFrom = (board: string, id: string) => openTicket(id, board);
+  const openFrom = (board: string, id: string) => {
+    if (board !== slug) setSlug(board);
+    openTicket(id, board);
+  };
 
   // ⌘K actions run the same handlers as their buttons and menu items.
   const commandActions: CommandAction[] = [
@@ -856,10 +834,6 @@ export function App() {
         )}
         <div className="spacer" />
         <Inbox items={inbox} snoozed={snoozed} landOnInbox={narrow && !startedOnTicket.current} openRequest={inboxRequest} onPick={(i) => openFrom(i.profile, i.id)}
-          running={runRows} onOpenRun={(r) => {
-            if (r.huddleId) setHuddleTab({ id: r.id, n: Date.now(), huddleId: r.huddleId });
-            openFrom(r.profile, r.id);
-          }}
           onMarkDone={(i) => void inboxDone(i)} onSnooze={(i, on) => void inboxSnooze(i, on)} />
         {profile && !compact && (
           <button className={`btn ghost icon-label${dockOpen && !chatOpen ? " on" : ""}`}
@@ -900,12 +874,11 @@ export function App() {
             <PlusIcon size={21} className="icon new-ticket-symbol" /><span className="new-ticket-label">{mode === "chats" ? "New chat" : "New ticket"}</span>
           </button>
         )}
-        <HeaderMenu alert={tunnel?.state === "offline" || (compact && (scheduleErrors > 0 || mcpAttention > 0))} items={withSections({
+        <HeaderMenu alert={compact && (scheduleErrors > 0 || mcpAttention > 0)} items={withSections({
           "Needs you": [
             ...(compact && scheduleErrors ? [{ label: `${scheduleErrors} schedule${scheduleErrors === 1 ? "" : "s"} could not start`, icon: <RefreshIcon />, onSelect: () => setSchedulesOpen(true) }] : []),
             ...(compact && mcpAttention ? [{ label: connectionsReason(mcp!.servers), icon: <PlugIcon />, onSelect: () => setConnections(true) }] : []),
             ...(pwa.waiting ? [{ label: "Reload app update", icon: <CheckIcon />, onSelect: pwa.update }] : []),
-            ...(tunnel?.state === "offline" ? [{ label: phoneAccessLabel(tunnel), icon: <DeviceIcon />, onSelect: () => setAwayOpen(true) }] : []),
           ],
           Tools: [
             ...(compact && profile ? [
@@ -928,7 +901,6 @@ export function App() {
           Settings: [
             ...(profile ? [{ label: "Board settings", icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
             { label: "Default models", icon: <SlidersIcon />, onSelect: () => setDefaultModelsOpen(true) },
-            { label: "Quick replies", icon: <ChatIcon />, onSelect: () => setQuickRepliesOpen(true), title: "The one-tap answers a chat offers when the agent asks you something" },
             {
               label: "Appearance", icon: <ContrastIcon />, keepOpen: true, title: "Tap to switch: System, Light, Dark",
               badge: <span className="menu-setting">{THEME_LABEL[theme]}</span>,
@@ -943,10 +915,6 @@ export function App() {
               title: "When a ticket is done, its screenshots, recordings and traces go to the Trash. Once a day, old leftovers and merged folder copies go too.",
               badge: <span className="menu-setting">{cleanup ? "On" : "Off"}</span>,
               onSelect: () => api.updateSettings({ cleanup: !cleanup }).then((s) => setCleanup(!!s.cleanup), () => {}),
-            }] : []),
-            ...(tunnel?.state !== "offline" ? [{
-              label: tunnel?.state === "online" ? phoneAccessLabel(tunnel) : "Mac sleep & phone access", icon: <DeviceIcon />,
-              onSelect: () => setAwayOpen(true), title: "Keep the Mac awake and check the link your phone uses",
             }] : []),
             { label: "Notifications", icon: <BellIcon />, onSelect: () => setNotificationsOpen(true) },
             { label: "Mac & webhook alerts", icon: <BellIcon />, onSelect: () => setAlertsOpen(true), title: "macOS banner and ntfy / webhook when a ticket needs you" },
@@ -1060,7 +1028,6 @@ export function App() {
           {layout === "list" ? <TicketList tickets={shownTickets} onOpen={openTicket} /> : <Board key={profile.slug} tickets={shownTickets} filtered={filtering} huddles={huddles} onOpenHuddle={openHuddle} slug={slug ?? undefined} onOpen={(id) => openTicket(id)} onMove={move} onAdd={() => setNewTicket(true)} restartPending={restart.pending} />}
         </>
       )}
-      {awayOpen && <AwayDialog tunnel={tunnel} onClose={() => setAwayOpen(false)} />}
       {alertsOpen && <AlertsDialog profile={profile?.slug ?? null} onClose={() => setAlertsOpen(false)} />}
 
       {dockOpen && profile && (
@@ -1080,7 +1047,6 @@ export function App() {
       )}
       {dailyCostOpen && <DailyCostDialog onClose={() => setDailyCostOpen(false)} />}
       {defaultModelsOpen && <DefaultModelsDialog onClose={() => setDefaultModelsOpen(false)} />}
-      {quickRepliesOpen && <QuickRepliesDialog onClose={() => setQuickRepliesOpen(false)} />}
       {notificationsOpen && <NotificationsDialog onClose={() => setNotificationsOpen(false)} />}
       {activityOpen && profile && (
         <Modal title="Activity" wide onClose={() => setActivityOpen(false)}>

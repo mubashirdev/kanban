@@ -17,17 +17,16 @@ export const chipLabel = (value: string | null | undefined, fallback: string) =>
 export function QuickPick({ slug, ticket, kind, onClose, onMore }: {
   slug: string; ticket: Ticket; kind: "model" | "effort"; onClose: () => void; onMore: () => void;
 }) {
-  const codex = ticket.agent === "codex", cursor = ticket.agent === "cursor";
+  const codex = ticket.agent === "codex";
   const root = useRef<HTMLDivElement>(null);
   const [options, setOptions] = useState<Option[] | null>(null);
   const [error, setError] = useState("");
-  const current = cursor ? ticket.cursorModel ?? null : (kind === "model" ? (codex ? ticket.codexModel : ticket.model) : (codex ? ticket.codexEffort : ticket.effort)) ?? null;
+  const current = (kind === "model" ? (codex ? ticket.codexModel : ticket.model) : (codex ? ticket.codexEffort : ticket.effort)) ?? null;
   useLayer(onClose);
 
   useEffect(() => {
     let cancelled = false;
     const load = async (): Promise<Option[]> => {
-      if (cursor) return [{ value: null, label: "Cursor default", tag: "Default" }, ...(await api.cursorModels()).map((m) => ({ value: m.value, label: m.displayName }))];
       if (codex) {
         const [models, defaults] = await Promise.all([api.codexModels(), api.settings()]);
         const defaultModel = models.find((m) => m.value === defaults.codexModel)?.displayName ?? defaults.codexModel;
@@ -46,7 +45,7 @@ export function QuickPick({ slug, ticket, kind, onClose, onMore }: {
     };
     load().then((o) => { if (!cancelled) setOptions(o); }, (e) => { if (!cancelled) setError(e.message); });
     return () => { cancelled = true; };
-  }, [slug, ticket.id, kind, codex, cursor]);
+  }, [slug, ticket.id, kind, codex]);
 
   useEffect(() => {
     const outside = (e: PointerEvent) => { if (!root.current?.parentElement?.contains(e.target as Node)) onClose(); };
@@ -56,8 +55,7 @@ export function QuickPick({ slug, ticket, kind, onClose, onMore }: {
 
   const choose = async (value: string | null) => {
     try {
-      if (cursor) await api.updateTicket(slug, ticket.id, { cursorModel: value });
-      else if (codex) await api.updateTicket(slug, ticket.id, kind === "model" ? { codexModel: value } : { codexEffort: value as Ticket["codexEffort"] });
+      if (codex) await api.updateTicket(slug, ticket.id, kind === "model" ? { codexModel: value } : { codexEffort: value as Ticket["codexEffort"] });
       else if (kind === "model") await api.setModel(slug, ticket.id, value);
       else await api.setEffort(slug, ticket.id, value as Effort | null);
       onClose();

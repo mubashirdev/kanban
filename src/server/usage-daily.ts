@@ -4,8 +4,7 @@ export interface DayUsage {
   date: string;
   claudeRuns: number;
   codexRuns: number;
-  cursorRuns: number;
-  /** Claude only: Codex and Cursor runs don't report a cost. */
+  /** Claude only: Codex runs don't report a cost. */
   costUsd: number;
   seconds: number;
 }
@@ -18,7 +17,7 @@ export function dailyUsage(store: Store, days = 7, now = new Date()): DayUsage[]
   for (let i = 0; i < days; i++) {
     const d = new Date(now);
     d.setDate(d.getDate() - i);
-    out.set(localDay(d), { date: localDay(d), claudeRuns: 0, codexRuns: 0, cursorRuns: 0, costUsd: 0, seconds: 0 });
+    out.set(localDay(d), { date: localDay(d), claudeRuns: 0, codexRuns: 0, costUsd: 0, seconds: 0 });
   }
   const cutoff = new Date(now);
   cutoff.setDate(cutoff.getDate() - days + 1);
@@ -39,7 +38,6 @@ export function dailyUsage(store: Store, days = 7, now = new Date()): DayUsage[]
         const bucket = out.get(localDay(new Date(entry.at)));
         if (!bucket) continue;
         if (entry.event.provider === "codex") bucket.codexRuns++;
-        else if (entry.event.provider === "cursor") bucket.cursorRuns++;
         else bucket.claudeRuns++;
         bucket.costUsd += total >= prev ? total - prev : total;
         bucket.seconds += typeof entry.event.duration_ms === "number" ? entry.event.duration_ms / 1000 : 0;

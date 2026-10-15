@@ -82,8 +82,6 @@ export interface PermissionAsk {
   detail: string;
   /** ExitPlanMode: the plan Claude wants approved. */
   plan?: string;
-  /** Bash: the command's first line (detail prefers Claude's description). Phone alerts name it. */
-  command?: string;
   /** Claude offered a rule so it stops asking for the same thing ("Always allow" for this chat). */
   canAlways: boolean;
   at: string;
@@ -98,14 +96,8 @@ export interface BackgroundTask {
 }
 
 export interface Ticket {
-  agent?: "claude" | "codex" | "cursor";
+  agent?: "claude" | "codex";
   codexSessionId?: string | null;
-  /** Cursor's chat id, resumed with --resume. */
-  cursorChatId?: string | null;
-  /** Cursor model id; null uses Cursor's own default. */
-  cursorModel?: string | null;
-  /** The mode the Cursor chat last ran in: one that ran in plan or ask mode can't change mode. */
-  cursorMode?: import("./cursor-runner").CursorMode | null;
   codexModel?: string | null;
   codexEffort?: "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | null;
   priority?: "none" | "low" | "normal" | "high" | "urgent";
@@ -147,8 +139,6 @@ export interface Ticket {
   worktree: string | null;
   /** Folder of a linked pre-existing Claude session (runs happen here instead of a worktree). */
   workdir?: string | null;
-  /** A chat that runs in a subfolder of the board folder (relative path), like opening Claude there. */
-  subdir?: string | null;
   branch: string | null;
   /** HEAD of the board's folder when the ticket first ran there in place (the Changes tab's base without a worktree). */
   baseSha?: string | null;
@@ -384,12 +374,6 @@ export interface Config {
   codexEffort?: Ticket["codexEffort"];
   /** Done tickets and merged folder copies send their screenshots, recordings and traces to the Trash (see cleanup.ts). */
   cleanup?: boolean;
-  /** Keep the Mac awake whenever the daemon runs, not only while work is active (see away.ts). */
-  keepAwake?: boolean;
-  /** The phone's public link, last seen from the ngrok tunnel (see away.ts). */
-  publicUrl?: string | null;
-  /** The chat's quick-reply chips; null or missing: the built-in ones. */
-  quickReplies?: string[] | null;
 }
 
 export interface OutputFile {

@@ -4,13 +4,11 @@ import { autoGrow } from "./autoGrow";
 import { rememberFirstMessage } from "./drafts";
 import { Chat, withoutAgentNotes } from "./Chat";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { FolderBrowser } from "./FolderBrowser";
 import { ForkDialog } from "./ForkDialog";
-import { AgentMark, agentLabel, useCursorAvailable } from "./AgentMark";
-import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, FolderIcon, HistoryIcon, MoreIcon, SplitIcon, TrashIcon } from "./icons";
+import { AgentMark } from "./AgentMark";
+import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, HistoryIcon, MoreIcon, SplitIcon, TrashIcon } from "./icons";
 import { useLayer } from "./layers";
 import { Modal } from "./Modal";
-import { OnThisMac } from "./OnThisMac";
 import { ReviewPanel } from "./ReviewPanel";
 import { HuddlePanel } from "./HuddlePanel";
 import { members, useHuddle } from "./huddle";
@@ -24,13 +22,13 @@ import { usePersistentState } from "./usePersistentState";
 type Agent = NonNullable<Ticket["agent"]>;
 type Access = NonNullable<Ticket["access"]>;
 
-const AGENTS: { id: Agent; label: string }[] = [{ id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }, { id: "cursor", label: "Cursor" }];
+const AGENTS: { id: Agent; label: string }[] = [{ id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }];
 const ACCESS: { id: Access; label: string; hint: string }[] = [
   { id: "read", label: "Read only", hint: "It can look at code and answer, but won't change files." },
   { id: "edit", label: "Can edit", hint: "It works directly in your repo folder, like in a terminal." },
 ];
 
-export const agentName = (t: Pick<Ticket, "agent">) => agentLabel(t.agent);
+export const agentName = (t: Pick<Ticket, "agent">) => (t.agent === "codex" ? "Codex" : "Claude");
 /** Claude gets a spark on coral, Codex a prompt on blue, so the two are told apart at a glance. */
 const lastAt = (t: Ticket) => t.session?.lastMessage?.at ?? t.createdAt;
 /** Markdown marks read as noise in a one-line preview. */
@@ -151,7 +149,7 @@ export function ChatsView({ profile, sessions, tickets, openId, wide, onOpen, on
           <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search chats" aria-label="Search chats" />
         </div>
         {threads.length === 0 ? (
-          <p className="chat-list-empty">{q ? "No chats match." : "No chats yet. Start one to ask Claude, Codex or Cursor anything about this repo."}</p>
+          <p className="chat-list-empty">{q ? "No chats match." : "No chats yet. Start one to ask Claude or Codex anything about this repo."}</p>
         ) : (
           <ul>
             {threads.map((t) => (
@@ -161,7 +159,6 @@ export function ChatsView({ profile, sessions, tickets, openId, wide, onOpen, on
             ))}
           </ul>
         )}
-        <OnThisMac profile={profile} onOpenChat={onOpen} />
         <button className="link-btn small chat-resume" onClick={() => setResuming(true)}><HistoryIcon size={14} /> Resume a session from a terminal</button>
       </section>
       {wide && (
@@ -216,22 +213,15 @@ export function NewSessionDialog({ profile: initial, profiles, onClose, onStarte
 }
 
 export function SessionStarter({ profile, onStarted }: { profile: Profile; onStarted: (id: string) => void }) {
-  const [picked, setAgent] = usePersistentState<Agent>("esa.session.agent", () => "claude", () => false, (v) => v === "claude" || v === "codex" || v === "cursor");
-  const cursorAvailable = useCursorAvailable();
-  const agents = AGENTS.filter((a) => a.id !== "cursor" || cursorAvailable);
-  // A remembered Cursor choice falls back to Claude while Cursor isn't installed.
-  const agent = picked === "cursor" && !cursorAvailable ? "claude" : picked;
+  const [agent, setAgent] = usePersistentState<Agent>("esa.session.agent", () => "claude", () => false, (v) => v === "claude" || v === "codex");
   const [access, setAccess] = usePersistentState<Access>("esa.session.access", () => "read", () => false, (v) => v === "read" || v === "edit");
   const [isolated, setIsolated] = usePersistentState<boolean>("esa.session.isolated", () => false, () => false, (v) => typeof v === "boolean");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  // A subfolder of the board folder to run in (e.g. one app of a monorepo); "" is the board folder itself.
-  const [subdir, setSubdir] = useState("");
-  const [browsing, setBrowsing] = useState(false);
   const box = useRef<HTMLTextAreaElement>(null);
   // Only an editing session can change files, so only it needs a separate checkout.
   const worktree = access === "edit" && isolated;
-  const name = agentLabel(agent);
+  const name = agent === "codex" ? "Codex" : "Claude";
   useEffect(() => autoGrow(box.current, 6), [text]);
 
   const start = async () => {
@@ -239,7 +229,7 @@ export function SessionStarter({ profile, onStarted }: { profile: Profile; onSta
     if (!message || busy) return;
     setBusy(true);
     try {
-      const t = await api.createTicket(profile.slug, { title: titleFrom(message), body: "", status: "backlog", standalone: true, access, agent, isolated: worktree, ...(subdir && !worktree ? { subdir } : {}) });
+      const t = await api.createTicket(profile.slug, { title: titleFrom(message), body: "", status: "backlog", standalone: true, access, agent, isolated: worktree });
       rememberFirstMessage(t.id, message);
       await api.chat(profile.slug, t.id, message);
       setText("");
@@ -252,7 +242,6 @@ export function SessionStarter({ profile, onStarted }: { profile: Profile; onSta
   };
 
   return (
-    <>
     <form className="session-starter" onSubmit={(e) => { e.preventDefault(); void start(); }}>
       <label className="sr-only" htmlFor="session-starter-input">First message</label>
       <textarea id="session-starter-input" ref={box} rows={3} autoFocus value={text} disabled={busy} onChange={(e) => setText(e.target.value)}
@@ -260,7 +249,7 @@ export function SessionStarter({ profile, onStarted }: { profile: Profile; onSta
         onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !matchMedia("(pointer: coarse)").matches) { e.preventDefault(); void start(); } }} />
       <div className="starter-foot">
         <div className="segmented" role="radiogroup" aria-label="Agent">
-          {agents.map((a) => (
+          {AGENTS.map((a) => (
             <button type="button" key={a.id} role="radio" aria-checked={agent === a.id} onClick={() => setAgent(a.id)}>
               <AgentMark agent={a.id} size="small" />{a.label}
             </button>
@@ -281,22 +270,8 @@ export function SessionStarter({ profile, onStarted }: { profile: Profile; onSta
           {busy ? <span className="spinner" /> : <ArrowUpIcon size={18} />}<span className="starter-send-label">Start chat</span>
         </button>
       </div>
-      {!worktree && (
-        <button type="button" className="link-btn small starter-folder" onClick={() => setBrowsing(true)} title="Run in a subfolder of the board folder">
-          <FolderIcon size={14} /> {subdir ? `In ${subdir}` : "In the board folder"} · Change
-        </button>
-      )}
       <p className="starter-hint">{worktree ? "It works on its own branch in a separate copy, so your folder stays untouched." : ACCESS.find((a) => a.id === access)!.hint}</p>
     </form>
-      {browsing && (
-        <FolderBrowser title="Run this chat in" profile={profile.slug} start={subdir ? `${profile.path}/${subdir}` : undefined}
-          onClose={() => setBrowsing(false)}
-          onPick={(path, root) => {
-            setBrowsing(false);
-            setSubdir(path.startsWith(`${root}/`) ? path.slice(root.length + 1) : "");
-          }} />
-      )}
-    </>
   );
 }
 
@@ -327,7 +302,7 @@ function ResumeDialog({ profile, onClose, onResumed }: { profile: Profile; onClo
     <Modal title="Resume an earlier session" onClose={onClose} wide>
       <div className="form">
         <div className="segmented" role="radiogroup" aria-label="Agent">
-          {AGENTS.filter((a) => a.id !== "cursor").map((a) => <button type="button" key={a.id} role="radio" aria-checked={agent === a.id} onClick={() => setAgent(a.id)}>{a.label}</button>)}
+          {AGENTS.map((a) => <button type="button" key={a.id} role="radio" aria-checked={agent === a.id} onClick={() => setAgent(a.id)}>{a.label}</button>)}
         </div>
         <p className="muted small" style={{ margin: 0 }}>{agent === "codex" ? "Codex" : "Claude Code"} conversations started in <code>{profile.path}</code>.</p>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name…" aria-label="Search sessions" />
@@ -459,7 +434,7 @@ function SessionMenu({ ticket, onClose, onToBoard, onFork, onDelete }: { ticket:
   return (
     <div className="inbox-menu session-menu-list" role="menu" aria-label="Session actions" ref={root}>
       <button role="menuitem" className="menu-item" onClick={onToBoard}><span className="menu-icon"><ColumnsIcon /></span><span className="menu-label">Move to board</span></button>
-      {(ticket.agent ?? "claude") === "claude" && (
+      {ticket.agent !== "codex" && (
         <button role="menuitem" className="menu-item" disabled={!!ticket.running} title={ticket.running ? "Stop Claude first" : "Copy this conversation into a new chat"} onClick={onFork}>
           <span className="menu-icon"><SplitIcon /></span><span className="menu-label">Fork chat…</span>
         </button>

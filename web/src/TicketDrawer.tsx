@@ -22,7 +22,6 @@ import { KeyHint } from "./KeyHint";
 import { MOD } from "./Shortcuts";
 import { complete, PlanFinished, planFinished, PlanPanel, PlanSummary } from "./PlanPanel";
 import { Outputs } from "./Outputs";
-import { Preview } from "./Preview";
 import { PrBox } from "./PrBox";
 import { Select } from "./Select";
 import { useShareNotices } from "./share";
@@ -237,7 +236,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const bodyInput = useRef<HTMLTextAreaElement>(null);
   // Body the current edit started from; the server rejects the save if the file changed meanwhile.
   const [baseBody, setBaseBody] = useState(ticket.body);
-  type DrawerTab = "chat" | "plan" | "changes" | "huddle" | "preview" | "outputs" | "review" | "usage";
+  type DrawerTab = "chat" | "plan" | "changes" | "huddle" | "outputs" | "review" | "usage";
   const [tabPick, setTabPick] = useState<DrawerTab>(tabRequest?.tab ?? initialTab);
   const setTab = (next: DrawerTab) => {
     setTabPick(next);
@@ -744,7 +743,6 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                   Changes{!!diffState.diff?.files.length && <span className="tab-count">{diffState.diff.files.length}</span>}
                 </button>
               )}
-              <button role="tab" aria-selected={tab === "preview"} className={tab === "preview" ? "active" : ""} onClick={() => setTab("preview")}>Preview</button>
               <button role="tab" aria-selected={tab === "outputs"} className={tab === "outputs" ? "active" : ""} onClick={() => { setOutputFocus(null); setTab("outputs"); }}>
                 Outputs{outputCount + links.length > 0 && <span className="tab-count">{outputCount + links.length}</span>}
               </button>
@@ -765,8 +763,6 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
               <Changes slug={slug} ticket={ticket} state={diffState} onSent={() => setTab("chat")} onError={onError} />
             ) : tab === "usage" ? (
               <div className="panel-scroll panel-usage"><UsagePanel usage={usage} error={ticketUsage.error} /></div>
-            ) : tab === "preview" ? (
-              <div className="panel-scroll"><Preview slug={slug} ticket={ticket} onError={onError} onOpenOutputs={() => { setOutputFocus(null); setTab("outputs"); }} /></div>
             ) : tab === "outputs" ? (
               <div className="panel-scroll panel-outputs"><Outputs slug={slug} ticket={ticket} onCount={setOutputCount} focus={outputFocus} /></div>
             ) : (

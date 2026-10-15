@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type Ticket } from "./api";
 import { AgentSettings } from "./AgentSettings";
-import { AgentMark, agentLabel } from "./AgentMark";
+import { AgentMark } from "./AgentMark";
 import { ChevronRightIcon } from "./icons";
 import { PRIORITIES, TEMPLATES } from "./ticketTemplates";
 
@@ -28,11 +28,12 @@ export function TicketMetadata({ slug, ticket, onError }: { slug: string; ticket
   const saveLabels = () => {
     if (labels.trim() !== (ticket.labels ?? []).join(", ")) void save({ labels: parseLabels(labels) });
   };
+  const codex = ticket.agent === "codex";
   return (
     <section className="detail-list" aria-label="Ticket settings">
       <button type="button" className="detail-row" onClick={() => setSettings(true)}>
         <span className="detail-key">Agent</span>
-        <span className="detail-value"><AgentMark agent={ticket.agent} size="small" />{agentLabel(ticket.agent)}</span>
+        <span className="detail-value"><AgentMark agent={ticket.agent} size="small" />{codex ? "Codex" : "Claude"}</span>
         <ChevronRightIcon className="icon detail-chevron" />
       </button>
       <label className="detail-row">

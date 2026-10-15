@@ -7,15 +7,12 @@ import { newId } from "./util";
 
 /**
  * Registers `ckanban mcp` with outside agents (Claude Code, Codex) so they can use the board.
- * Claude Code goes through `claude mcp add --scope user`; Codex through ~/.codex/config.toml; Cursor through ~/.cursor/mcp.json.
+ * Claude Code goes through `claude mcp add --scope user`; Codex through ~/.codex/config.toml.
  */
 
-export type AgentId = "claude" | "codex" | "cursor";
-export const AGENT_IDS: AgentId[] = ["claude", "codex", "cursor"];
+export type AgentId = "claude" | "codex";
+export const AGENT_IDS: AgentId[] = ["claude", "codex"];
 export const SERVER_NAME = "ckanban";
-
-/** The agent's name as users see it. */
-export const agentLabel = (agent?: AgentId) => (agent === "codex" ? "Codex" : agent === "cursor" ? "Cursor" : "Claude");
 
 /**
  * Inline `--mcp-config` JSON with the board's MCP server (`ckanban mcp`), so a session has the board tools without
@@ -52,13 +49,10 @@ export class AgentError extends Error {
 export interface AgentOptions {
   claudeBin?: string;
   codexBin?: string;
-  cursorBin?: string;
   /** Claude's global config. Default: $CLAUDE_CONFIG_DIR/.claude.json or ~/.claude.json. */
   claudeConfig?: string;
   /** Default: $CODEX_HOME/config.toml or ~/.codex/config.toml. */
   codexConfig?: string;
-  /** Default: ~/.cursor/mcp.json. */
-  cursorConfig?: string;
   /** Command the agents should run. Default: this ckanban + `mcp`. */
   serverArgv?: string[];
 }
@@ -156,41 +150,20 @@ export function resolveCodexBin(): string {
   return process.env.CKANBAN_CODEX_BIN ?? Bun.which("codex") ?? (existsSync(BUNDLED_CODEX) ? BUNDLED_CODEX : "codex");
 }
 
-// --- Cursor mcp.json -------------------------------------------------------------------------
-
-/** What tells the ckanban MCP server which run is calling. Cursor fills these in from the run's environment. */
-const CURSOR_ENV = ["CKANBAN_TICKET", "CKANBAN_OUTPUT_DIR", "CKANBAN_HOME", "CKANBAN_PORT"];
-
-export function cursorServerEntry(argv: string[]) {
-  const [command, ...args] = argv;
-  return { command, args, env: Object.fromEntries(CURSOR_ENV.map((name) => [name, `\${env:${name}}`])) };
-}
-
-const LOCAL_CURSOR = join(homedir(), ".local", "bin", "cursor-agent");
-
-/** CKANBAN_CURSOR_BIN, then `cursor-agent` on PATH, then where Cursor's installer puts it (often not on the daemon's PATH). */
-export function resolveCursorBin(): string {
-  return process.env.CKANBAN_CURSOR_BIN ?? Bun.which("cursor-agent") ?? (existsSync(LOCAL_CURSOR) ? LOCAL_CURSOR : "cursor-agent");
-}
-
 // --- Manager ----------------------------------------------------------------------------------
 
 export class AgentRegistry {
   private claudeBin: string;
   private codexBin: string;
-  private cursorBin: string;
   private claudeConfig: string;
   private codexConfig: string;
-  private cursorConfig: string;
   readonly serverArgv: string[];
 
   constructor(opts: AgentOptions = {}) {
     this.claudeBin = opts.claudeBin ?? process.env.CKANBAN_CLAUDE_BIN ?? "claude";
     this.codexBin = opts.codexBin ?? resolveCodexBin();
-    this.cursorBin = opts.cursorBin ?? resolveCursorBin();
     this.claudeConfig = opts.claudeConfig ?? join(process.env.CLAUDE_CONFIG_DIR ?? homedir(), ".claude.json");
     this.codexConfig = opts.codexConfig ?? join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "config.toml");
-    this.cursorConfig = opts.cursorConfig ?? join(homedir(), ".cursor", "mcp.json");
     this.serverArgv = opts.serverArgv ?? mcpArgv();
   }
 
@@ -204,17 +177,10 @@ export class AgentRegistry {
     return readCodexServer(readText(this.codexConfig));
   }
 
-  private cursorEntry(): string[] | null {
-    const e = readJson(this.cursorConfig)?.mcpServers?.[SERVER_NAME];
-    if (!e || typeof e.command !== "string") return null;
-    return [e.command, ...(Array.isArray(e.args) ? e.args.map(String) : [])];
-  }
-
   async status(): Promise<AgentStatus[]> {
-    const [claudeAt, codexAt, cursorAt] = await Promise.all([which(this.claudeBin), which(this.codexBin), which(this.cursorBin)]);
+    const [claudeAt, codexAt] = await Promise.all([which(this.claudeBin), which(this.codexBin)]);
     const claude = this.claudeEntry();
     const codex = this.codexEntry();
-    const cursor = this.cursorEntry();
     return [
       {
         id: "claude", label: "Claude Code", available: !!claudeAt, installed: !!claude,
@@ -223,10 +189,6 @@ export class AgentRegistry {
       {
         id: "codex", label: "Codex", available: !!codexAt, installed: !!codex,
         current: sameArgv(codex, this.serverArgv), command: display(codex), configPath: this.codexConfig,
-      },
-      {
-        id: "cursor", label: "Cursor", available: !!cursorAt, installed: !!cursor,
-        current: sameArgv(cursor, this.serverArgv), command: display(cursor), configPath: this.cursorConfig,
       },
     ];
   }
@@ -245,13 +207,6 @@ export class AgentRegistry {
       atomicWrite(this.codexConfig, setCodexServer(text, this.serverArgv));
       return;
     }
-    if (id === "cursor") {
-      if (sameArgv(this.cursorEntry(), this.serverArgv)) return;
-      const config = readJson(this.cursorConfig) ?? {};
-      config.mcpServers = { ...config.mcpServers, [SERVER_NAME]: cursorServerEntry(this.serverArgv) };
-      atomicWrite(this.cursorConfig, JSON.stringify(config, null, 2) + "\n");
-      return;
-    }
     throw new AgentError(400, `unknown agent ${id}`);
   }
 
@@ -263,13 +218,6 @@ export class AgentRegistry {
     if (id === "codex") {
       const text = readText(this.codexConfig);
       if (readCodexServer(text)) atomicWrite(this.codexConfig, removeCodexServer(text).replace(/\s+$/, "") + "\n");
-      return;
-    }
-    if (id === "cursor") {
-      const config = readJson(this.cursorConfig);
-      if (!config?.mcpServers?.[SERVER_NAME]) return;
-      delete config.mcpServers[SERVER_NAME];
-      atomicWrite(this.cursorConfig, JSON.stringify(config, null, 2) + "\n");
       return;
     }
     throw new AgentError(400, `unknown agent ${id}`);
