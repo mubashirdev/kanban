@@ -1,6 +1,7 @@
 import { PRIORITIES, TEMPLATES } from "./ticketTemplates";
 import { useEffect, useRef, useState } from "react";
 import { api, type ClaudeSession, type Status, type TicketMode, type Ticket, type TicketTemplate } from "./api";
+import { useCursorAvailable } from "./AgentMark";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { useImagePaste } from "./imagePaste";
 import { Modal } from "./Modal";
@@ -36,12 +37,13 @@ export function NewTicketDialog({
   const [title, setTitle] = useState(""),
     [body, setBody] = useState(""),
     [labels, setLabels] = useState("");
-  const [agent, setAgent] = useState<"claude" | "codex">("claude"),
+  const [agent, setAgent] = useState<NonNullable<Ticket["agent"]>>("claude"),
     [kind, setKind] = useState<NonNullable<Ticket["kind"]>>("task"),
     [priority, setPriority] =
       useState<NonNullable<Ticket["priority"]>>("normal");
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const cursorAvailable = useCursorAvailable();
   const images = useImagePaste(setBody),
     template = TEMPLATES.find((t) => t.kind === kind)!;
   const bodyRef = useRef<HTMLTextAreaElement>(null);
@@ -307,6 +309,7 @@ export function NewTicketDialog({
             >
               <option value="claude">Claude Code</option>
               <option value="codex">Codex</option>
+              {cursorAvailable && <option value="cursor">Cursor</option>}
             </select>
           </label>
         </fieldset>

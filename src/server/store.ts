@@ -17,7 +17,7 @@ import { newId, newTicketId, nowIso } from "./util";
 const DEFAULT_CONFIG: Config = { port: 7777, prPollMinutes: 5 };
 
 export function defaultRoot(): string {
-  return process.env.CKANBAN_HOME ?? join(homedir(), ".claude-kanban");
+  return process.env.CKANBAN_HOME || join(homedir(), ".claude-kanban");
 }
 
 export function atomicWrite(file: string, content: string) {

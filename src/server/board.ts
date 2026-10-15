@@ -1,5 +1,6 @@
 import { cleanTicket } from "./cleanup";
 import { codexArgs, startCodexRun } from "./codex-runner";
+import { cursorArgs, cursorRecap, needsNewCursorChat, startCursorRun, type CursorMode } from "./cursor-runner";
 import { codexRolloutFile } from "./codex-session";
 import { ticketMetadata, type TicketMetadata } from "./ticket-metadata";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
@@ -32,7 +33,7 @@ import { DraftTracker } from "./draft";
 import { buildArgs, DEFAULT_STALL_MINUTES, describeAsk, permissionAnswer, startRun, type RunHandle } from "./runner";
 import { RETRY_DELAY_MS, RETRY_TEXT, transientError } from "./retry";
 import { commandText, rememberInit, useBundledFile } from "./slash";
-import { mcpArgv, mcpConfig, resolveCodexBin } from "./agents";
+import { AgentRegistry, agentLabel, mcpArgv, mcpConfig, resolveCodexBin, resolveCursorBin } from "./agents";
 import type { OwnedSession } from "./shell";
 import type { Store } from "./store";
 import { autoHuddlesOn, runCapFor, workspaceOf, type Interrupted, type LimitHit, type PermissionAsk, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode } from "./types";
@@ -43,6 +44,9 @@ import { shellQuote } from "./util";
 export interface BoardOptions {
   claudeBin: string;
   codexBin?: string;
+  cursorBin?: string;
+  /** Where Cursor reads its MCP servers (default ~/.cursor/mcp.json); the board adds itself there before a Cursor run. */
+  cursorMcpConfig?: string;
   /** Whether Claude has a stored session with this id (used to pick --resume vs --session-id). */
   sessionExists?: (sessionId: string) => boolean;
   /** Whether an interactive claude process currently has this session open. */
@@ -452,7 +456,7 @@ export class Board {
     }
     // Stored quietly: the update that starts or queues this message announces it to the UI.
     if (!opts.peer && !opts.hostWake) this.store.updateTicket(slug, id, { lastPrompt: text.slice(0, 20_000) });
-    if (t.agent === "codex") text = expandCodexCommand(text);
+    if (t.agent === "codex" || t.agent === "cursor") text = expandCodexCommand(text);
     // The user (or the board's automatic continue) picks the conversation up again: the limit wait is over.
     if (t.limit && !opts.peer && !opts.hostWake) this.patch(slug, id, { limit: null });
     if (active) {
@@ -502,7 +506,7 @@ export class Board {
     const t = this.store.getTicket(slug, id);
     if (!profile || !t) throw new Error(`ticket ${id} not found`);
     if (!t.standalone) throw new Error("Only chats can be forked");
-    if (t.agent === "codex") throw new Error("Codex chats can't be forked yet");
+    if (t.agent === "codex" || t.agent === "cursor") throw new Error(`${agentLabel(t.agent)} chats can't be forked yet`);
     if (this.isRunning(slug, id)) throw new ConflictError("Stop the agent before forking this chat");
     // Claude finds a session by folder, so the copy must run where the original did.
     if (t.worktree || (t.workdir && t.workdir !== profile.path)) throw new Error("Chats in their own worktree can't be forked yet");
@@ -520,6 +524,10 @@ export class Board {
     if (t.agent === "codex") {
       this.store.appendActivity(slug, id, t.runCount, { type: "codex.clear", provider: "codex" });
       return this.patch(slug, id, { codexSessionId: null, queued: [] });
+    }
+    if (t.agent === "cursor") {
+      this.store.appendActivity(slug, id, t.runCount, { type: "cursor.clear", provider: "cursor" });
+      return this.patch(slug, id, { cursorChatId: null, cursorMode: null, queued: [] });
     }
     return this.patch(slug, id, { sessionId: crypto.randomUUID(), sessionStarted: false, forkOf: null, lastPrompt: null, workdir: t.workdir, queued: [] });
   }
@@ -658,7 +666,7 @@ export class Board {
 
   private begin(run: ActiveRun) {
     const t = this.store.getTicket(run.slug, run.id);
-    const replying = `${t?.agent === "codex" ? "Codex" : "Claude"} is replying…`;
+    const replying = `${agentLabel(t?.agent)} is replying…`;
     this.patch(run.slug, run.id, run.chat?.quiet
       // A new message to a session clears its last failure; replies to other tickets leave the card as it was.
       ? { error: null, lastActivity: replying, runStartedAt: nowIso(), waitingOn: null, stalled: null, ...(t?.standalone ? { outcome: null } : {}) }
@@ -725,7 +733,7 @@ export class Board {
     }
     if (this.shuttingDown) return;
     // Unattended runs refuse to share a session with an open terminal; chat messages are the user's call (UI warns).
-    if (this.store.getTicket(slug, id)?.agent !== "codex" && session.existed && !run.stopRequested && !run.chat) {
+    if ((this.store.getTicket(slug, id)?.agent ?? "claude") === "claude" && session.existed && !run.stopRequested && !run.chat) {
       const t0 = this.store.getTicket(slug, id)!;
       const title = t0.workdir ? sessionTitle(t0.workdir, session.sessionId) : null;
       if (await this.isSessionLive(session.sessionId, title)) {
@@ -786,7 +794,7 @@ export class Board {
     // Marks where this run starts in the log and what it was (the Usage tab lists runs by kind).
     // A resumed attempt (retry, stall restart) continues the same run in the log.
     if (!resumeText) this.store.appendActivity(slug, id, runNo, { type: "ckanban_run", kind: refine ? "planning" : quiet ? "reply" : run.chat ? "chat" : "work" });
-    const codex = t.agent === "codex";
+    const codex = t.agent === "codex", cursor = t.agent === "cursor";
     const writableRoots = [outputDir];
     // A worktree's commits land in the main repo's .git, so Codex's sandbox must be allowed to write there.
     if (codex && !refine && session.isGit) {
@@ -797,19 +805,28 @@ export class Board {
     const forkFrom = t.forkOf && !this.sessionExists(session.sessionId) ? t.forkOf : null;
     const systemPrompt = t.standalone ? sessionPrompt(t.access ?? "read")
       : run.chat && !run.chat.raw ? chatRules(t, run.chat.mode, outputDir, !!profile.artifacts, session.repo, session.inPlace) : undefined;
-    const launch = codex ? startCodexRun : startRun;
+    // Cursor only reads MCP servers from mcp.json, so the board's tools are registered there (once) before the run.
+    const cursorMode: CursorMode = !refine ? "agent" : t.standalone ? "ask" : "plan";
+    const cursorNewChat = cursor && !!t.cursorChatId && needsNewCursorChat(t.cursorMode, cursorMode);
+    const cursorInstructions = cursorNewChat ? [systemPrompt, cursorRecap(this.cursorEvents(slug, id))].filter(Boolean).join("\n\n") : systemPrompt;
+    if (cursor) await new AgentRegistry({ cursorConfig: this.opts.cursorMcpConfig }).install("cursor").catch(() => {});
+    const launch = codex ? startCodexRun : cursor ? startCursorRun : startRun;
     run.handle = launch({
-      bin: codex ? this.opts.codexBin ?? resolveCodexBin() : this.opts.claudeBin,
+      bin: codex ? this.opts.codexBin ?? resolveCodexBin() : cursor ? this.opts.cursorBin ?? resolveCursorBin() : this.opts.claudeBin,
       cwd: session.dir,
-      args: codex
+      args: cursor
+        ? cursorArgs({ chatId: cursorNewChat ? null : t.cursorChatId, mode: cursorMode, model: t.cursorModel })
+        : codex
         ? codexArgs({ sessionId: t.codexSessionId, refine, model: t.codexModel ?? this.store.config().codexModel, effort: t.codexEffort ?? this.store.config().codexEffort, writableRoots, instructions: systemPrompt, mcp: mcpArgv() })
         : buildArgs(session.sessionId, session.existed, (t.model === "default" ? null : t.model) ?? profile.model ?? this.store.config().claudeModel, refine ? "plan" : "bypassPermissions", mcpConfig(), systemPrompt, t.effort ?? this.store.config().claudeEffort, t.outputStyle, forkFrom, cap),
       input: prompt,
+      instructions: cursor ? cursorInstructions : undefined,
       planning: refine,
       // CKANBAN_TICKET marks board runs: the ckanban MCP/CLI refuses board changes there (no runs starting runs).
       env: { CKANBAN_OUTPUT_DIR: outputDir, CKANBAN_TICKET: `${slug}/${id}`, ...(t.effort ? { CLAUDE_CODE_EFFORT_LEVEL: t.effort } : {}) },
       onEvent: (ev) => {
         if (codex && ev.type === "codex.thread" && /^[a-f0-9-]{36}$/i.test(ev.sessionId)) this.patch(slug, id, { codexSessionId: ev.sessionId });
+        if (cursor && ev.type === "cursor.chat" && /^[\w-]{1,100}$/.test(ev.chatId)) this.patch(slug, id, { cursorChatId: ev.chatId, cursorMode });
         if (command && ev?.type === "assistant" && ev.message?.model === "<synthetic>" && !ev.parent_tool_use_id) {
           const text = ev.message.content?.filter((block: any) => block.type === "text").map((block: any) => block.text).join("\n");
           if (text) this.store.appendCommandEntry(slug, id, { uuid: ev.uuid ?? crypto.randomUUID(), at: nowIso(), role: "assistant", kind: "text", text, sessionId: ev.session_id ?? session.sessionId });
@@ -902,7 +919,7 @@ export class Board {
     const base: Partial<Ticket> = {
       ...this.endStatus(run),
       stalled: null,
-      ...(codex ? {} : { sessionStarted: started }),
+      ...(codex || cursor ? {} : { sessionStarted: started }),
       ...(forkFrom && out.code === 0 ? { forkOf: null } : {}),
       ...(fresh && started ? { freshSession: false } : {}),
       ...(refine || quiet ? {} : { lastRunAt: startedAt, runCount: runNo }),
@@ -1249,7 +1266,7 @@ export class Board {
     if (t.workdir && !existsSync(t.workdir)) throw new Error(`linked session folder no longer exists: ${t.workdir}`);
     // A ticket that already ran in the folder itself stays there: its Claude session belongs to that folder.
     // One with a branch had a worktree (removed on Done): it gets it back at the same path, so its session resumes.
-    const ranInPlace = !t.worktree && !t.branch && (!!t.sessionStarted || t.runCount > 0 || !!t.codexSessionId);
+    const ranInPlace = !t.worktree && !t.branch && (!!t.sessionStarted || t.runCount > 0 || !!t.codexSessionId || !!t.cursorChatId);
     // Board set to "Work in the project folder": new tickets run there; one that already has a worktree keeps it.
     const folderMode = workspaceOf(profile) === "folder" && !t.worktree && !t.branch;
     // Standalone sessions work in the repo folder itself, like an agent opened in a terminal there, unless isolated.
@@ -1349,6 +1366,12 @@ export class Board {
     } : undefined);
   }
 
+  /** This ticket's Cursor events since the last /clear. */
+  private cursorEvents(slug: string, id: string): any[] {
+    const all = this.store.readActivity(slug, id).map((entry) => entry.event as any).filter((event) => event?.provider === "cursor");
+    return all.slice(all.findLastIndex((event) => event.type === "cursor.clear") + 1);
+  }
+
   async planningCommand(slug: string, id: string): Promise<string> {
     const s = await this.ensureSession(slug, id);
     const t = this.store.getTicket(slug, id)!;
@@ -1357,6 +1380,12 @@ export class Board {
         ? `codex resume ${shellQuote(t.codexSessionId)}`
         : `codex --sandbox read-only ${shellQuote(planningPrompt(t, this.store.ticketPath(slug, id)))}`;
       return `cd ${shellQuote(s.dir)} && ${codex}`;
+    }
+    if (t.agent === "cursor") {
+      const cursor = t.cursorChatId
+        ? `cursor-agent --resume ${shellQuote(t.cursorChatId)}`
+        : `cursor-agent --mode plan ${shellQuote(planningPrompt(t, this.store.ticketPath(slug, id)))}`;
+      return `cd ${shellQuote(s.dir)} && ${cursor}`;
     }
     return planningCommand(s.dir, s.sessionId, localizeImages(planningPrompt(t, this.store.ticketPath(slug, id)), this.store.attachmentsDir), s.existed);
   }
@@ -1377,7 +1406,7 @@ export class Board {
   async updateTicket(
     slug: string,
     id: string,
-    patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "dependsOn" | "model" | "effort" | "outputStyle" | "priority" | "kind" | "labels" | "agent" | "codexModel" | "codexEffort" | "access" | "readAt" | "standalone" | "needs" | "important" | "runCapUsd">> & {
+    patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "dependsOn" | "model" | "effort" | "outputStyle" | "priority" | "kind" | "labels" | "agent" | "codexModel" | "codexEffort" | "cursorModel" | "access" | "readAt" | "standalone" | "needs" | "important" | "runCapUsd">> & {
       expectedBody?: string;
       /** null: take the ticket out of its plan (only clearing is allowed here; adoptTickets sets it). */
       parentId?: null;
@@ -1389,11 +1418,15 @@ export class Board {
       throw new ConflictError("description changed since you started editing (Claude may have updated it); reload and retry");
     }
     if (patch.agent !== undefined && patch.agent !== (current.agent ?? "claude") && this.isRunning(slug,id)) throw new Error("Stop the current run before switching coding agents");
-    if (patch.agent === "codex" && current.workdir) throw new Error("Linked Claude sessions stay with Claude. Create a new ticket to use Codex.");
+    if ((patch.agent === "codex" || patch.agent === "cursor") && current.workdir) throw new Error(`Linked Claude sessions stay with Claude. Create a new ticket to use ${agentLabel(patch.agent)}.`);
     const clean: Partial<Ticket> = ticketMetadata(patch);
     if (patch.codexModel !== undefined) {
       if (patch.codexModel !== null && !/^[a-zA-Z0-9._:-]{1,100}$/.test(patch.codexModel)) throw new Error("Use a valid Codex model ID");
       clean.codexModel = patch.codexModel;
+    }
+    if (patch.cursorModel !== undefined) {
+      if (patch.cursorModel !== null && !/^[a-zA-Z0-9._:-]{1,100}$/.test(patch.cursorModel)) throw new Error("Use a valid Cursor model ID");
+      clean.cursorModel = patch.cursorModel;
     }
     if (patch.codexEffort !== undefined) {
       if (patch.codexEffort !== null && !["low", "medium", "high", "xhigh", "max", "ultra"].includes(patch.codexEffort)) throw new Error("Invalid Codex effort");

@@ -156,8 +156,10 @@ export interface SearchHit {
 }
 
 export interface Ticket {
-  agent?: "claude" | "codex";
+  agent?: "claude" | "codex" | "cursor";
   codexSessionId?: string | null;
+  cursorChatId?: string | null;
+  cursorModel?: string | null;
   codexModel?: string | null;
   lastPrompt?: string | null;
   codexEffort?: "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | null;
@@ -526,7 +528,7 @@ export interface McpAddInput {
 }
 
 /** An outside agent that can use the board through `ckanban mcp`. */
-export interface DayUsage { date: string; claudeRuns: number; codexRuns: number; costUsd: number; seconds: number }
+export interface DayUsage { date: string; claudeRuns: number; codexRuns: number; cursorRuns: number; costUsd: number; seconds: number }
 
 export interface DefaultModels {
   claudeModel: string | null;
@@ -567,7 +569,7 @@ export interface Away {
 }
 
 export interface AgentStatus {
-  id: "claude" | "codex";
+  id: "claude" | "codex" | "cursor";
   label: string;
   available: boolean;
   installed: boolean;
@@ -1149,7 +1151,7 @@ export const api = {
   }) => req<Ticket>("POST", t(slug), input),
   plan: (slug: string, id: string, action: "start" | "pause" | "resume" | "done" | "concurrency", maxConcurrent?: number) =>
     req<Ticket>("POST", `${t(slug, id)}/plan`, { action, maxConcurrent }),
-  updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "important" | "runCapUsd" | "priority" | "kind" | "labels" | "agent" | "codexModel" | "codexEffort" | "access" | "readAt" | "standalone" | "needs">> & { expectedBody?: string }) =>
+  updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "important" | "runCapUsd" | "priority" | "kind" | "labels" | "agent" | "codexModel" | "codexEffort" | "cursorModel" | "access" | "readAt" | "standalone" | "needs">> & { expectedBody?: string }) =>
     req<Ticket>("PATCH", t(slug, id), patch),
   deleteTicket: (slug: string, id: string) => req<void>("DELETE", t(slug, id)),
   /** Inbox Snooze: hide what the ticket waits for now for a day (or until its state changes). */
@@ -1224,6 +1226,7 @@ export const api = {
   mcpConfig: (name: string) => req<McpConfig>("GET", `/api/mcp/${encodeURIComponent(name)}/config`),
   mcpUpdate: (name: string, input: McpAddInput) => req<McpState>("PUT", `/api/mcp/${encodeURIComponent(name)}`, input),
   codexModels: () => req<{value:string;displayName:string;efforts:string[]}[]>("GET", "/api/agents/codex/models"),
+  cursorModels: () => req<{value:string;displayName:string}[]>("GET", "/api/agents/cursor/models"),
   agents: () => req<AgentStatus[]>("GET", "/api/agents"),
   dailyUsage: () => req<DayUsage[]>("GET", "/api/daily-usage"),
   settings: () => req<DefaultModels>("GET", "/api/settings"),

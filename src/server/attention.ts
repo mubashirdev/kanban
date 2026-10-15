@@ -1,3 +1,4 @@
+import { agentLabel } from "./agents";
 import { childrenOf, isComplete, planActive } from "./plan";
 import type { SessionSummary } from "./session";
 import type { Store } from "./store";
@@ -98,7 +99,7 @@ export function attentionFor(
 
 /** A standalone session waits on the user when it failed, asked something, or replied since they last looked. */
 function sessionAttention(t: Ticket, s: SessionSummary | null): Attention | null {
-  const agent = t.agent === "codex" ? "Codex" : "Claude";
+  const agent = agentLabel(t.agent);
   const since = lastChange(t, s);
   if (t.outcome === "failed") return { kind: "failed", label: "Run failed", since };
   const q = s?.openQuestions ?? 0;

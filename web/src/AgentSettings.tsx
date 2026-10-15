@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type AgentStatus, type Ticket } from "./api";
+import { agentLabel } from "./AgentMark";
 import { Modal } from "./Modal";
 
 export function AgentSettings({
@@ -15,6 +16,12 @@ export function AgentSettings({
   const [custom, setCustom] = useState(false);
   const [model, setModel] = useState(ticket.codexModel ?? "");
   const [effort, setEffort] = useState(ticket.codexEffort ?? "");
+  const [cursorModel, setCursorModel] = useState(ticket.cursorModel ?? "");
+  const [cursorModels, setCursorModels] = useState<{ value: string; displayName: string }[] | null>(null);
+  useEffect(() => {
+    if (agent !== "cursor" || cursorModels) return;
+    api.cursorModels().then(setCursorModels, () => setCursorModels([]));
+  }, [agent]);
   const [models, setModels] = useState<
     { value: string; displayName: string; efforts: string[] }[]
   >([]);
@@ -48,7 +55,7 @@ export function AgentSettings({
     };
   }, []);
   return (
-    <Modal title={ticket.standalone ? "Codex settings" : "Ticket agent"} onClose={onClose}>
+    <Modal title={ticket.standalone ? `${agentLabel(agent)} settings` : "Ticket agent"} onClose={onClose}>
       <form
         className="form"
         onSubmit={async (e) => {
@@ -64,6 +71,8 @@ export function AgentSettings({
                     codexModel: model.trim() || null,
                     codexEffort: (effort || null) as Ticket["codexEffort"],
                   }
+                : agent === "cursor"
+                ? { cursorModel: cursorModel.trim() || null }
                 : {}),
             });
             onClose();
@@ -80,10 +89,12 @@ export function AgentSettings({
           <select
             value={agent}
             disabled={busy || ticket.running || !!ticket.workdir}
-            onChange={(e) => setAgent(e.target.value as "claude" | "codex")}
+            onChange={(e) => setAgent(e.target.value as typeof agent)}
           >
             <option value="claude">Claude</option>
             <option value="codex">Codex</option>
+            {/* Cursor only when its CLI is installed (or the ticket already uses it). */}
+            {(agent === "cursor" || agents?.find((a) => a.id === "cursor")?.available) && <option value="cursor">Cursor</option>}
           </select>
         </label>}
         {ticket.running && !ticket.standalone && (
@@ -99,12 +110,8 @@ export function AgentSettings({
         {agents && (
           <p className="muted small">
             {agents.find((a) => a.id === agent)?.available
-              ? `${
-                  agent === "codex" ? "Codex" : "Claude"
-                } is installed. Sign in with its CLI before running work.`
-              : `${
-                  agent === "codex" ? "Codex" : "Claude"
-                } is not installed. Install it in Connections first.`}
+              ? `${agentLabel(agent)} is installed. Sign in with its CLI before running work.`
+              : `${agentLabel(agent)} is not installed. Install it in Connections first.`}
           </p>
         )}
         {agent === "codex" && (
@@ -178,6 +185,27 @@ export function AgentSettings({
               Choices come from the installed CLI’s model cache. Model support
               depends on your Codex account.{ticket.standalone ? "" : " Planning uses a read-only sandbox."}
               {" "}Messages sent during a run are queued for the next turn.
+            </p>
+          </>
+        )}
+        {agent === "cursor" && (
+          <>
+            <label>
+              Model
+              {cursorModels?.length ? (
+                <select disabled={busy} value={cursorModel} onChange={(e) => setCursorModel(e.target.value)}>
+                  <option value="">Use Cursor's default</option>
+                  {cursorModel && !cursorModels.some((m) => m.value === cursorModel) && <option value={cursorModel}>{cursorModel}</option>}
+                  {cursorModels.map((m) => <option value={m.value} key={m.value}>{m.displayName}</option>)}
+                </select>
+              ) : (
+                <input value={cursorModel} onChange={(e) => setCursorModel(e.target.value)} maxLength={100}
+                  placeholder={cursorModels ? "Use Cursor's default" : "Loading models…"} pattern="[a-zA-Z0-9._:-]+" disabled={busy} />
+              )}
+            </label>
+            <p className="muted small">
+              Models come from your Cursor account (cursor-agent models).{ticket.standalone ? "" : " Planning uses Cursor's read-only plan mode."}
+              {" "}Messages sent during a run are queued for the next turn. A run with no output for 5 minutes is stopped.
             </p>
           </>
         )}

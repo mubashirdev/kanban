@@ -13,7 +13,7 @@ import { McpManager } from "./mcp";
 import { startPoller } from "./prpoller";
 import { Notifier } from "./notify";
 import { Scheduler } from "./scheduler";
-import { CodexSessions } from "./codex-session";
+import { CodexSessions, otherAgent } from "./codex-session";
 import { LimitWatcher } from "./limit";
 import { startHuddleSessionWatcher } from "./huddle-session";
 import { SessionCache, startSessionWatcher } from "./session";
@@ -73,7 +73,7 @@ export async function startDaemon(): Promise<void> {
   const commands = new ClaudeCommands(process.env.CKANBAN_CLAUDE_BIN ?? "claude");
   const notifications = new Notifications(store);
   const stopNotifications = notifications.start(bus, (slug, id) => board.isRunning(slug, id), (slug, ticket) => {
-    if (ticket.agent !== "codex") return ticket.sessionId ? sessions.summary(ticket.sessionId) : null;
+    if (!otherAgent(ticket)) return ticket.sessionId ? sessions.summary(ticket.sessionId) : null;
     const parsed = codexSessions.get(slug, ticket.id);
     return parsed ? { ...parsed, updatedAt: ticket.updatedAt } : null;
   });

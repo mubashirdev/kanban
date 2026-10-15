@@ -36,6 +36,7 @@ import { useDictation, dictationSupported } from "./useDictation";
 import { PHONE, useMediaQuery } from "./useMediaQuery";
 import { useLayer } from "./layers";
 import { AgentSettings } from "./AgentSettings";
+import { agentLabel } from "./AgentMark";
 import { AccessPick, chipLabel, QuickPick } from "./QuickPick";
 import { ToolGroup } from "./ToolGroup";
 import { HelperCard } from "./HelperCard";
@@ -214,8 +215,10 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const queued = ticket.queued ?? [];
   // Unsent text survives closing the drawer, switching tickets and reloads.
   const [draft, setDraft] = usePersistentState(draftKey(slug, ticket.id), () => "", (v) => !v.trim(), (v) => typeof v === "string");
-  const codex = ticket.agent === "codex";
-  const agentName = codex ? "Codex" : "Claude";
+  const codex = ticket.agent === "codex", cursor = ticket.agent === "cursor";
+  // Codex and Cursor take one message per turn and keep their settings on the ticket.
+  const other = codex || cursor;
+  const agentName = agentLabel(ticket.agent);
   const [settingsTab, setSettingsTab] = useState<SettingKind | null>(null);
   const [selectedCommand, setSelectedCommand] = useState<ClaudeCommand | null>(null);
   const [usageRequest, setUsageRequest] = useState(0);
@@ -279,23 +282,23 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   }, [lastReply, ticket.running]);
   const [modelNames, setModelNames] = useState<Record<string, string>>({});
   useEffect(() => {
-    Promise.all([api.claudeModels(), api.codexModels()])
-      .then(([claude, codex]) => setModelNames(Object.fromEntries([...claude, ...codex].map((m) => [m.value, m.displayName]))))
+    Promise.all([api.claudeModels(), api.codexModels(), cursor ? api.cursorModels() : []])
+      .then(([claude, codex, cursorList]) => setModelNames(Object.fromEntries([...claude, ...codex, ...cursorList].map((m) => [m.value, m.displayName]))))
       .catch(() => {});
-  }, []);
+  }, [cursor]);
   // "Board default", the same words as the model menu.
   const modelLabel = (value: string | null | undefined) => (value && modelNames[value]) || chipLabel(value, "Board default");
-  const modelText = modelLabel((codex ? ticket.codexModel : ticket.model === "default" ? null : ticket.model) ?? (codex ? defaults?.codexModel : defaults?.claudeModel));
+  const modelText = cursor ? (ticket.cursorModel && modelNames[ticket.cursorModel]) || chipLabel(ticket.cursorModel, "Cursor default") : modelLabel((codex ? ticket.codexModel : ticket.model === "default" ? null : ticket.model) ?? (codex ? defaults?.codexModel : defaults?.claudeModel));
   const effortValue = (codex ? ticket.codexEffort : ticket.effort) ?? (codex ? defaults?.codexEffort : defaults?.claudeEffort) ?? null;
   const effortText = chipLabel(effortValue, "Auto");
   const [accessOpen, setAccessOpen] = useState(false);
   // Phones have no hint line under the box, so the placeholder says what the agent may do.
   const placeholder = running
-    ? (codex ? "Queue a message for Codex’s next turn…" : phone ? "Steer Claude…" : "Steer Claude: it reads this at its next step…")
+    ? (other ? `Queue a message for ${agentName}’s next turn…` : phone ? "Steer Claude…" : "Steer Claude: it reads this at its next step…")
     : ticket.standalone ? `Work on ${slug}` : refine ? `Describe your idea or answer ${agentName}…` : `Ask ${agentName} to change or continue something…`;
 
   const loadTail = useCallback(async () => {
-    if (!ticket.sessionId && !codex) return setPage({ entries: [], start: 0 });
+    if (!ticket.sessionId && !other) return setPage({ entries: [], start: 0 });
     const seq = ++tailSeq.current;
     const r = await api.conversation(slug, ticket.id);
     if (seq < tailApplied.current) return;
@@ -305,7 +308,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       const idx = prev.entries.findIndex((e) => e.uuid === r.entries[0]?.uuid);
       return idx >= 0 ? { entries: [...prev.entries.slice(0, idx), ...r.entries], start: prev.start } : { entries: r.entries, start: r.start };
     });
-  }, [slug, ticket.id, ticket.sessionId, codex]);
+  }, [slug, ticket.id, ticket.sessionId, other]);
 
   const reload = useCallback(() => {
     setLoadError(null);
@@ -474,9 +477,9 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     if (!t || stopping || images.uploading) return;
     if (/^\/(clear|new)$/.test(t)) return clearConversation();
     // Plan usage is the board's own data: show it at once instead of starting an agent run.
-    if (t === "/usage" && !codex) { commands.close(); setDraft(""); setUsageRequest((n) => n + 1); return; }
-    // Codex settings live on the ticket, not in the CLI: open the settings sheet whatever was typed after.
-    if (codex && /^\/(model|effort)(\s|$)/.test(t)) { commands.close(); setSettingsTab("model"); return; }
+    if (t === "/usage" && !other) { commands.close(); setDraft(""); setUsageRequest((n) => n + 1); return; }
+    // Codex and Cursor settings live on the ticket, not in the CLI: open the settings sheet whatever was typed after.
+    if (other && /^\/(model|effort)(\s|$)/.test(t)) { commands.close(); setSettingsTab("model"); return; }
     if (["/model", "/config", "/settings", "/effort", "/effort status", "/output-style"].includes(t)) { commands.close(); setSettingsTab(t.startsWith("/effort") ? "effort" : t === "/output-style" ? "outputStyle" : "model"); return; }
     if (/^\/model\s+\S/.test(t)) {
       try {
@@ -861,7 +864,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           <div key={q.id} className={`conv-msg user pending${editable(q) ? " unsent" : ""}${editing?.id === q.id && editable(q) ? " editing" : ""}`}>
             <div className="conv-head">
               <b>You</b>
-              <span className="muted small">{q.state === "queued" ? codex ? "queued · Codex reads this in its next turn" : "queued · Claude reads this at its next step" : `not sent · ${agentName} was stopped before reading it`}</span>
+              <span className="muted small">{q.state === "queued" ? other ? `queued · ${agentName} reads this in its next turn` : "queued · Claude reads this at its next step" : `not sent · ${agentName} was stopped before reading it`}</span>
             </div>
             {editing?.id === q.id && editable(q) ? (
               <>
@@ -1013,7 +1016,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           )}
           {/* "Opus 5.5 High" like the Claude app: tap the model or the effort to change it. */}
           <span className="model-pill">
-            {(["model", "effort"] as const).map((kind) => (
+            {(cursor ? ["model"] as const : ["model", "effort"] as const).map((kind) => (
               <span key={kind} className="status-pick">
                 <button type="button" className={`model-pill-part ${kind}`} aria-haspopup="menu" aria-expanded={picking === kind} disabled={stopping}
                   aria-label={kind === "model" ? `Model: ${modelText}` : `Reasoning effort: ${effortText}`}
@@ -1021,7 +1024,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                   {kind === "model" ? <><span className="model-name">{modelText}</span><span className="model-name-short">{modelText.split(" ")[0]}</span></> : effortText}
                 </button>
                 {picking === kind && <QuickPick slug={slug} ticket={ticket} kind={kind} onClose={() => setPicking(null)}
-                  onMore={() => setSettingsTab(codex || kind === "model" ? "model" : "effort")} />}
+                  onMore={() => setSettingsTab(other || kind === "model" ? "model" : "effort")} />}
               </span>
             ))}
           </span>
@@ -1034,8 +1037,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       </div>
       {images.error && <div className="form-error composer-error">{images.error}</div>}
       {usageRequest > 0 && <UsagePill compact openRequest={usageRequest} />}
-      {settingsTab && codex && <AgentSettings slug={slug} ticket={ticket} onClose={()=>setSettingsTab(null)}/>}
-      {settingsTab && !codex && <ClaudeSettings slug={slug} ticket={ticket} initialTab={settingsTab} onClose={() => setSettingsTab(null)} onSaved={(kind) => {
+      {settingsTab && other && <AgentSettings slug={slug} ticket={ticket} onClose={()=>setSettingsTab(null)}/>}
+      {settingsTab && !other && <ClaudeSettings slug={slug} ticket={ticket} initialTab={settingsTab} onClose={() => setSettingsTab(null)} onSaved={(kind) => {
         setDraft((current) => [`/${kind === "outputStyle" ? "output-style" : kind}`, "/config", "/settings", "/effort status"].includes(current.trim()) ? "" : current);
       }} />}
       {selectedCommand && <CommandOptions command={selectedCommand} initial={(() => {

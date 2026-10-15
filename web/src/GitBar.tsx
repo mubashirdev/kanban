@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { api, safeHref, type GitState, type Ticket } from "./api";
+import { agentLabel } from "./AgentMark";
 import { ExternalIcon } from "./icons";
 import { toast } from "./toast";
 
-const agentOf = (t: Ticket) => (t.agent === "codex" ? "Codex" : "Claude");
+const agentOf = (t: Ticket) => agentLabel(t.agent);
 
 /** Commit, push and open a PR from the phone, like the desktop apps' Git bar. Texts use plain words: users may not know git. */
 export function GitBar({ slug, ticket, git, onDone, onError }: {

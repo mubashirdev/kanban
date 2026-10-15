@@ -10,6 +10,7 @@ import webpush from "web-push";
 import type { Store } from "./store";
 import type { Bus } from "./events";
 import { attentionFor, type Attention } from "./attention";
+import { agentLabel } from "./agents";
 import { planActive } from "./plan";
 import type { SessionSummary } from "./session";
 import type { Ticket } from "./types";
@@ -57,7 +58,7 @@ export function alertLine(text: string, max = 80): string {
 export function alertText(
   topic: Topic, t: Ticket, a: Attention | null, s: SessionSummary | null, result: string | null, details: boolean,
 ): { title: string; body: string } {
-  const agent = t.agent === "codex" ? "Codex" : "Claude";
+  const agent = agentLabel(t.agent);
   const minutes = t.stalled?.minutes ?? 10;
   const ask = t.permissionAsk;
   const generic = ask

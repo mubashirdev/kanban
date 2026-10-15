@@ -1,4 +1,4 @@
-import type { CodexSessions } from "./codex-session";
+import { otherAgent, type CodexSessions } from "./codex-session";
 import type { SessionCache } from "./session";
 import type { Store } from "./store";
 import type { Status } from "./types";
@@ -45,7 +45,7 @@ export function searchBoard(store: Store, sessions: SessionCache, codexSessions:
       const comment = store.listComments(slug, t.id).findLast((c) => matches(c.text));
       if (comment) hit("comment", comment.text);
       else {
-        const parsed = t.agent === "codex" ? codexSessions.get(slug, t.id) : t.sessionId ? sessions.get(t.sessionId) : null;
+        const parsed = otherAgent(t) ? codexSessions.get(slug, t.id) : t.sessionId ? sessions.get(t.sessionId) : null;
         const message = parsed?.entries.findLast((e) => e.kind === "text" && matches(e.text));
         if (message) hit("message", message.text);
       }

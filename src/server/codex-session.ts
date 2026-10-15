@@ -3,6 +3,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseSession } from "./session";
 import type { Store } from "./store";
+import type { Ticket } from "./types";
+
+/** The ticket runs on Codex or Cursor: its chat is read here (CodexSessions), not from a Claude session file. */
+export const otherAgent = (t: Pick<Ticket, "agent">) => t.agent === "codex" || t.agent === "cursor";
 
 const codexHome = () => process.env.CODEX_HOME ?? join(homedir(), ".codex");
 
@@ -61,7 +65,7 @@ export function rolloutEvents(text: string, firstLine = 0): any[] {
 /**
  * Reuse parsed transcripts between board polling, SSE views, and notification checks.
  * A ticket's Codex thread is read from Codex's own rollout (it also holds turns typed in a terminal);
- * without one, from the board's run activity after the last /clear.
+ * without one, from the board's run activity after the last /clear. A Cursor chat is always read from that activity.
  */
 export class CodexSessions {
   private cache = new Map<string, { version: string; value: ReturnType<typeof parseSession> | null }>();
@@ -100,7 +104,8 @@ export class CodexSessions {
 
   get(slug: string, id: string) {
     const key = `${slug}/${id}`;
-    const threadId = this.store.getTicket(slug, id)?.codexSessionId;
+    const ticket = this.store.getTicket(slug, id);
+    const threadId = ticket?.agent === "codex" ? ticket.codexSessionId : null;
     const file = threadId ? this.rolloutFile(threadId) : null;
     const size = file ? statSync(file).size : 0;
     const version = file ? `rollout:${file}:${size}` : this.store.activityVersion(slug, id);
@@ -110,17 +115,17 @@ export class CodexSessions {
     }
     const cached = this.cache.get(key);
     if (cached?.version === version) return cached.value;
-    const events = file ? this.rolloutEvents(threadId!, file, size) : this.activityEvents(slug, id);
+    const events = file ? this.rolloutEvents(threadId!, file, size) : this.activityEvents(slug, id, ticket?.agent === "cursor" ? "cursor" : "codex");
     const value = events.length ? parseSession(events.map((event) => JSON.stringify(event)).join("\n")) : null;
     if (this.cache.size >= 100) this.cache.delete(this.cache.keys().next().value!);
     this.cache.set(key, { version, value });
     return value;
   }
 
-  private activityEvents(slug: string, id: string): any[] {
-    const all = this.store.readActivity(slug, id).filter((entry) => (entry.event as any)?.provider === "codex");
-    // /clear starts a new Codex thread; only show what came after it.
-    const cleared = all.findLastIndex((entry) => (entry.event as any).type === "codex.clear");
+  private activityEvents(slug: string, id: string, provider: "codex" | "cursor"): any[] {
+    const all = this.store.readActivity(slug, id).filter((entry) => (entry.event as any)?.provider === provider);
+    // /clear starts a new thread; only show what came after it.
+    const cleared = all.findLastIndex((entry) => (entry.event as any).type === `${provider}.clear`);
     return all.slice(cleared + 1).map((entry) => ({ ...(entry.event as any), timestamp: entry.at }));
   }
 }

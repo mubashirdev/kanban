@@ -65,6 +65,6 @@ export function expandCodexCommand(text: string): string {
   if (name === "init") {
     return "Create an AGENTS.md file in the repository root with short, practical instructions for coding agents: how to build, test and run the project, the code layout, and conventions to follow. Read the repo first; keep it under 60 lines.";
   }
-  if (name === "model" || name === "effort") throw new Error(`Use the settings button to change the Codex ${name}.`);
+  if (name === "model" || name === "effort") throw new Error(`Use the settings button to change the ${name}.`);
   return text;
 }

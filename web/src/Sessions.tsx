@@ -6,7 +6,7 @@ import { Chat, withoutAgentNotes } from "./Chat";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FolderBrowser } from "./FolderBrowser";
 import { ForkDialog } from "./ForkDialog";
-import { AgentMark } from "./AgentMark";
+import { AgentMark, agentLabel, useCursorAvailable } from "./AgentMark";
 import { ArrowUpIcon, ChevronLeftIcon, CloseIcon, ColumnsIcon, CopyIcon, FolderIcon, HistoryIcon, MoreIcon, SplitIcon, TrashIcon } from "./icons";
 import { useLayer } from "./layers";
 import { Modal } from "./Modal";
@@ -24,13 +24,13 @@ import { usePersistentState } from "./usePersistentState";
 type Agent = NonNullable<Ticket["agent"]>;
 type Access = NonNullable<Ticket["access"]>;
 
-const AGENTS: { id: Agent; label: string }[] = [{ id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }];
+const AGENTS: { id: Agent; label: string }[] = [{ id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }, { id: "cursor", label: "Cursor" }];
 const ACCESS: { id: Access; label: string; hint: string }[] = [
   { id: "read", label: "Read only", hint: "It can look at code and answer, but won't change files." },
   { id: "edit", label: "Can edit", hint: "It works directly in your repo folder, like in a terminal." },
 ];
 
-export const agentName = (t: Pick<Ticket, "agent">) => (t.agent === "codex" ? "Codex" : "Claude");
+export const agentName = (t: Pick<Ticket, "agent">) => agentLabel(t.agent);
 /** Claude gets a spark on coral, Codex a prompt on blue, so the two are told apart at a glance. */
 const lastAt = (t: Ticket) => t.session?.lastMessage?.at ?? t.createdAt;
 /** Markdown marks read as noise in a one-line preview. */
@@ -151,7 +151,7 @@ export function ChatsView({ profile, sessions, tickets, openId, wide, onOpen, on
           <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search chats" aria-label="Search chats" />
         </div>
         {threads.length === 0 ? (
-          <p className="chat-list-empty">{q ? "No chats match." : "No chats yet. Start one to ask Claude or Codex anything about this repo."}</p>
+          <p className="chat-list-empty">{q ? "No chats match." : "No chats yet. Start one to ask Claude, Codex or Cursor anything about this repo."}</p>
         ) : (
           <ul>
             {threads.map((t) => (
@@ -216,7 +216,11 @@ export function NewSessionDialog({ profile: initial, profiles, onClose, onStarte
 }
 
 export function SessionStarter({ profile, onStarted }: { profile: Profile; onStarted: (id: string) => void }) {
-  const [agent, setAgent] = usePersistentState<Agent>("esa.session.agent", () => "claude", () => false, (v) => v === "claude" || v === "codex");
+  const [picked, setAgent] = usePersistentState<Agent>("esa.session.agent", () => "claude", () => false, (v) => v === "claude" || v === "codex" || v === "cursor");
+  const cursorAvailable = useCursorAvailable();
+  const agents = AGENTS.filter((a) => a.id !== "cursor" || cursorAvailable);
+  // A remembered Cursor choice falls back to Claude while Cursor isn't installed.
+  const agent = picked === "cursor" && !cursorAvailable ? "claude" : picked;
   const [access, setAccess] = usePersistentState<Access>("esa.session.access", () => "read", () => false, (v) => v === "read" || v === "edit");
   const [isolated, setIsolated] = usePersistentState<boolean>("esa.session.isolated", () => false, () => false, (v) => typeof v === "boolean");
   const [text, setText] = useState("");
@@ -227,7 +231,7 @@ export function SessionStarter({ profile, onStarted }: { profile: Profile; onSta
   const box = useRef<HTMLTextAreaElement>(null);
   // Only an editing session can change files, so only it needs a separate checkout.
   const worktree = access === "edit" && isolated;
-  const name = agent === "codex" ? "Codex" : "Claude";
+  const name = agentLabel(agent);
   useEffect(() => autoGrow(box.current, 6), [text]);
 
   const start = async () => {
@@ -256,7 +260,7 @@ export function SessionStarter({ profile, onStarted }: { profile: Profile; onSta
         onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !matchMedia("(pointer: coarse)").matches) { e.preventDefault(); void start(); } }} />
       <div className="starter-foot">
         <div className="segmented" role="radiogroup" aria-label="Agent">
-          {AGENTS.map((a) => (
+          {agents.map((a) => (
             <button type="button" key={a.id} role="radio" aria-checked={agent === a.id} onClick={() => setAgent(a.id)}>
               <AgentMark agent={a.id} size="small" />{a.label}
             </button>
@@ -323,7 +327,7 @@ function ResumeDialog({ profile, onClose, onResumed }: { profile: Profile; onClo
     <Modal title="Resume an earlier session" onClose={onClose} wide>
       <div className="form">
         <div className="segmented" role="radiogroup" aria-label="Agent">
-          {AGENTS.map((a) => <button type="button" key={a.id} role="radio" aria-checked={agent === a.id} onClick={() => setAgent(a.id)}>{a.label}</button>)}
+          {AGENTS.filter((a) => a.id !== "cursor").map((a) => <button type="button" key={a.id} role="radio" aria-checked={agent === a.id} onClick={() => setAgent(a.id)}>{a.label}</button>)}
         </div>
         <p className="muted small" style={{ margin: 0 }}>{agent === "codex" ? "Codex" : "Claude Code"} conversations started in <code>{profile.path}</code>.</p>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name…" aria-label="Search sessions" />
@@ -455,7 +459,7 @@ function SessionMenu({ ticket, onClose, onToBoard, onFork, onDelete }: { ticket:
   return (
     <div className="inbox-menu session-menu-list" role="menu" aria-label="Session actions" ref={root}>
       <button role="menuitem" className="menu-item" onClick={onToBoard}><span className="menu-icon"><ColumnsIcon /></span><span className="menu-label">Move to board</span></button>
-      {ticket.agent !== "codex" && (
+      {(ticket.agent ?? "claude") === "claude" && (
         <button role="menuitem" className="menu-item" disabled={!!ticket.running} title={ticket.running ? "Stop Claude first" : "Copy this conversation into a new chat"} onClick={onFork}>
           <span className="menu-icon"><SplitIcon /></span><span className="menu-label">Fork chat…</span>
         </button>

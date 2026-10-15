@@ -98,8 +98,14 @@ export interface BackgroundTask {
 }
 
 export interface Ticket {
-  agent?: "claude" | "codex";
+  agent?: "claude" | "codex" | "cursor";
   codexSessionId?: string | null;
+  /** Cursor's chat id, resumed with --resume. */
+  cursorChatId?: string | null;
+  /** Cursor model id; null uses Cursor's own default. */
+  cursorModel?: string | null;
+  /** The mode the Cursor chat last ran in: one that ran in plan or ask mode can't change mode. */
+  cursorMode?: import("./cursor-runner").CursorMode | null;
   codexModel?: string | null;
   codexEffort?: "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | null;
   priority?: "none" | "low" | "normal" | "high" | "urgent";

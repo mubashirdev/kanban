@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, COLUMNS, type Ticket } from "./api";
+import { agentLabel } from "./AgentMark";
 import { CheckIcon, ClockIcon, SlidersIcon } from "./icons";
 import { timeAgo } from "./time";
 import { PRIORITIES, TEMPLATES } from "./ticketTemplates";
@@ -371,7 +372,7 @@ function describeChange(change: string): string {
   if (key === "Created ticket") return "Created";
   if (key === "status") return `Moved to ${STATUS_LABEL[value] ?? value}`;
   if (key === "outcome") return value === "none" ? "Outcome cleared" : OUTCOME_LABEL[value] ?? capital(value);
-  if (key === "agent") return `Agent: ${value === "codex" ? "Codex" : "Claude"}`;
+  if (key === "agent") return `Agent: ${agentLabel(value as Ticket["agent"])}`;
   if (key === "labels") return value ? `Labels: ${value}` : "Labels cleared";
   return `${capital(key)}: ${capital(value)}`;
 }

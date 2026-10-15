@@ -32,11 +32,12 @@ import { AttachmentError, attachmentFile, attachmentType, IMAGE_TYPES, saveAttac
 import { FileError, listDir, openWithSystem, readFileForView } from "./files";
 import { McpError, McpManager } from "./mcp";
 import { Notifier } from "./notify";
-import { AGENT_IDS, AgentError, AgentRegistry, type AgentId } from "./agents";
+import { AGENT_IDS, AgentError, AgentRegistry, agentLabel, type AgentId } from "./agents";
 import { codexModels } from "./codex-catalog";
 import { codexCommands, codexSkills } from "./codex-commands";
 import { searchFiles } from "./git-actions";
-import { CodexSessions, listCodexSessions } from "./codex-session";
+import { CodexSessions, listCodexSessions, otherAgent } from "./codex-session";
+import { cursorModels } from "./cursor-runner";
 import { collectLinks } from "./links";
 import { searchBoard } from "./search";
 import { SessionCache, mergeCommandEntries, type SessionSummary } from "./session";
@@ -289,8 +290,8 @@ export function createServer(deps: ServerDeps) {
   /** hosts: the board's open huddles by host ticket, when the caller already has them (one read per board). */
   const view = (p: Profile, t: Ticket, hosts = board.hostHuddles(p.slug)) => {
     const running = board.isRunning(p.slug, t.id);
-    const codexParsed = t.agent === "codex" ? codexSessions.get(p.slug, t.id) : null;
-    const session = t.agent === "codex" ? (codexParsed ? { ...codexParsed, updatedAt: t.updatedAt } : null) : t.sessionId ? sessions.summary(t.sessionId) : null;
+    const codexParsed = otherAgent(t) ? codexSessions.get(p.slug, t.id) : null;
+    const session = otherAgent(t) ? (codexParsed ? { ...codexParsed, updatedAt: t.updatedAt } : null) : t.sessionId ? sessions.summary(t.sessionId) : null;
     const huddle = hosts.get(t.id);
     const { attention, snoozed } = withSnooze(t, session, ticketAttention(store, p.slug, t, session, running, huddle), Date.now(), huddle);
     return {
@@ -298,7 +299,9 @@ export function createServer(deps: ServerDeps) {
       running,
       /** Its run takes one of the board's maxParallel slots (Planning and peer replies don't). */
       holdsSlot: running && board.holdsSlot(p.slug, t.id),
-      resumeCommand: t.agent === "codex" ? (t.codexSessionId ? `cd ${shellQuote(t.workdir ?? t.worktree ?? ticketFolder(p.path, t))} && codex resume ${shellQuote(t.codexSessionId)}` : null) : t.sessionId ? resumeCommand(t.workdir ?? t.worktree ?? ticketFolder(p.path, t), t.sessionId) : null,
+      resumeCommand: t.agent === "codex" ? (t.codexSessionId ? `cd ${shellQuote(t.workdir ?? t.worktree ?? ticketFolder(p.path, t))} && codex resume ${shellQuote(t.codexSessionId)}` : null)
+        : t.agent === "cursor" ? (t.cursorChatId ? `cd ${shellQuote(t.workdir ?? t.worktree ?? ticketFolder(p.path, t))} && cursor-agent --resume ${shellQuote(t.cursorChatId)}` : null)
+        : t.sessionId ? resumeCommand(t.workdir ?? t.worktree ?? ticketFolder(p.path, t), t.sessionId) : null,
       session,
       /** Artifacts and share links, newest first: the Outputs tab's Links, the header chips and the card's ↗ chip. */
       links: ticketLinks(p.slug, t, session),
@@ -474,10 +477,10 @@ export function createServer(deps: ServerDeps) {
         for (const t of store.listTickets(p.slug)) {
           if (!board.isRunning(p.slug, t.id)) continue;
           // Only a nudged run's transcript is read: parsing every running transcript on every event is slow.
-          const parsed = !t.lastPrompt?.includes(NUDGE_TEXT) ? null : t.agent === "codex" ? codexSessions.get(p.slug, t.id) : t.sessionId ? sessions.get(t.sessionId) : null;
+          const parsed = !t.lastPrompt?.includes(NUDGE_TEXT) ? null : otherAgent(t) ? codexSessions.get(p.slug, t.id) : t.sessionId ? sessions.get(t.sessionId) : null;
           out.push({
             ...base, kind: t.standalone ? "chat" : "ticket", id: t.id, title: t.title,
-            agent: t.agent === "codex" ? "Codex" : "Claude",
+            agent: agentLabel(t.agent),
             startedAt: t.runStartedAt ?? null,
             costUsd: spend.ticket(p.slug, t.id).costUsd,
             step: stepLabel(t),
@@ -629,6 +632,7 @@ export function createServer(deps: ServerDeps) {
     if (parts[0] === "agents") {
       if (parts.length === 1 && m === "GET") return json(await agents.status());
       if (parts.length === 3 && parts[1] === "codex" && parts[2] === "models" && m === "GET") return json(codexModels());
+      if (parts.length === 3 && parts[1] === "cursor" && parts[2] === "models" && m === "GET") return json(await cursorModels());
       const id = parts[1] as AgentId;
       if (parts.length === 3 && m === "POST" && AGENT_IDS.includes(id) && (parts[2] === "install" || parts[2] === "uninstall")) {
         await (parts[2] === "install" ? agents.install(id) : agents.uninstall(id));
@@ -1036,7 +1040,7 @@ export function createServer(deps: ServerDeps) {
           if (running) mode = "auto";
         }
         if (parentId && !store.getTicket(slug, parentId)) throw new HttpError(400, `parent ticket ${parentId} not found`);
-        if (b.agent === "codex" && b.sessionId) throw new HttpError(400, "Existing Claude sessions cannot be linked to Codex tickets");
+        if ((b.agent === "codex" || b.agent === "cursor") && b.sessionId) throw new HttpError(400, "Existing Claude sessions can only be linked to Claude tickets");
         if (b.codexSessionId !== undefined && (b.agent !== "codex" || !/^[a-f0-9-]{36}$/i.test(String(b.codexSessionId)))) throw new HttpError(400, "Use a Codex session id with a Codex session");
         // A standalone session never sits in a running column: messages start its runs.
         const standalone = b.standalone === true && !planner;
@@ -1076,9 +1080,10 @@ export function createServer(deps: ServerDeps) {
         const onlyImportant = Object.keys(b).length > 0 && Object.keys(b).every((k) => k === "important");
         const { planner, requester } = own && onlyImportant ? {} : runRights(req, slug, target);
         const patch: Parameters<Board["updateTicket"]>[2] = metadata(b);
-        for (const key of ["codexModel", "codexEffort"]) if (key in b && b[key] !== null && typeof b[key] !== "string") throw new HttpError(400, `Invalid ${key}`);
+        for (const key of ["codexModel", "codexEffort", "cursorModel"]) if (key in b && b[key] !== null && typeof b[key] !== "string") throw new HttpError(400, `Invalid ${key}`);
         if (b.codexModel === null || typeof b.codexModel === "string") patch.codexModel = b.codexModel;
         if (b.codexEffort === null || typeof b.codexEffort === "string") patch.codexEffort = b.codexEffort;
+        if (b.cursorModel === null || typeof b.cursorModel === "string") patch.cursorModel = b.cursorModel;
         if (b.access === "read" || b.access === "edit") patch.access = b.access;
         if (typeof b.readAt === "string" && !Number.isNaN(Date.parse(b.readAt))) patch.readAt = b.readAt;
         if (b.standalone === false) patch.standalone = false;
@@ -1155,6 +1160,9 @@ export function createServer(deps: ServerDeps) {
         const skills = codexSkills(cwd).map((skill) => ({ name: skill.name, description: skill.description, argumentHint: "", aliases: [], builtin: false, insert: `$${skill.name} ` }));
         return json({ commands: [...codexCommands(), ...skills], models: [], efforts: [], outputStyles: [], defaultModel: store.config().codexModel ?? null });
       }
+      if (ticket.agent === "cursor") {
+        return json({ commands: codexCommands().filter((c) => c.name !== "effort"), models: [], efforts: [], outputStyles: [], defaultModel: null });
+      }
       try {
         const plan = ticket.status === "backlog" || ticket.status === "planning", refresh = url.searchParams.get("refresh") === "1";
         const catalog = commands.catalog ? await commands.catalog(cwd, plan, refresh) : { commands: await commands.get(cwd, plan, refresh), models: [] };
@@ -1164,7 +1172,7 @@ export function createServer(deps: ServerDeps) {
       } catch (error) { throw new HttpError(503, (error as Error).message); }
     }
     if (["model", "effort", "output-style"].includes(action) && parts.length === 5 && m === "POST") {
-      if (store.getTicket(slug,id)?.agent === "codex") throw new HttpError(400, "Use Codex ticket settings");
+      if (otherAgent(store.getTicket(slug, id)!)) throw new HttpError(400, "Use the chat's agent settings");
       if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "Claude settings are only available outside a board run");
       const b = await body(req), ticket = store.getTicket(slug, id)!;
       const field = action === "output-style" ? "outputStyle" : action;
@@ -1283,8 +1291,8 @@ export function createServer(deps: ServerDeps) {
     if (action === "conversation" && m === "GET") {
       // Read-only view of the ticket's Claude session file (terminal chat + board runs), newest last.
       const t = store.getTicket(slug, id)!;
-      const parsed = t.agent === "codex" ? codexSessions.get(slug, id) : t.sessionId ? sessions.get(t.sessionId) : null;
-      const all = mergeCommandEntries(parsed?.entries ?? [], t.agent === "codex" ? [] : store.readCommandEntries(slug, id).filter((entry) => entry.sessionId === t.sessionId));
+      const parsed = otherAgent(t) ? codexSessions.get(slug, id) : t.sessionId ? sessions.get(t.sessionId) : null;
+      const all = mergeCommandEntries(parsed?.entries ?? [], otherAgent(t) ? [] : store.readCommandEntries(slug, id).filter((entry) => entry.sessionId === t.sessionId));
       const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 100));
       const before = url.searchParams.has("before") ? Number(url.searchParams.get("before")) : all.length;
       const end = Math.max(0, Math.min(all.length, before));

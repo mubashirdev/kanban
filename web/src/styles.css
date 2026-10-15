@@ -2695,6 +2695,8 @@ body { letter-spacing: -0.011em; }
 .agent-mark.claude { background: #c96442; color: #fff; }
 .agent-mark.codex { background: #1c1c1e; color: #fff; }
 :root[data-theme="dark"] .agent-mark.codex { background: #f5f5f7; color: #1c1c1e; }
+.agent-mark.cursor { background: #26262b; color: #fff; }
+:root[data-theme="dark"] .agent-mark.cursor { background: #e8e8ed; color: #26262b; }
 .card-title-row .agent-mark.small { width: 22px; height: 22px; margin-top: 1px; border-radius: 7px; }
 .card-title-row .agent-mark.small.codex { border-radius: 50%; }
 

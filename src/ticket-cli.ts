@@ -4,7 +4,7 @@ import {
   assertCanChange, BoardClient, bugReportText, ClientError, parseMode, parseStatus, profileList, resolveProfile, runProfile,
   ticketLine, ticketText, type TicketPatch,
 } from "./client";
-import { AGENT_IDS, AgentRegistry, type AgentId } from "./server/agents";
+import { AGENT_IDS, AgentRegistry, agentLabel, type AgentId } from "./server/agents";
 
 export const TICKET_USAGE = `  ckanban profiles     List boards (profiles) and their folders
   ckanban ticket list [--status <s>]
@@ -23,12 +23,13 @@ export const TICKET_USAGE = `  ckanban profiles     List boards (profiles) and t
                        directory; --profile <slug> picks another. --json prints raw JSON.
                        --body - / --body-file - read the description from stdin.
   ckanban mcp          Run the board's MCP server on stdio (for Claude Code, Codex, ...)
-  ckanban mcp install [--claude] [--codex]
-                       Register the MCP server with Claude Code and/or Codex (default: both)
-  ckanban mcp uninstall [--claude] [--codex]
+  ckanban mcp install [--claude] [--codex] [--cursor]
+                       Register the MCP server with Claude Code, Codex and/or Cursor
+                       (default: Claude Code and Codex)
+  ckanban mcp uninstall [--claude] [--codex] [--cursor]
   ckanban mcp status   Show where the MCP server is registered`;
 
-const BOOLEAN_FLAGS = new Set(["json", "claude", "codex", "no-logs"]);
+const BOOLEAN_FLAGS = new Set(["json", "claude", "codex", "cursor", "no-logs"]);
 
 export interface ParsedArgs {
   positional: string[];
@@ -214,10 +215,11 @@ async function reportBug(p: ParsedArgs, id: string | undefined, io: CliIo): Prom
   io.out(p.flags.json ? JSON.stringify(r, null, 2) : bugReportText(r));
 }
 
-/** --claude / --codex, or both when neither is given. */
+/** --claude / --codex / --cursor, or Claude Code and Codex when none is given. */
 export function agentsFrom(p: ParsedArgs): AgentId[] {
   const picked = AGENT_IDS.filter((a) => p.flags[a]);
-  return picked.length ? picked : AGENT_IDS;
+  // Cursor only when asked: the board registers itself there before a Cursor run anyway.
+  return picked.length ? picked : ["claude", "codex"];
 }
 
 export async function mcpCommand(argv: string[], out: (s: string) => void = console.log, registry = new AgentRegistry()): Promise<void> {
@@ -225,7 +227,7 @@ export async function mcpCommand(argv: string[], out: (s: string) => void = cons
   const [action] = p.positional;
   if (action === "install" || action === "uninstall") {
     for (const id of agentsFrom(p)) {
-      const label = id === "claude" ? "Claude Code" : "Codex";
+      const label = id === "claude" ? "Claude Code" : agentLabel(id);
       if (action === "install") {
         await registry.install(id);
         out(`${label}: registered "ckanban" → ${registry.serverArgv.join(" ")}`);
