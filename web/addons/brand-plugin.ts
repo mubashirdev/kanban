@@ -4,6 +4,20 @@ import { join } from "node:path";
 import type { Plugin } from "vite";
 import { BRAND } from "../src/addons/brand";
 
+/** Leo's manifest with our name and icons. Also used by the phone login proxy (src/server/addons/public-proxy.ts). */
+export function brandManifest(json: string) {
+  return {
+    ...JSON.parse(json),
+    name: BRAND.name,
+    short_name: BRAND.name,
+    icons: [
+      { src: BRAND.icons.png192, sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: BRAND.icons.png512, sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: BRAND.icons.png512, sizes: "512x512", type: "image/png", purpose: "maskable" },
+    ],
+  };
+}
+
 export function brandPlugin(): Plugin {
   let outDir = "";
   return {
@@ -20,15 +34,7 @@ export function brandPlugin(): Plugin {
     },
     writeBundle() {
       const manifestPath = join(outDir, "manifest.webmanifest");
-      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-      manifest.name = BRAND.name;
-      manifest.short_name = BRAND.name;
-      manifest.icons = [
-        { src: BRAND.icons.png192, sizes: "192x192", type: "image/png", purpose: "any" },
-        { src: BRAND.icons.png512, sizes: "512x512", type: "image/png", purpose: "any" },
-        { src: BRAND.icons.png512, sizes: "512x512", type: "image/png", purpose: "maskable" },
-      ];
-      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+      writeFileSync(manifestPath, JSON.stringify(brandManifest(readFileSync(manifestPath, "utf8")), null, 2) + "\n");
 
       const swPath = join(outDir, "sw.js");
       const sw = readFileSync(swPath, "utf8")

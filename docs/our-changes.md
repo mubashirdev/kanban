@@ -17,6 +17,15 @@ The app name and icons come from one file: `web/src/addons/brand.ts`. The icons 
 
 Leo's own strings that we leave alone: "ckanban" in prompts, the CLI, the MCP server name, git identity, `TicketMenu.tsx` ("Report a bug in ckanban", which files the bug on his repo) and `ConnectionsDialog.tsx` (names the `ckanban` MCP server).
 
+## Phone link with sign-in page
+
+https://kanban-muba.ngrok.app is our phone link (Leo's own phone access goes over Tailscale). It runs outside the daemon, as two macOS services:
+
+- `io.ckanban.public-proxy` (`~/Library/LaunchAgents/io.ckanban.public-proxy.plist`) runs `src/server/addons/public-proxy.ts` from the main checkout on 127.0.0.1:7779. It shows the Muba AI sign-in page (password or passkey, `public-auth.ts` and `public-passkeys.ts` next to it) and passes signed-in requests to the board on 7777. Settings: `~/.config/kanban-access/credentials.json`; passkeys: `passkeys.json` beside it.
+- `io.ckanban.ngrok` runs ngrok with `~/.config/kanban-access/ngrok.json`, whose tunnels point at 127.0.0.1:7779.
+
+Port 7779, not 7778: Leo's phone access listener (`src/server/remote.ts`) takes the board port + 1. The proxy needs no hook in Leo's files. After a change to it: `launchctl kickstart -k gui/$(id -u)/io.ckanban.public-proxy`.
+
 ## Hooks in Leo's files
 
 | File | Hook | Why |
@@ -24,6 +33,7 @@ Leo's own strings that we leave alone: "ckanban" in prompts, the CLI, the MCP se
 | `web/vite.config.ts` | imports `brandPlugin` and adds it to `plugins` | brands `index.html`, the manifest and `sw.js` in the build |
 | `web/src/App.tsx` | imports `BRAND` and `BrandLogo`; `document.title` uses `BRAND.name`; the header renders `<BrandLogo />` and `{BRAND.name}` instead of `<Logo />` and "ckanban" | tab title and header logo |
 | `src/server/notify.ts` | imports `BRAND`; the test notification uses `BRAND.name` | the "Test notification" a user sends from settings |
+| `package.json` | the `@simplewebauthn/server` dependency | passkey (Face ID) sign-in on the phone login page |
 | `CLAUDE.md` | a pointer to this file; our wording in the two workflow sections; merges from upstream land as merge commits | so every run follows the add-on rule and our landing flow |
 
 `Logo` stays in `App.tsx`'s icon import on purpose: changing Leo's long import line would conflict with most of his updates.
@@ -38,6 +48,6 @@ Then check that every hook in the table above is still there (grep for `BRAND` a
 
 ## Our features not in Leo's version yet
 
-These were in our version before the switch (tag `pre-leo-switch`) and come back as separate add-on tickets: Codex and Cursor as ticket/chat agents (Leo's Codex support only registers the board's MCP server with Codex) with our Codex permission flow, our push alerts/notifications, review panel, our search dialog (Leo has his own ⌘K command bar), git bar, Sessions "On this Mac", daily cost, slash commands, dictation, public URL phone access with sign-in page and passkeys (Leo's Tailscale phone access is used instead).
+These were in our version before the switch (tag `pre-leo-switch`) and come back as separate add-on tickets: Codex and Cursor as ticket/chat agents (Leo's Codex support only registers the board's MCP server with Codex) with our Codex permission flow, our push alerts/notifications, review panel, our search dialog (Leo has his own ⌘K command bar), git bar, Sessions "On this Mac", daily cost, slash commands, dictation, the trusted Wi-Fi address set on every start (`scripts/start-login.ts`; Leo's version has no Wi-Fi access). The phone link with sign-in page and passkeys is back (see above).
 
 Unfinished work from the main checkout at the time of the switch is on branch `wip/pre-leo-switch`.
