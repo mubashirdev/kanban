@@ -37,6 +37,8 @@ import type { HuddleSeed, TeamRequest } from "./Team";
 import { useBoardHuddles } from "./huddle";
 import { hasOpenPr, runCounts } from "./boardStats";
 import { ParallelConfirm } from "./ParallelConfirm";
+import { BRAND } from "./addons/brand";
+import { BrandLogo } from "./addons/BrandLogo";
 
 // xterm.js and highlight.js only load once the panel is opened. After an upgrade the old chunk is gone:
 // reload once to get the new build instead of blanking the whole page.
@@ -344,7 +346,7 @@ export function App() {
     return () => clearTimeout(timer);
   }, [snoozed, loadInbox]);
   useEffect(() => {
-    document.title = needYou ? `(${needYou}) ckanban` : "ckanban";
+    document.title = needYou ? `(${needYou}) ${BRAND.name}` : BRAND.name;
   }, [needYou]);
 
   useEffect(() => {
@@ -705,8 +707,8 @@ export function App() {
       <header className="topbar">
         <div className="brand">
           <KeyHint keys="⌘K" />
-          <Logo />
-          <span className="brand-name">ckanban</span>
+          <BrandLogo />
+          <span className="brand-name">{BRAND.name}</span>
           <span className="brand-tagline">Kanban for Claude Code</span>
         </div>
         {profiles && profiles.length > 0 && (

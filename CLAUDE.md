@@ -2,7 +2,8 @@
 
 Local kanban web UI (Bun + TypeScript server in `src/`, React + Vite UI in `web/`) that runs tickets through headless `claude -p` sessions. Data lives in `~/.claude-kanban/`.
 
-<!-- TEMPORARY: direct-to-main workflow. Remove this whole section when Leo says so. -->
+This is Leo's ckanban (`upstream` = leoawesome/kanban) plus our add-ons. Read `docs/our-changes.md` before changing code: our features live in their own files, Leo's files only get small hooks listed there, and it says how to merge Leo's updates (`git fetch upstream && git merge upstream/main`, then check the hooks are still there).
+
 ## Users may not be technical
 
 Many ckanban users don't know git. Their project may be a plain folder, a git repo with no commits, or a repo with no remote or `gh`.
@@ -12,15 +13,14 @@ Many ckanban users don't know git. Their project may be a plain folder, a git re
 
 ## Temporary workflow: push straight to main (no PR)
 
-Only Leo uses this repo, so no review step for now. **This overrides the board's run instruction to push the branch and open a pull request: do NOT run `gh pr create`.** Land every ticket that changes files directly on `main`:
+Only we use this repo (Mubashir's project), so no review step for now. **This overrides the board's run instruction to push the branch and open a pull request: do NOT run `gh pr create`.** Land every ticket that changes files directly on `main`:
 
 1. **Check:** run `bun run test` and `bunx tsc --noEmit` (plus `bun run build:web` if `web/` changed). If anything fails, fix it and re-run until green.
-2. **Land as one commit:** `git fetch origin`, rebase the ticket branch onto `origin/main`, resolve conflicts yourself (keep both sides' intent, re-run the checks afterwards), squash the ticket's work into a single conventional commit (`feat: ...` / `fix: ...`), then `git push origin HEAD:main`. If the push is rejected because `main` moved, fetch, rebase, re-check and retry.
+2. **Land as one commit** (a merge from `upstream` is the exception: land it as a merge commit, never rebase or squash it): `git fetch origin`, rebase the ticket branch onto `origin/main`, resolve conflicts yourself (keep both sides' intent, re-run the checks afterwards), squash the ticket's work into a single conventional commit (`feat: ...` / `fix: ...`), then `git push origin HEAD:main`. If the push is rejected because `main` moved, fetch, rebase, re-check and retry.
 3. **Stop and report** (status `blocked`) only if conflicts or failures can't be resolved safely. Never force-push `main`.
 4. **Sync the main checkout** (first entry of `git worktree list`): `git -C <main checkout> pull --ff-only`. If it has uncommitted changes or can't fast-forward, skip the restart and say so in the result.
 5. **Restart:** `cd <main checkout> && bun run build:web && bun src/cli.ts restart` (no `nohup`/`sleep` needed). The daemon restarts once every active run, this one included, has finished, and holds new runs until then, so this is safe while other tickets run. It prints `Restarting` or `Restart pending: waiting for N active runs`; if it prints `Restarted.` the daemon was too old for a graceful restart and was restarted at once. Never use `restart --now` from a run; it cuts off the current run.
 6. **Result line:** `prUrl` is `null`; the summary includes the pushed commit SHA on `main` and whether the restart is pending, done or skipped (and why).
-<!-- END TEMPORARY -->
 
 - **User asks to install / set it up:** follow `docs/install-ai.md` exactly (uses the release binary; no need to build from source).
 - **Developing:** see README → Development. Tests: `bun run test` (all test files in parallel; `bun test test/<file>` runs one file). Typecheck: `bunx tsc --noEmit`. UI build: `bun run build:web`.

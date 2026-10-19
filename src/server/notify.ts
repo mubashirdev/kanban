@@ -11,6 +11,7 @@ import type { PushPayload, PushService } from "./push";
 import type { SessionSummary } from "./session";
 import type { Store } from "./store";
 import { nowIso } from "./util";
+import { BRAND } from "../../web/src/addons/brand";
 
 export const NOTIFY_KINDS: AttentionKind[] = ["questions", "proposal", "review", "failed", "limit", "blocked", "huddle", "reply"];
 
@@ -343,8 +344,8 @@ export class Notifier {
   private testMessage(slug?: string): NotifyMessage {
     const p = slug ? this.store.getProfile(slug) : this.store.listProfiles()[0];
     return {
-      board: p?.slug ?? "", boardName: p?.name ?? "ckanban", ticketId: "", title: "Test notification", kind: "review",
-      label: "ckanban", url: p ? this.link(p.slug) : `${this.o.baseUrl()}/`,
+      board: p?.slug ?? "", boardName: p?.name ?? BRAND.name, ticketId: "", title: "Test notification", kind: "review",
+      label: BRAND.name, url: p ? this.link(p.slug) : `${this.o.baseUrl()}/`,
     };
   }
 
