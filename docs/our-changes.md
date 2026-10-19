@@ -56,6 +56,7 @@ Port 7779, not 7778: Leo's phone access listener (`src/server/remote.ts`) takes 
 | `web/src/App.tsx` | imports `useChats`, `PhoneBell` and `isChat`; `const chats = useChats(...)` after `open`; `!isChat(t) &&` first in `shownTickets`; `{profile && chats.switcher}` before `UsagePill`; `<PhoneBell>` (with Leo's `NowView` inside) before the phone search button; both New ticket buttons call `chats.newChat` while Chats shows; `chats.view ??` replaces the phone Now branch; `PhoneNav` gets `needYou={chats.unread}`; `TicketDrawer` gets `!chats.hidesDrawer &&` | Chats: Board \| Chats switch on wide screens, Chats as the phone's first tab, chats off the board, the phone bell with what Now showed |
 | `web/src/PhoneNav.tsx` | the first item is "Chats" with `ChatIcon` instead of "Now" with `NowIcon` (the tab id stays `"now"`; its badge is the unread chats) | Chats: the phone bottom bar is Chats, Board, Schedules, More |
 | `web/src/TicketMenu.tsx` | `<MoveToChats ticket={ticket} working={working} />` after `AgentRow` | Chats: "Move to Chats" for a board ticket |
+| `src/server/http.ts` | imports `terminalRoutes`; `terminalRoutes(...)` right after `chatRoutes(...)` | On this Mac: `/api/addons/terminal/*` (the newest terminal sessions, read one, Continue here) |
 | `CLAUDE.md` | a pointer to this file; our wording in the two workflow sections; merges from upstream land as merge commits | so every run follows the add-on rule and our landing flow |
 
 `Logo` stays in `App.tsx`'s icon import on purpose: changing Leo's long import line would conflict with most of his updates.
@@ -82,16 +83,24 @@ Chats are conversations off the board (`src/server/addons/chats.ts`, `web/src/ad
 - Phones: Chats is the bottom bar's first tab, in place of Leo's Now screen. What Now showed (tickets that need you, running ones) is in the bell in the top bar, with "Get told on this phone".
 - Swipe a chat left for Stop, Read or Unread, and Delete. The ticket menu has "Move to Chats", the chat menu "Move to board".
 
+## On this Mac
+
+Under the chats list, "On this Mac" shows the 20 most recent Claude sessions the user started in a terminal, in any folder (`src/server/addons/terminal-sessions.ts`, `web/src/addons/chats/OnThisMac.tsx`). Each row has the title, folder, last active, "Open in terminal" and "Needs you" (Claude Code's status file in `~/.claude/sessions/` says it waits, or a question has no answer yet). Board runs (`sdk-cli`), the desktop app, SDK scripts and the board's own helper sessions are left out. Leo's `SessionCache` reads each session's title and messages.
+
+- Tap a row to read the session, newest messages at the bottom, earlier ones a page at a time.
+- Continue here makes a chat on the open board (Can edit) with the session's id and its own folder as `workdir`, so the next message resumes that same conversation there (Leo's `ensureSessionNow` already resumes a `workdir` session). A session still open in a terminal warns first. A session that is already a chat on the board opens that chat.
+- The routes refuse board runs and huddle teammates, and serve only terminal sessions, never a board run's own.
+
 ## Updating from Leo
 
 ```sh
 git fetch upstream && git merge upstream/main
 ```
 
-Then check that every hook in the table above is still there (grep for `BRAND`, `brandPlugin`, `startAgentRun`, `CodexSessionCache`, `codexRoutes`, `addons/codex` and `addons/chats`). After `bun run build:web`, `web/dist/index.html` and `web/dist/manifest.webmanifest` should say "Muba AI". If Leo changed the strings the plugin replaces, fix the plugin, not his files. Then run the usual checks and land as in `CLAUDE.md`, as a merge commit (don't rebase or squash a merge from upstream).
+Then check that every hook in the table above is still there (grep for `BRAND`, `brandPlugin`, `startAgentRun`, `CodexSessionCache`, `codexRoutes`, `terminalRoutes`, `addons/codex` and `addons/chats`). After `bun run build:web`, `web/dist/index.html` and `web/dist/manifest.webmanifest` should say "Muba AI". If Leo changed the strings the plugin replaces, fix the plugin, not his files. Then run the usual checks and land as in `CLAUDE.md`, as a merge commit (don't rebase or squash a merge from upstream).
 
 ## Our features not in Leo's version yet
 
-These were in our version before the switch (tag `pre-leo-switch`) and come back as separate add-on tickets: Cursor as a ticket/chat agent (plugs into `startAgentRun` in `src/server/addons/agents.ts` like Codex), our push alerts/notifications, review panel, our search dialog (Leo has his own ⌘K command bar), git bar, Sessions "On this Mac", daily cost, slash commands, dictation, the trusted Wi-Fi address set on every start (`scripts/start-login.ts`; Leo's version has no Wi-Fi access). The phone link with sign-in page and passkeys, and Chats, are back (see above).
+These were in our version before the switch (tag `pre-leo-switch`) and come back as separate add-on tickets: Cursor as a ticket/chat agent (plugs into `startAgentRun` in `src/server/addons/agents.ts` like Codex), our push alerts/notifications, review panel, our search dialog (Leo has his own ⌘K command bar), git bar, daily cost, slash commands, dictation, the trusted Wi-Fi address set on every start (`scripts/start-login.ts`; Leo's version has no Wi-Fi access). The phone link with sign-in page and passkeys, Chats and On this Mac are back (see above).
 
 Unfinished work from the main checkout at the time of the switch is on branch `wip/pre-leo-switch`.

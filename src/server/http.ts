@@ -35,6 +35,7 @@ import { SessionCache, type SessionSummary } from "./session";
 import { agentOnCreate, codexRoutes } from "./addons/codex/http";
 import { modelRoutes } from "./addons/models";
 import { chatRoutes } from "./addons/chats";
+import { terminalRoutes } from "./addons/terminal-sessions";
 import { ptySupported, ShellManager, type PtyKind, type Shell } from "./shell";
 import { AGENT_STEP_TAIL, settleAgent } from "./subagents";
 import type { TerminalWatcher } from "./terminals";
@@ -481,6 +482,8 @@ export function createServer(deps: ServerDeps) {
     if (models) return models;
     const chats = await chatRoutes(req, parts, { store, board, bus });
     if (chats) return chats;
+    const terminal = await terminalRoutes(req, parts, { store, board, bus, sessions });
+    if (terminal) return terminal;
 
     // Phone access (remote.ts): anyone allowed in may see it; only this Mac may turn it on or off.
     if (parts[0] === "remote" && parts.length === 1) {

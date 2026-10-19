@@ -15,6 +15,7 @@ import { AgentMark, AgentSwitch } from "../codex/AgentPicker";
 import { agentName, agentOf, type AgentId } from "../codex/api";
 import { accessOf, chatsApi, type Access } from "./api";
 import { chatList, isUnread, lastAt } from "./chatList";
+import { OnThisMac } from "./OnThisMac";
 
 const ACCESS: { id: Access; label: string; hint: string }[] = [
   { id: "read", label: "Read only", hint: "It can look at files and answer, but won't change them." },
@@ -151,6 +152,7 @@ export function ChatsView({ profile, tickets, openId, wide, starting, onStarting
             ))}
           </ul>
         )}
+        {!query.trim() && <OnThisMac profile={profile} onOpenChat={onOpen} />}
       </section>
       {wide && (
         <div className="chat-pane">
