@@ -32,6 +32,7 @@ import { LISTENER_HEADER, LOGIN_HEADER, qrSvg, RemoteAccess, RemoteError, remote
 import { AGENT_IDS, AgentError, AgentRegistry, type AgentId } from "./agents";
 import { collectLinks } from "./links";
 import { SessionCache, type SessionSummary } from "./session";
+import { agentOnCreate, codexRoutes } from "./addons/codex/http";
 import { ptySupported, ShellManager, type PtyKind, type Shell } from "./shell";
 import { AGENT_STEP_TAIL, settleAgent } from "./subagents";
 import type { TerminalWatcher } from "./terminals";
@@ -472,6 +473,8 @@ export function createServer(deps: ServerDeps) {
     if ((m === "POST" || m === "PATCH" || m === "PUT") && type !== "application/json") {
       throw new HttpError(415, "content-type must be application/json");
     }
+    const addon = await codexRoutes(req, parts, { store, board });
+    if (addon) return addon;
 
     // Phone access (remote.ts): anyone allowed in may see it; only this Mac may turn it on or off.
     if (parts[0] === "remote" && parts.length === 1) {
@@ -1001,6 +1004,7 @@ export function createServer(deps: ServerDeps) {
           title, body: String(b.body ?? ""), status: b.sessionId && !planner ? "backlog" : status, mode, parentId, planKey, dependsOn, needs, tags,
           important: b.important === true,
         });
+        agentOnCreate(store, slug, t.id, b);
         if (planner) store.addComment(slug, t.id, "ai", `Created by the planner of plan ${planner.id}.`);
         if (requester) store.addComment(slug, t.id, "ai", `Created ${byRequest(requester)}.`);
         if (b.sessionId && !planner) {

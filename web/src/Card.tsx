@@ -10,6 +10,8 @@ import { KeyHint } from "./KeyHint";
 import { CapActions } from "./CapActions";
 import { capWait } from "./capText";
 import { LimitActions } from "./LimitActions";
+import { CodexCardMark } from "./addons/codex/AgentPicker";
+import { agentName } from "./addons/codex/api";
 import { StallActions, stallWait } from "./StallActions";
 import { limitLabel, limitWait } from "./limitText";
 import { ResourceChip, resourceWait } from "./Needs";
@@ -162,10 +164,11 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
         <div className="card-activity" title={ticket.lastActivity!}>{ticket.lastActivity}</div>
       ) : last && (
         <div className="card-last" title={last.text}>
-          <span className={`who ${last.role}`}>{lastWho(last)}:</span>{" "}
+          <span className={`who ${last.role}`}>{lastWho(last).replace(/^Claude$/, agentName(ticket))}:</span>{" "}
           {plainPreview(last.from === "huddle" ? digestPreview(last.text) : last.text)}
         </div>
       )}
+      <CodexCardMark ticket={ticket} />
       {(badge || ticket.autoHuddle || ticket.costUsd || ticket.prUrl || ticket.runCount > 0 || ticket.workdir || ticket.session || ticket.scheduleId || ticket.plan || ticket.needs?.length || ticket.tags?.length || huddle || artifactHref || hasJobs || addOnChip || addOnsChip || ticket.followUp || ticket.followUpStopped) && (
         <div className="card-meta">
           {ticket.plan && ticket.plan.state !== "done" && (

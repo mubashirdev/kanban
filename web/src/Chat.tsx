@@ -44,6 +44,8 @@ import { Markdown } from "./Transcript";
 import { usePersistentState } from "./usePersistentState";
 import { usePhone } from "./usePhone";
 import { enterSends } from "./enterSends";
+import { CodexAskCard } from "./addons/codex/AskCard";
+import { agentName } from "./addons/codex/api";
 
 /** File cards shown under one reply; the rest are in the Outputs tab. */
 const MAX_FILE_CARDS = 8;
@@ -536,7 +538,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           return (
             <div key={e.uuid} className={`conv-msg ${e.role}${e.commandOutput ? " command-output" : ""}${old ? " inherited" : ""}`}>
               <div className="conv-head">
-                <b>{e.role === "user" ? "You" : e.commandOutput ? "Claude Code" : "Claude"}</b>
+                <b>{e.role === "user" ? "You" : e.commandOutput ? "Claude Code" : agentName(ticket)}</b>
                 {e.at && <time className="muted small" dateTime={e.at} title={fullTime(e.at)}>{timeAgo(e.at)}</time>}
               </div>
               {e.text && (e.role === "user"
@@ -821,6 +823,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
               onClick={() => api.updateTicket(slug, ticket.id, { notice: null }).catch((e) => onError(e.message))}><CloseIcon size={12} /></button>
           </div>
         )}
+        <CodexAskCard ticket={ticket} onError={onError} />
         {/* Sticky inside the log, so it floats just above the composer. */}
         {jump && (
           <button className={`jump-latest${jump.fresh ? " fresh" : ""}`} onClick={toBottom}>

@@ -2,6 +2,7 @@ import { useEffect, useState, type KeyboardEvent } from "react";
 import { api, type Huddle, type HuddleMode, type HuddlePreset, type HuddleTemplate, type RosterEntry, type Ticket } from "./api";
 import { CloseIcon } from "./icons";
 import { Select } from "./Select";
+import { RosterAgentSwitch } from "./addons/codex/AskCard";
 import { applyProposedTemplate, applyTemplate, DEFAULT_MAX, draftError, draftSize, dollars, handleBase, rosterDraft, rowHandle, rowKey as key, type Draft } from "./huddleText";
 
 const MODELS = ["opus", "sonnet", "haiku"];
@@ -163,6 +164,7 @@ export function RosterEditor({ presets, draft, setDraft, tickets, hostId, max = 
                     onChange={(v) => setRow(r.key, { mode: v })} />
                 </td>
                 <td>
+                  <RosterAgentSwitch model={r.model ?? p?.model} disabled={disabled} onChange={(model) => setRow(r.key, { model })} />
                   <Select ariaLabel="Model" className="roster-select" value={r.model ?? ""}
                     onChange={(v) => setRow(r.key, { model: v || null })}
                     options={[{ value: "", label: p?.model ?? "default" }, ...MODELS.filter((m) => m !== p?.model).map((m) => ({ value: m, label: m })),

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { cleanupTmuxLeftovers } from "./artifact";
-import { Board } from "./board";
+import { Board, claudeSessionExists } from "./board";
 import { Bus } from "./events";
 import { createServer } from "./http";
 import { Huddles } from "./huddle";
@@ -22,6 +22,8 @@ import { TerminalWatcher } from "./terminals";
 import { defaultRoot, Store } from "./store";
 import { VERSION } from "./version";
 import { WEB_ASSETS } from "./web-assets.gen";
+import { attachCodex } from "./addons/codex/state";
+import { CodexSessionCache } from "./addons/codex/sessions";
 import { detectMissing } from "./worktree-setup";
 
 export async function startDaemon(): Promise<void> {
@@ -31,12 +33,14 @@ export async function startDaemon(): Promise<void> {
   const config = store.config();
   const port = Number(process.env.CKANBAN_PORT) || config.port;
   const bus = new Bus();
-  const sessions = new SessionCache();
+  const sessions = new CodexSessionCache(store);
+  attachCodex(store, bus);
   const shells = new ShellManager();
   void cleanupTmuxLeftovers();
   const board = new Board(store, bus, {
     claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude",
     sessionSummary: (id) => sessions.summary(id),
+    sessionExists: (id) => sessions.exists(id, claudeSessionExists),
     findOwnedSession: (id) => shells.findSession(id),
     notify: (title, body, slug, id) => notifier.macOnly(title, body, notifier.link(slug, id)),
   });

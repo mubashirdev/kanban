@@ -1,0 +1,33 @@
+/* Our add-ons' styles, loaded after Leo's styles.css (see docs/our-changes.md). Leo's variables only. */
+
+/* Codex: who works on a ticket (Claude | Codex) */
+.agent-switch button { display: inline-flex; align-items: center; gap: 6px; }
+.agent-mark {
+  display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 4px;
+  font-size: 10px; font-weight: 700; line-height: 1; flex: none;
+}
+.agent-mark.claude { background: var(--accent-soft); color: var(--accent); }
+.agent-mark.codex { background: #2b2b2b; color: #fff; font-family: var(--mono); }
+.card-agent { gap: 6px; }
+.menu-item.agent-row { flex-wrap: wrap; cursor: default; row-gap: 4px; }
+.agent-row .menu-hint { flex-basis: 100%; white-space: normal; color: var(--muted); }
+
+/* Codex: the permission ask in the chat (stacked full-width buttons, easy to tap on the phone) */
+.codex-ask {
+  margin: 10px 0; padding: 14px; background: var(--surface); border: 1px solid var(--accent); border-radius: 14px;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.codex-ask-title { font-weight: 600; font-size: 15px; }
+.codex-ask-sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.codex-ask-reason { font-size: 13px; margin-top: 6px; }
+.codex-ask-detail {
+  display: block; margin: 10px 0 2px; padding: 8px 10px; background: var(--surface-2); border-radius: 8px;
+  overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.codex-ask .btn { display: block; width: 100%; margin-top: 8px; padding: 11px 12px; border-radius: 10px; font-size: 14px; }
+.codex-ask .btn.codex-deny { color: var(--err); }
+
+/* Huddle roster: the switch sits above Leo's model menu; compact so the table still fits a phone */
+.roster-table .agent-switch { display: flex; width: max-content; margin-bottom: 4px; }
+.roster-table .agent-switch button { padding: 3px 7px; font-size: 12px; }
+.roster-table .agent-switch .agent-mark { display: none; }

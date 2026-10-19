@@ -58,6 +58,7 @@ import { huddleUsage, type Usage } from "./huddle-usage";
 import { isLevel, type Level, lowerLevels } from "./layers";
 import { autoHuddleSlotPrompt, autoHuddleStoppedPrompt, huddleAgentPrompt, huddleAgentSystemPrompt, huddleDigest, huddleMainPrompt } from "./prompts";
 import { buildArgs, MONITOR_IDLE_MS, startRun, type RunHandle } from "./runner";
+import { startAgentRun, teammateAgent } from "./addons/agents";
 import { addHuddleSpend } from "./spend";
 import type { Store } from "./store";
 import { contextTokens, messageCost } from "./ticket-usage";
@@ -1756,7 +1757,7 @@ export class Huddles {
     const args = buildArgs(sessionId, resume, p.model ?? profile.model, p.canEdit ? [] : NO_EDIT_TOOLS.split(","), mcpConfig(), system);
     let lastWrite = 0;
     let started = resume;
-    run.handle = startRun({
+    run.handle = startAgentRun(teammateAgent(p), {
       bin: this.opts.claudeBin, cwd: dir, args, input,
       // Huddle agents have no board slot: CKANBAN_TICKET is the host (its board and outputs), CKANBAN_HUDDLE_AGENT who they are.
       env: { CKANBAN_OUTPUT_DIR: outputDir, CKANBAN_TICKET: `${slug}/${h.hostTicket}`, [HUDDLE_AGENT_ENV]: `${hid}/${handle}/${p.token}` },

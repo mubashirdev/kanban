@@ -26,6 +26,8 @@ import { ticketRuns } from "./ticket-usage";
 import { AUTO_CONTINUE_PER_DAY, clockTime, CONTINUE_TEXT, dayKey, limitMessage, parseReset } from "./limit";
 import { DraftTracker } from "./draft";
 import { buildArgs, DEFAULT_STALL_MINUTES, PLANNING_DISALLOWED_TOOLS, startRun, type RunHandle } from "./runner";
+import { startAgentRun } from "./addons/agents";
+import { agentOf } from "./addons/codex/state";
 import { RETRY_DELAY_MS, RETRY_TEXT, transientError } from "./retry";
 import { BOARD_COMMANDS, commandText, listCommands, MODEL_HELP, parseSlash, REFUSED_COMMANDS, rememberInit, slashMessage, useBundledFile, validModel, type SlashCommand } from "./commands";
 import { mcpConfig } from "./agents";
@@ -778,7 +780,7 @@ export class Board {
     // Marks where this run starts in the log and what it was (the Usage tab lists runs by kind).
     // A resumed attempt (retry, stall restart) continues the same run in the log.
     if (!resumeText) this.store.appendActivity(slug, id, runNo, { type: "ckanban_run", kind: refine ? "planning" : quiet ? "reply" : run.chat?.followUp ? "follow-up" : run.chat ? "chat" : "work" });
-    run.handle = startRun({
+    run.handle = startAgentRun(agentOf(t), {
       bin: this.opts.claudeBin,
       cwd: session.dir,
       args: buildArgs(session.sessionId, session.existed, t.model ?? profile.model, refine ? PLANNING_DISALLOWED_TOOLS : [], mcpConfig(), systemPrompt, cap),

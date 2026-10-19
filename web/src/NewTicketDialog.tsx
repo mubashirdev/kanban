@@ -10,6 +10,7 @@ import { SessionPicker, sessionLabel } from "./SessionPicker";
 import { MOD } from "./Shortcuts";
 import { StarToggle } from "./StarToggle";
 import { TagEditor } from "./Tags";
+import { useAgentPicker } from "./addons/codex/AgentPicker";
 
 export function NewTicketDialog({ slug, folder, knownTags = [], onClose, onCreate }: {
   slug: string;
@@ -30,6 +31,7 @@ export function NewTicketDialog({ slug, folder, knownTags = [], onClose, onCreat
   const [err, setErr] = useState<string | null>(null);
   const images = useImagePaste(setBody);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const agent = useAgentPicker();
 
   // Start: an interview goes to Planning (questions now), "Just do it" goes to Ready (runs when a slot is free).
   const startStatus: Status = mode === "interview" ? "planning" : "ready";
@@ -39,7 +41,7 @@ export function NewTicketDialog({ slug, folder, knownTags = [], onClose, onCreat
     if (busy || !title.trim() || images.uploading) return;
     setBusy(true);
     try {
-      await onCreate({ title: title.trim(), body, status, sessionId: session?.id, mode, ...(important ? { important } : {}), ...(tags.length ? { tags } : {}) });
+      await onCreate({ title: title.trim(), body, status, sessionId: session?.id, mode, ...(important ? { important } : {}), ...(tags.length ? { tags } : {}), ...agent.payload });
     } catch (e: any) {
       setErr(e.message);
       setBusy(false);
@@ -86,6 +88,7 @@ export function NewTicketDialog({ slug, folder, knownTags = [], onClose, onCreat
           Description
           <DescriptionEditor slug={slug} value={body} setValue={setBody} images={images} inputRef={bodyRef} />
         </label>
+        {agent.field}
         <div className="field">
           <div className="field-label">How should Claude work?</div>
           <ModeToggle value={mode} onChange={setMode} keyHint="⌘I" />
