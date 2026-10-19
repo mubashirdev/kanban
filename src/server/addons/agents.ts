@@ -1,6 +1,8 @@
 import type { AgentId } from "../agents";
 import { startRun, type RunHandle } from "../runner";
 import { startCodexFor } from "./codex/start";
+import { attachedStore } from "./codex/state";
+import { withEffort } from "./models";
 
 type RunOptions = Parameters<typeof startRun>[0];
 
@@ -10,7 +12,7 @@ type RunOptions = Parameters<typeof startRun>[0];
  */
 export function startAgentRun(agent: AgentId | null | undefined, opts: RunOptions): RunHandle {
   if (agent === "codex") return startCodexFor(opts);
-  return startRun(opts);
+  return startRun({ ...opts, args: withEffort(opts.args, opts.env, attachedStore()) });
 }
 
 /** A huddle teammate runs on Codex when its model is "codex" (the roster's Claude | Codex switch sets it). */

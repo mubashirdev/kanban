@@ -31,3 +31,46 @@
 .roster-table .agent-switch { display: flex; width: max-content; margin-bottom: 4px; }
 .roster-table .agent-switch button { padding: 3px 7px; font-size: 12px; }
 .roster-table .agent-switch .agent-mark { display: none; }
+
+/* Models: the "Opus 5.5 High" pill in the message box (tap the model or the effort) and its lists */
+.model-pill { display: inline-flex; align-items: center; flex: 0 1 auto; min-width: 0; height: 30px; border-radius: 999px; background: var(--surface-2); }
+.model-pick { position: relative; display: flex; min-width: 0; height: 100%; }
+.model-pick:last-child { flex: none; }
+.model-pill-part {
+  height: 100%; padding: 0; border: 0; background: none; font: inherit; font-size: 13px; color: var(--text); cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.model-pill-part.model { padding: 0 3px 0 12px; }
+.model-pill-part.effort { padding: 0 12px 0 3px; color: var(--muted); }
+.model-pill-part:hover:not(:disabled) { color: var(--accent); }
+.model-pill-part:disabled { opacity: 0.5; cursor: default; }
+.model-name-short { display: none; }
+.quick-pick {
+  position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 90; min-width: 220px; max-width: min(300px, 90vw); padding: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);
+}
+.model-pick:first-child .quick-pick { max-height: min(420px, 60vh); overflow-y: auto; }
+.quick-pick-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 34px; padding: 6px 10px;
+  border: 0; border-radius: 8px; background: none; font: inherit; font-size: 13.5px; color: var(--text); text-align: left; cursor: pointer;
+}
+.quick-pick-item:hover, .quick-pick-item:focus-visible { background: var(--surface-2); outline: none; }
+.quick-pick-label { min-width: 0; }
+.quick-pick-key { font-size: 12px; color: var(--muted); }
+.quick-pick-check { color: var(--accent); }
+.quick-pick-status { display: flex; align-items: center; gap: 8px; margin: 6px 10px; color: var(--muted); font-size: 12px; }
+.default-models-link { justify-self: start; }
+@media (pointer: coarse) { .quick-pick-key { display: none; } .quick-pick-item { min-height: 44px; } }
+@media (max-width: 720px) {
+  /* On phones the pill sits on the left of the action row; a narrow screen shows the model's first word. */
+  .composer-actions .model-pill { height: 40px; margin-right: auto; }
+  .composer-actions .model-pill + .image-pick-group { margin-right: 0; }
+  .model-pill-part { font-size: 14px; }
+  .model-pill-part.model { padding-left: 14px; }
+  .model-pill-part.effort { padding-right: 14px; }
+  /* Both lists open from the pill's left edge, so they stay on screen. */
+  .composer-actions .model-pill { position: relative; }
+  .model-pick { position: static; }
+  .quick-pick { left: 0; right: auto; }
+}
+@media (max-width: 400px) { .model-name { display: none; } .model-name-short { display: inline; } }

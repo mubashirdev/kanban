@@ -6,6 +6,7 @@ import { Modal } from "./Modal";
 import { Select } from "./Select";
 import { timeAgo } from "./time";
 import { VersionHistoryOffer } from "./VersionHistoryOffer";
+import { DefaultModelsButton } from "./addons/models/DefaultModels";
 
 const MODELS = ["opus", "sonnet", "haiku"];
 const DEFAULT_MAX_PARALLEL = 5;
@@ -243,6 +244,7 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
 
         {profile && (
           <>
+            <DefaultModelsButton slug={profile.slug} onClaudeModel={setModel} />
             <label className="check-row board-switch">
               <input type="checkbox" checked={autoHuddles} onChange={(e) => setAutoHuddles(e.target.checked)} />
               <span>

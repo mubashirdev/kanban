@@ -2,6 +2,7 @@ import { helperArgv } from "../../artifact";
 import { HUDDLE_AGENT_ENV } from "../../huddle-roster";
 import type { RunHandle, startRun } from "../../runner";
 import { askHandler } from "./asks";
+import { codexChoice } from "../models";
 import { codexArgs, startCodexRun } from "./runner";
 import { codexStore, patchTicket, saveTeammateThread, teammateThread, threadOf, ticketRef } from "./state";
 
@@ -30,12 +31,15 @@ export function startCodexFor(opts: Parameters<typeof startRun>[0]): RunHandle {
   const writableRoots = readOnly || !env.CKANBAN_OUTPUT_DIR ? [] : [env.CKANBAN_OUTPUT_DIR];
   // Tools the board turned off for this run (a Planning chat's list), for Codex too.
   const disabledTools = (flag(opts.args, "--disallowedTools") ?? "").split(",").filter((t) => t.startsWith("mcp__ckanban__")).map((t) => t.slice("mcp__ckanban__".length));
-  const threadId = ticket ? threadOf(codexStore().getTicket(ticket.slug, ticket.id)) : session ? teammateThread(session) : null;
+  const t = ticket ? codexStore().getTicket(ticket.slug, ticket.id) : null;
+  const profile = ticket ? codexStore().getProfile(ticket.slug) : null;
+  const { model, effort } = t && profile ? codexChoice(t, profile) : { model: null, effort: null };
+  const threadId = ticket ? threadOf(t) : session ? teammateThread(session) : null;
   const asks = ask ? askHandler(ticket!.slug, ticket!.id) : null;
   const handle = startCodexRun({
     bin: process.env.CKANBAN_CODEX_BIN ?? "codex",
     cwd: opts.cwd,
-    args: codexArgs({ readOnly, ask, writableRoots, instructions: flag(opts.args, "--append-system-prompt"), mcp: [...helperArgv(), "mcp"], disabledTools }),
+    args: codexArgs({ readOnly, ask, writableRoots, model, effort, instructions: flag(opts.args, "--append-system-prompt"), mcp: [...helperArgv(), "mcp"], disabledTools }),
     input: opts.input ?? "",
     threadId,
     env,

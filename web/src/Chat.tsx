@@ -46,6 +46,7 @@ import { usePhone } from "./usePhone";
 import { enterSends } from "./enterSends";
 import { CodexAskCard } from "./addons/codex/AskCard";
 import { agentName } from "./addons/codex/api";
+import { useModelPill } from "./addons/models/ModelPill";
 
 /** File cards shown under one reply; the rest are in the Outputs tab. */
 const MAX_FILE_CARDS = 8;
@@ -197,6 +198,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const images = useImagePaste(setDraft);
   const snippets = useSnippetPicker({ slug, ref: composer, setValue: setDraft });
   const commands = useSlashCommands(slug, ticket.id);
+  const modelPill = useModelPill(slug, ticket, onError);
   const simpler = useSimpler(slug, ticket.id);
   const slash = useSlashPicker({ commands, ref: composer, setValue: setDraft });
   const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -381,6 +383,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     // A command goes as `/name args`, the way the server queues it and the session shows it.
     const t = messageCommand(text, commands) ? text.trim().replace(/^(\S+)\s+/, "$1 ") : text.trim();
     if (!t || stopping || images.uploading) return;
+    if (modelPill.slash(t)) return setDraft("");
     images.clearError();
     stickToBottom.current = true;
     const steer = running;
@@ -878,6 +881,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             <span className="composer-keys"> Enter to send · Shift+Enter for a new line{queued.some((q) => !q.peer && editable(q)) && " · ↑ to edit your queued message"}</span>
           </span>
           <span className="composer-actions">
+            {modelPill.pill(running || stopping)}
             <ImagePickButton images={images} target={composer} disabled={stopping} />
             {running && <button className="btn danger small" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop"}</button>}
             <button className="btn primary small" disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? "Uploading…" : "Send"}<KeyHint keys="↵" /></button>

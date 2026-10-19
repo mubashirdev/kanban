@@ -23,6 +23,9 @@ export function attachCodex(store: Store, bus: Bus) {
   ctx = { store, bus };
 }
 
+/** The board's store once attached, else null (tests that never start the daemon). */
+export const attachedStore = (): Store | null => ctx?.store ?? null;
+
 export function codexStore(): Store {
   if (!ctx) throw new Error("the Codex add-on isn't attached (attachCodex)");
   return ctx.store;

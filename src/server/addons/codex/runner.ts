@@ -22,6 +22,7 @@ export function codexArgs(options: {
   /** Commands and edits outside the sandbox ask the user (a permission card) instead of failing. */
   ask?: boolean;
   model?: string | null;
+  effort?: string | null;
   writableRoots?: string[];
   /** Extra developer instructions for this turn (Codex has no --append-system-prompt). */
   instructions?: string;
@@ -55,6 +56,7 @@ export function codexArgs(options: {
     );
   }
   if (options.model) args.push("-c", `model=${JSON.stringify(options.model)}`);
+  if (options.effort) args.push("-c", `model_reasoning_effort=${JSON.stringify(options.effort)}`);
   return args;
 }
 
