@@ -5,6 +5,7 @@ import { capInputText, parseCap } from "./capText";
 import { useLayer } from "./layers";
 import { costText } from "./usage";
 import { AgentRow } from "./addons/codex/AgentPicker";
+import { MoveToChats } from "./addons/chats/MoveToChats";
 
 /**
  * "⋯" menu in the ticket panel header: the session (resume command, branch, ID, linked session),
@@ -147,6 +148,7 @@ export function TicketMenu({ ticket, working, live, linkedLabel, boardCap, onCap
           <div className="menu-sep" role="separator" />
           <CapRow ticket={ticket} boardCap={boardCap} onCap={onCap} />
           <AgentRow ticket={ticket} working={working} />
+          <MoveToChats ticket={ticket} working={working} />
           <div className="menu-sep" role="separator" />
           <button role="menuitem" className="menu-item" title="Something wrong with ckanban on this ticket? File a GitHub issue with its details attached"
             onClick={pick(onReportBug)}>

@@ -38,6 +38,8 @@ import { useBoardHuddles } from "./huddle";
 import { hasOpenPr, runCounts } from "./boardStats";
 import { ParallelConfirm } from "./ParallelConfirm";
 import { BRAND } from "./addons/brand";
+import { PhoneBell, useChats } from "./addons/chats/useChats";
+import { isChat } from "./addons/chats/chatList";
 import { BrandLogo } from "./addons/BrandLogo";
 
 // xterm.js and highlight.js only load once the panel is opened. After an upgrade the old chunk is gone:
@@ -518,6 +520,7 @@ export function App() {
 
   const profile = useMemo(() => profiles?.find((p) => p.slug === slug) ?? null, [profiles, slug]);
   const open = tickets.find((t) => t.id === openId) ?? null;
+  const chats = useChats({ profile, tickets, open, phone, phoneTab, openTicket, closeTicket, showPhoneTab: () => setPhoneTab("now") });
 
   /** Start huddle from the Team tab: on the ticket open in the drawer, else on a new ticket in Planning. No picker. */
   const startHuddle = async (seed: HuddleSeed) => {
@@ -548,7 +551,7 @@ export function App() {
   const q = search.text;
   const tagsWanted = [...new Set([...tagFilter, ...search.tags])];
   const activeFilters = FILTERS.filter((f) => filters.has(f.id));
-  const shownTickets = tickets.filter((t) =>
+  const shownTickets = tickets.filter((t) => !isChat(t) &&
     (!q || `${t.title}\n${t.body}`.toLowerCase().includes(q)) && hasTags(t, tagsWanted) && (!activeFilters.length || activeFilters.some((f) => f.test(t))));
   const filtering = !!q || tagsWanted.length > 0 || activeFilters.length > 0;
   // Prev/next walk the visible tickets of the column the drawer opened in, in its order at that time, so
@@ -750,6 +753,7 @@ export function App() {
             {running.runs}/{profile.maxParallel} running{running.agents > 0 && <> · {running.agents} huddle {running.agents === 1 ? "agent" : "agents"}</>}{queued > 0 && <> · {queued} queued</>}
           </span>
         )}
+        {profile && chats.switcher}
         <UsagePill state={usage} openRequest={usageRequest} />
         {restart.pending && (
           <span className="pill warn" title="The daemon restarts once every active run (on any board) has finished. Until then nothing new starts: queued tickets, chat replies and Planning interviews wait.">
@@ -779,6 +783,7 @@ export function App() {
             <TeamIcon /><span className="label">Team</span><KeyHint keys="T" />
           </button>
         )}
+        {phone && profile && <PhoneBell count={inbox.length} onNotifications={() => setNotifications(true)}>{(close) => <NowView inbox={inbox} tickets={tickets} slug={profile.slug} onOpen={(b, id) => { close(); openFrom(b, id); }} onMarkDone={(i) => void inboxDone(i)} onSnooze={(i) => void inboxSnooze(i, true)} onSwitchBoard={(b) => { close(); switchBoard(b); }} />}</PhoneBell>}
         {profile && (
           <button className="btn ghost phone-only topbar-icon" aria-label="Search tickets"
             onClick={() => { setPhoneTab("board"); requestAnimationFrame(() => searchRef.current?.focus()); }}>
@@ -786,11 +791,11 @@ export function App() {
           </button>
         )}
         {profile && (
-          <button className="btn primary phone-only topbar-icon" aria-label="New ticket" onClick={() => setNewTicket(true)}><PlusIcon size={18} /></button>
+          <button className="btn primary phone-only topbar-icon" aria-label={chats.showing ? "New chat" : "New ticket"} onClick={chats.showing ? chats.newChat : () => setNewTicket(true)}><PlusIcon size={18} /></button>
         )}
         {profile && (
-          <button className="btn primary desktop-only" onClick={() => setNewTicket(true)} title="New ticket (N)">
-            New ticket<KeyHint keys="N" />
+          <button className="btn primary desktop-only" onClick={chats.showing ? chats.newChat : () => setNewTicket(true)} title="New ticket (N)">
+            {chats.showing ? "New chat" : "New ticket"}<KeyHint keys="N" />
           </button>
         )}
         <HeaderMenu alert={menuAlert} keyHint={<KeyHint keys="?" />} items={menuItems} footer={menuFooter} />
@@ -837,9 +842,7 @@ export function App() {
           </button>
         </div>
       ) : (
-        phone && phoneTab === "now" ? (
-          <NowView inbox={inbox} tickets={tickets} slug={profile.slug} onOpen={openFrom} onMarkDone={(i) => void inboxDone(i)} onSnooze={(i) => void inboxSnooze(i, true)} onSwitchBoard={switchBoard} />
-        ) : <>
+        chats.view ?? <>
           <div className="board-bar">
             <div className={`search${tagFilter.length ? " has-tags" : ""}`}>
               <SearchIcon className="icon search-icon" />
@@ -894,7 +897,7 @@ export function App() {
         </>
       )}
       {phone && profile && (
-        <PhoneNav tab={phoneTab} onTab={setPhoneTab} needYou={perBoard.get(profile.slug) ?? 0} scheduleAlert={scheduleFails > 0} onSchedules={() => openSchedules()}
+        <PhoneNav tab={phoneTab} onTab={setPhoneTab} needYou={chats.unread} scheduleAlert={scheduleFails > 0} onSchedules={() => openSchedules()}
           onMore={() => setMoreOpen(true)} moreAlert={mcpAttention > 0} />
       )}
       {moreOpen && <MoreSheet items={menuItems.filter((i) => i.label !== "Schedules" && i.label !== "Keyboard shortcuts")} footer={menuFooter} onClose={() => setMoreOpen(false)}
@@ -933,7 +936,7 @@ export function App() {
           onOpenTicket={(id) => { setSchedulesOpen(false); openTicket(id); }} />
       )}
       {snippetsOpen && profile && <SnippetsDialog profile={profile} onClose={() => setSnippetsOpen(false)} />}
-      {open && profile && <TicketDrawer key={open.id} profile={profile} ticket={open} tickets={tickets} onOpenTicket={openTicket} onClose={closeTicket}
+      {open && profile && !chats.hidesDrawer && <TicketDrawer key={open.id} profile={profile} ticket={open} tickets={tickets} onOpenTicket={openTicket} onClose={closeTicket}
         jobs={jobs ?? []} onOpenJobs={openSchedules}
         nav={{ prev: prevId, next: nextId, go: stepTicket }} slideIn={!stepped.current}
         tabRequest={huddleTab?.id === open.id ? { tab: "huddle", n: huddleTab.n, huddleId: huddleTab.huddleId } : null}

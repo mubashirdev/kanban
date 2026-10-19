@@ -51,6 +51,11 @@ Port 7779, not 7778: Leo's phone access listener (`src/server/remote.ts`) takes 
 | `src/server/http.ts` | imports `modelRoutes`; `modelRoutes(...)` right after `codexRoutes(...)` | Models: `/api/addons/models/*` (Claude's model list, a ticket's model and effort, board defaults) |
 | `web/src/Chat.tsx` | `const modelPill = useModelPill(...)` after `useSlashCommands`; `if (modelPill.slash(t)) return setDraft("")` in `send`; `{modelPill.pill(running \|\| stopping)}` first in the composer actions | Models: the model and effort pill in the message box, and `/model` and `/effort` |
 | `web/src/ProfileDialog.tsx` | `<DefaultModelsButton slug={profile.slug} onClaudeModel={setModel} />` first in the `{profile && ...}` block | Models: "Default models and effort for Claude and Codex…" in board settings |
+| `src/server/board.ts` | imports `chatTurn` and `isChat`; `chatFor` starts with `const own = chatTurn(t, msg); if (own) return own;`; `ranInPlace` in `ensureSessionNow` gets `\|\| isChat(t)` | Chats: a chat's message goes as typed and quietly (the card never moves), and a chat runs in the board folder, never in a copy of it |
+| `src/server/http.ts` | imports `chatRoutes`; `chatRoutes(...)` right after `modelRoutes(...)` | Chats: `/api/addons/chats/*` (start a chat, Read only or Can edit, read/unread, move between board and Chats) |
+| `web/src/App.tsx` | imports `useChats`, `PhoneBell` and `isChat`; `const chats = useChats(...)` after `open`; `!isChat(t) &&` first in `shownTickets`; `{profile && chats.switcher}` before `UsagePill`; `<PhoneBell>` (with Leo's `NowView` inside) before the phone search button; both New ticket buttons call `chats.newChat` while Chats shows; `chats.view ??` replaces the phone Now branch; `PhoneNav` gets `needYou={chats.unread}`; `TicketDrawer` gets `!chats.hidesDrawer &&` | Chats: Board \| Chats switch on wide screens, Chats as the phone's first tab, chats off the board, the phone bell with what Now showed |
+| `web/src/PhoneNav.tsx` | the first item is "Chats" with `ChatIcon` instead of "Now" with `NowIcon` (the tab id stays `"now"`; its badge is the unread chats) | Chats: the phone bottom bar is Chats, Board, Schedules, More |
+| `web/src/TicketMenu.tsx` | `<MoveToChats ticket={ticket} working={working} />` after `AgentRow` | Chats: "Move to Chats" for a board ticket |
 | `CLAUDE.md` | a pointer to this file; our wording in the two workflow sections; merges from upstream land as merge commits | so every run follows the add-on rule and our landing flow |
 
 `Logo` stays in `App.tsx`'s icon import on purpose: changing Leo's long import line would conflict with most of his updates.
@@ -69,16 +74,24 @@ The pill in the message box ("Opus 5.5 · High") picks the model and effort for 
 - Claude runs get `--effort` in `startAgentRun` (`src/server/addons/agents.ts`); Leo's code already passes `--model`. Codex runs get `model` and `model_reasoning_effort` in `startCodexFor`. Huddle teammates keep their own settings.
 - `GET /api/addons/models/claude` asks `claude -p` for its model list and the efforts each model supports (no model turn), kept 10 minutes.
 
+## Chats
+
+Chats are conversations off the board (`src/server/addons/chats.ts`, `web/src/addons/chats/`). A chat is a ticket with `standalone: true`, `access` (`read` or `edit`) and `readAt`, the fields our old version saved, so its chats still show up. It stays in Backlog and never moves, runs in the board folder (never a copy of it, no pull request, no result line), and gets the user's messages as typed. Read only runs like a Planning chat (no edit tools; Codex gets a read-only sandbox). Every turn adds a short chat prompt to the agent's system prompt with the current access (in `startAgentRun`, so Codex gets it too). Claude or Codex per chat uses the Codex add-on's `agent` field.
+
+- Wide screens: a Board | Chats switch in the top bar; Chats shows the list on the left and the open chat (Leo's `Chat`) or a new-chat box on the right.
+- Phones: Chats is the bottom bar's first tab, in place of Leo's Now screen. What Now showed (tickets that need you, running ones) is in the bell in the top bar, with "Get told on this phone".
+- Swipe a chat left for Stop, Read or Unread, and Delete. The ticket menu has "Move to Chats", the chat menu "Move to board".
+
 ## Updating from Leo
 
 ```sh
 git fetch upstream && git merge upstream/main
 ```
 
-Then check that every hook in the table above is still there (grep for `BRAND`, `brandPlugin`, `startAgentRun`, `CodexSessionCache`, `codexRoutes` and `addons/codex`). After `bun run build:web`, `web/dist/index.html` and `web/dist/manifest.webmanifest` should say "Muba AI". If Leo changed the strings the plugin replaces, fix the plugin, not his files. Then run the usual checks and land as in `CLAUDE.md`, as a merge commit (don't rebase or squash a merge from upstream).
+Then check that every hook in the table above is still there (grep for `BRAND`, `brandPlugin`, `startAgentRun`, `CodexSessionCache`, `codexRoutes`, `addons/codex` and `addons/chats`). After `bun run build:web`, `web/dist/index.html` and `web/dist/manifest.webmanifest` should say "Muba AI". If Leo changed the strings the plugin replaces, fix the plugin, not his files. Then run the usual checks and land as in `CLAUDE.md`, as a merge commit (don't rebase or squash a merge from upstream).
 
 ## Our features not in Leo's version yet
 
-These were in our version before the switch (tag `pre-leo-switch`) and come back as separate add-on tickets: Cursor as a ticket/chat agent (plugs into `startAgentRun` in `src/server/addons/agents.ts` like Codex), our push alerts/notifications, review panel, our search dialog (Leo has his own ⌘K command bar), git bar, Sessions "On this Mac", daily cost, slash commands, dictation, the trusted Wi-Fi address set on every start (`scripts/start-login.ts`; Leo's version has no Wi-Fi access). The phone link with sign-in page and passkeys is back (see above).
+These were in our version before the switch (tag `pre-leo-switch`) and come back as separate add-on tickets: Cursor as a ticket/chat agent (plugs into `startAgentRun` in `src/server/addons/agents.ts` like Codex), our push alerts/notifications, review panel, our search dialog (Leo has his own ⌘K command bar), git bar, Sessions "On this Mac", daily cost, slash commands, dictation, the trusted Wi-Fi address set on every start (`scripts/start-login.ts`; Leo's version has no Wi-Fi access). The phone link with sign-in page and passkeys, and Chats, are back (see above).
 
 Unfinished work from the main checkout at the time of the switch is on branch `wip/pre-leo-switch`.

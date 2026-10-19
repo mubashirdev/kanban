@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { MenuItem } from "./HeaderMenu";
-import { BoardIcon, ClockIcon, MoreIcon, NowIcon } from "./icons";
+import { BoardIcon, ChatIcon, ClockIcon, MoreIcon } from "./icons";
 import { useLayer } from "./layers";
 
 export type PhoneTab = "now" | "board";
@@ -23,7 +23,7 @@ export function PhoneNav({ tab, onTab, needYou, scheduleAlert, onSchedules, onMo
   );
   return (
     <nav className="phone-nav" aria-label="Sections">
-      {item("Now", <NowIcon size={20} />, tab === "now", () => onTab("now"), needYou > 0 && <span className="pn-badge">{needYou}</span>)}
+      {item("Chats", <ChatIcon size={20} />, tab === "now", () => onTab("now"), needYou > 0 && <span className="pn-badge">{needYou}</span>)}
       {item("Board", <BoardIcon size={20} />, tab === "board", () => onTab("board"))}
       {item("Schedules", <ClockIcon size={20} />, false, onSchedules, scheduleAlert && <span className="pn-dot" />)}
       {item("More", <MoreIcon size={20} />, false, onMore, moreAlert && <span className="pn-dot" />)}

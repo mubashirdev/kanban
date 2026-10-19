@@ -27,6 +27,7 @@ import { AUTO_CONTINUE_PER_DAY, clockTime, CONTINUE_TEXT, dayKey, limitMessage, 
 import { DraftTracker } from "./draft";
 import { buildArgs, DEFAULT_STALL_MINUTES, PLANNING_DISALLOWED_TOOLS, startRun, type RunHandle } from "./runner";
 import { startAgentRun } from "./addons/agents";
+import { chatTurn, isChat } from "./addons/chats";
 import { agentOf } from "./addons/codex/state";
 import { RETRY_DELAY_MS, RETRY_TEXT, transientError } from "./retry";
 import { BOARD_COMMANDS, commandText, listCommands, MODEL_HELP, parseSlash, REFUSED_COMMANDS, rememberInit, slashMessage, useBundledFile, validModel, type SlashCommand } from "./commands";
@@ -128,6 +129,8 @@ export function chatModeFor(status: Status): ChatMode {
 function chatFor(
   t: Pick<Ticket, "status" | "outcome">, msg: { text: string; peer?: boolean; fromPlanner?: boolean; slash?: "prompt" | "local"; hostWake?: boolean; followUp?: boolean },
 ): NonNullable<ActiveRun["chat"]> {
+  const own = chatTurn(t, msg);
+  if (own) return own;
   // A follow-up comes back to the ticket's own work, wherever the card is; afterwards the card goes back there.
   if (msg.followUp) return { text: msg.text, mode: "act", raw: true, returnTo: t.status === "in_progress" ? "review" : t.status, followUp: true };
   // The ticket's auto huddle wakes it: unattended work on its own ticket, so it ends like a work run (result line, column).
@@ -1333,7 +1336,7 @@ export class Board {
     if (t.workdir && !existsSync(t.workdir)) throw new Error(`linked session folder no longer exists: ${t.workdir}`);
     // A ticket that already ran in the folder itself stays there: its Claude session belongs to that folder.
     // One with a branch had a worktree (removed on Done): it gets it back at the same path, so its session resumes.
-    const ranInPlace = !t.worktree && !t.branch && (!!t.sessionStarted || t.runCount > 0);
+    const ranInPlace = !t.worktree && !t.branch && (!!t.sessionStarted || t.runCount > 0 || isChat(t));
     // Board set to "Work in the project folder": new tickets run there; one that already has a worktree keeps it.
     const folderMode = workspaceOf(profile) === "folder" && !t.worktree && !t.branch;
     if (isGit && !t.workdir && !ranInPlace && !folderMode && (!t.worktree || !existsSync(t.worktree))) {

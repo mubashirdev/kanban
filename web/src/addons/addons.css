@@ -74,3 +74,69 @@
   .quick-pick { left: 0; right: auto; }
 }
 @media (max-width: 400px) { .model-name { display: none; } .model-name-short { display: inline; } }
+
+/* Chats: chats off the board (web/src/addons/chats/). The old Chats layout in Leo's colors. */
+.chats-switch button { display: inline-flex; align-items: center; gap: 5px; }
+.chats { flex: 1; min-height: 0; display: flex; }
+.chat-list { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; overscroll-behavior: contain; padding: 12px 12px 16px; }
+.chats.wide .chat-list { flex: none; width: 340px; border-right: 1px solid var(--border); background: var(--surface); }
+.chat-list-head { position: sticky; top: -12px; z-index: 1; display: flex; padding-block: 0 4px; background: inherit; }
+.chat-list-head input { flex: 1; min-width: 0; min-height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.chat-list ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+.chats.wide .chat-list ul { background: transparent; border: 0; box-shadow: none; border-radius: 0; }
+.chat-list-empty { margin: 16px 4px; color: var(--muted); line-height: 1.5; }
+.chat-row { width: 100%; display: flex; align-items: flex-start; gap: 12px; padding: 0 14px; border: 0; background: var(--surface); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.chats.wide .chat-row { background: transparent; border-radius: 10px; }
+.chat-row .agent-mark { margin-top: 14px; }
+.chat-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 12px 0; }
+.chat-list li + li .chat-row-main { border-top: 1px solid var(--border); }
+.chats.wide .chat-list li + li .chat-row-main { border-top: 0; }
+.chat-row-top { display: flex; align-items: baseline; gap: 8px; }
+.chat-row-title { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-row-time { flex: none; font-size: 12.5px; color: var(--muted); }
+.chat-row-preview { font-size: 13.5px; line-height: 1.35; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.chat-row-preview b { color: var(--err); font-weight: 600; }
+.chat-row.running .chat-row-preview { color: var(--accent); }
+.chat-row.unread .chat-row-time { color: var(--accent); font-weight: 600; }
+.chat-row.unread .chat-row-title { color: var(--text); }
+.chat-row:hover, .chat-row:active, .chat-list li.active .chat-row { background: var(--accent-soft); }
+.unread-dot { flex: none; width: 10px; height: 10px; margin-top: 18px; border-radius: 50%; background: var(--accent); }
+.swipe-row { position: relative; overflow: hidden; }
+.swipe-actions { position: absolute; top: 0; right: 0; bottom: 0; display: flex; }
+.swipe-actions[aria-hidden="true"] { visibility: hidden; }
+.swipe-action { flex: 1; border: 0; border-radius: 0; background: var(--muted); color: #fff; font: 600 14px/1 inherit; font-family: inherit; cursor: pointer; }
+.swipe-action:first-child:not(.danger) { background: var(--accent); }
+.swipe-action.danger { background: var(--err); }
+.swipe-content { position: relative; transition: transform 0.2s ease; touch-action: pan-y; }
+.swipe-content.dragging { transition: none; }
+.chat-pane { flex: 1; min-width: 0; display: flex; }
+.chat-pane-new { flex: 1; max-width: 720px; margin: 0 auto; padding: 48px 32px; display: flex; flex-direction: column; gap: 16px; }
+.chat-pane-new h2 { margin: 0; font-size: 20px; }
+.chat-starter { display: flex; flex-direction: column; gap: 10px; padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); }
+.chat-starter:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.chat-starter textarea { width: 100%; resize: none; border: 0; background: transparent; padding: 2px; font: inherit; font-size: 15px; outline: none; box-shadow: none; }
+.starter-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.starter-foot .btn.primary { margin-left: auto; }
+.starter-hint { margin: 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.modal .chat-starter { border: 0; box-shadow: none; padding: 0; }
+.chat-panel { width: 100%; }
+.chat-pane .panel.embedded { position: static; flex: 1; min-width: 0; width: auto; max-width: none; border-left: 0; box-shadow: none; animation: none; }
+.chat-wrap .panel { width: min(760px, 100%); }
+.chat-panel-bar { flex: none; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 20px; border-bottom: 1px solid var(--border); }
+.chat-panel-main { flex: 1; min-height: 0; }
+/* A chat is never "parked": Leo's Backlog hint doesn't apply. */
+.chat-panel .chat-empty { display: none; }
+/* Leo's "Refine mode: Claude won't change files" line: the access bar above says it, for Codex too. */
+.chat-panel .composer-hint { visibility: hidden; }
+.phone-bell { position: relative; }
+.phone-bell .pn-badge { top: -4px; right: -4px; }
+.bell-now .now { overflow: visible; padding: 0; }
+@media (max-width: 720px) {
+  .chat-wrap .panel { width: 100%; }
+  .chat-panel-bar { padding: 6px 12px; }
+  .chat-panel-bar .muted { display: none; }
+  .chat-row { min-height: 64px; }
+  .starter-foot .segmented button { min-height: 40px; }
+  .starter-foot .btn.primary { min-height: 40px; flex-basis: 100%; }
+  .sheet .bell-now { max-height: 60vh; overflow-y: auto; }
+}
