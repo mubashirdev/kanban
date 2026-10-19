@@ -99,6 +99,16 @@ git fetch upstream && git merge upstream/main
 
 Then check that every hook in the table above is still there (grep for `BRAND`, `brandPlugin`, `startAgentRun`, `CodexSessionCache`, `codexRoutes`, `terminalRoutes`, `addons/codex` and `addons/chats`). After `bun run build:web`, `web/dist/index.html` and `web/dist/manifest.webmanifest` should say "Muba AI". If Leo changed the strings the plugin replaces, fix the plugin, not his files. Then run the usual checks and land as in `CLAUDE.md`, as a merge commit (don't rebase or squash a merge from upstream).
 
+## Taking Leo's updates
+
+A board schedule, "Leo's updates (weekly)", does the steps above every Monday at 09:00 (only while the board runs; one missed run is caught up when it starts). To check right away: Schedules, then Run now on it.
+
+- Nothing new from Leo: the ticket goes to Done with "No new updates from Leo".
+- Clean merge and all checks pass: the ticket stops in Review with a plain list of what Leo changed. Reply "land it" in the ticket chat and it lands the merge commit on main and restarts the board.
+- Conflicts or failing checks: the ticket lists each place (file:line), matched to a hook in the table above, tries a fix in its own copy and re-runs the checks. It never lands by itself; say what to do in the ticket chat.
+
+We merge, never rebase or squash our commits or Leo's. The schedule's text is the run's whole prompt: change it in Schedules (or with `update_schedule`) when these steps change.
+
 ## Our features not in Leo's version yet
 
 These were in our version before the switch (tag `pre-leo-switch`) and come back as separate add-on tickets: Cursor as a ticket/chat agent (plugs into `startAgentRun` in `src/server/addons/agents.ts` like Codex), our push alerts/notifications, review panel, our search dialog (Leo has his own ⌘K command bar), git bar, daily cost, slash commands, dictation, the trusted Wi-Fi address set on every start (`scripts/start-login.ts`; Leo's version has no Wi-Fi access). The phone link with sign-in page and passkeys, Chats and On this Mac are back (see above).
