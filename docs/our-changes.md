@@ -13,9 +13,13 @@ This repo is Leo's ckanban (`upstream` = github.com/leoawesome/kanban) plus a fe
 
 The app name and icons come from one file: `web/src/addons/brand.ts`. The icons are in `web/public/addons/icons/`. To change the name or icon, edit only those.
 
-`web/addons/brand-plugin.ts` writes the brand into Leo's static files at build time (`bun run build:web`): the tab title and icons in `index.html`, the name and icons in `manifest.webmanifest`, the push notification title fallback and icon in `sw.js`. The source files stay Leo's. Under `vite dev` the manifest and `sw.js` still show his. Only the built `web/dist` is branded.
+`web/addons/brand-plugin.ts` writes the brand into Leo's static files at build time (`bun run build:web`): the tab title and icons in `index.html` (plus the iPhone status bar add-on, below), the name and icons in `manifest.webmanifest`, the push notification title fallback and icon in `sw.js`. The source files stay Leo's. Under `vite dev` the manifest and `sw.js` still show his. Only the built `web/dist` is branded.
 
 Leo's own strings that we leave alone: "ckanban" in prompts, the CLI, the MCP server name, git identity, `TicketMenu.tsx` ("Report a bug in ckanban", which files the bug on his repo) and `ConnectionsDialog.tsx` (names the `ckanban` MCP server).
+
+## iPhone status bar
+
+On an iPhone home-screen app, iOS blurs the top of the page under the status bar. `web/public/addons/pwa-shell.js` sets `data-standalone` on `<html>` when the app is installed, and `pwa-shell.css` then adds a hidden full-width `.pwa-status-anchor` at the top (WebKit samples it instead of the header) and moves Leo's top bar, ticket head, file reader head, toasts and dialogs below a status area of at least 47px (portrait phone layout only). Those rules replace Leo's `env(safe-area-inset-top)` padding, so the gap counts once. The brand plugin loads both files into `index.html`, adds the anchor at the top of `body` and drops Leo's `apple-mobile-web-app-status-bar-style` meta. In normal Safari nothing changes. A desktop browser can't show the real blur; check changes on the phone.
 
 ## Phone link with sign-in page
 

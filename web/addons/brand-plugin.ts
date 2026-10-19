@@ -30,7 +30,11 @@ export function brandPlugin(): Plugin {
         .replace(/<title>ckanban<\/title>/, `<title>${BRAND.name}</title>`)
         .replace(/(apple-mobile-web-app-title" content=")ckanban"/, `$1${BRAND.name}"`)
         .replace(/<link rel="apple-touch-icon"[^>]*>/, `<link rel="apple-touch-icon" href="${BRAND.icons.appleTouch}" />`)
-        .replace(/<link rel="icon" href="[^"]*" \/>/, `<link rel="icon" type="image/png" sizes="32x32" href="${BRAND.icons.png32}" />`);
+        .replace(/<link rel="icon" href="[^"]*" \/>/, `<link rel="icon" type="image/png" sizes="32x32" href="${BRAND.icons.png32}" />`)
+        // Installed iPhone app: keep headers clear of the status bar blur (web/public/addons/pwa-shell.css).
+        .replace(/\s*<meta name="apple-mobile-web-app-status-bar-style"[^>]*>/, "")
+        .replace("</head>", `  <link rel="stylesheet" href="/addons/pwa-shell.css" />\n    <script src="/addons/pwa-shell.js"></script>\n  </head>`)
+        .replace("<body>", `<body>\n    <div class="pwa-status-anchor" aria-hidden="true"></div>`);
     },
     writeBundle() {
       const manifestPath = join(outDir, "manifest.webmanifest");

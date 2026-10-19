@@ -1,0 +1,29 @@
+/* Installed iPhone app: keep the top of the app clear of the status bar blur (see docs/our-changes.md).
+   pwa-shell.js sets data-standalone on <html>; in normal Safari none of this applies. */
+:root { --pwa-top: env(safe-area-inset-top, 0px); }
+.pwa-status-anchor { display: none; }
+html[data-standalone], html[data-standalone] body { background-color: var(--surface); }
+
+@supports (-webkit-touch-callout: none) {
+  /* WebKit reads the declared color, even when an empty text clip paints nothing.
+     Keep a real, full-width box above every dialog, with no opacity or transforms.
+     https://zenn.dev/uakihir0/articles/260920-ios27-pwa-blur */
+  :root[data-standalone] .pwa-status-anchor {
+    display: block; position: fixed; top: 0; left: 0; right: 0; height: 12px;
+    background-color: var(--surface); -webkit-background-clip: text; background-clip: text;
+    z-index: 2147483647; pointer-events: none;
+  }
+}
+
+/* Phone layout (Leo's 720px breakpoint). Some installed versions report a zero top inset under the blur,
+   so reserve at least the iPhone status bar height (47px). These rules replace Leo's env(safe-area-inset-top)
+   padding instead of adding to it, so the gap is counted once. */
+@media (max-width: 720px) and (orientation: portrait) {
+  :root[data-standalone] { --pwa-top: max(env(safe-area-inset-top, 0px), 47px); }
+  :root[data-standalone] .topbar,
+  :root[data-standalone] .panel-head,
+  :root[data-standalone] .reader .output-bar { padding-top: calc(8px + var(--pwa-top)); }
+  :root[data-standalone] .toaster { top: calc(8px + var(--pwa-top)); }
+  :root[data-standalone] .overlay { padding-top: calc(12px + var(--pwa-top)); }
+  :root[data-standalone] .modal { max-height: calc(100dvh - 24px - var(--pwa-top)); }
+}
