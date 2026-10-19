@@ -15,11 +15,10 @@ html[data-standalone], html[data-standalone] body { background-color: var(--surf
   }
 }
 
-/* Phone layout (Leo's 720px breakpoint). Some installed versions report a zero top inset under the blur,
-   so reserve at least the iPhone status bar height (47px). These rules replace Leo's env(safe-area-inset-top)
-   padding instead of adding to it, so the gap is counted once. */
+/* Phone layout (Leo's 720px breakpoint). Use only the inset Safari reports: it already keeps the status bar
+   out of the page, so a fixed minimum on top of it leaves a big empty strip. These rules replace Leo's
+   env(safe-area-inset-top) padding instead of adding to it, so the gap is counted once. */
 @media (max-width: 720px) and (orientation: portrait) {
-  :root[data-standalone] { --pwa-top: max(env(safe-area-inset-top, 0px), 47px); }
   :root[data-standalone] .topbar,
   :root[data-standalone] .panel-head,
   :root[data-standalone] .reader .output-bar { padding-top: calc(8px + var(--pwa-top)); }

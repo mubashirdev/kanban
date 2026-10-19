@@ -38,7 +38,7 @@ import { useBoardHuddles } from "./huddle";
 import { hasOpenPr, runCounts } from "./boardStats";
 import { ParallelConfirm } from "./ParallelConfirm";
 import { BRAND } from "./addons/brand";
-import { PhoneBell, useChats } from "./addons/chats/useChats";
+import { useChats } from "./addons/chats/useChats";
 import { isChat } from "./addons/chats/chatList";
 import { BrandLogo } from "./addons/BrandLogo";
 
@@ -520,7 +520,7 @@ export function App() {
 
   const profile = useMemo(() => profiles?.find((p) => p.slug === slug) ?? null, [profiles, slug]);
   const open = tickets.find((t) => t.id === openId) ?? null;
-  const chats = useChats({ profile, tickets, open, phone, phoneTab, openTicket, closeTicket, showPhoneTab: () => setPhoneTab("now") });
+  const chats = useChats({ profile, tickets, open, phone, phoneTab, openTicket, closeTicket, showPhoneTab: () => setPhoneTab("chats") });
 
   /** Start huddle from the Team tab: on the ticket open in the drawer, else on a new ticket in Planning. No picker. */
   const startHuddle = async (seed: HuddleSeed) => {
@@ -783,7 +783,6 @@ export function App() {
             <TeamIcon /><span className="label">Team</span><KeyHint keys="T" />
           </button>
         )}
-        {phone && profile && <PhoneBell count={inbox.length} onNotifications={() => setNotifications(true)}>{(close) => <NowView inbox={inbox} tickets={tickets} slug={profile.slug} onOpen={(b, id) => { close(); openFrom(b, id); }} onMarkDone={(i) => void inboxDone(i)} onSnooze={(i) => void inboxSnooze(i, true)} onSwitchBoard={(b) => { close(); switchBoard(b); }} />}</PhoneBell>}
         {profile && (
           <button className="btn ghost phone-only topbar-icon" aria-label="Search tickets"
             onClick={() => { setPhoneTab("board"); requestAnimationFrame(() => searchRef.current?.focus()); }}>
@@ -842,7 +841,9 @@ export function App() {
           </button>
         </div>
       ) : (
-        chats.view ?? <>
+        chats.view ?? (phone && phoneTab === "now" ? (
+          <NowView inbox={inbox} tickets={tickets} slug={profile.slug} onOpen={openFrom} onMarkDone={(i) => void inboxDone(i)} onSnooze={(i) => void inboxSnooze(i, true)} onSwitchBoard={switchBoard} />
+        ) : <>
           <div className="board-bar">
             <div className={`search${tagFilter.length ? " has-tags" : ""}`}>
               <SearchIcon className="icon search-icon" />
@@ -894,13 +895,13 @@ export function App() {
           <Board tickets={shownTickets} filtered={filtering} onOpen={(id) => openTicket(id)} onMove={move} onAdd={() => setNewTicket(true)} restartPending={restart.pending}
             huddles={huddles} onOpenHuddle={openHuddle} slug={slug ?? undefined} onTag={addTagFilter}
             jobs={jobs ?? undefined} onOpenJobs={openSchedules} allTickets={tickets} />
-        </>
+        </>)
       )}
       {phone && profile && (
-        <PhoneNav tab={phoneTab} onTab={setPhoneTab} needYou={chats.unread} scheduleAlert={scheduleFails > 0} onSchedules={() => openSchedules()}
-          onMore={() => setMoreOpen(true)} moreAlert={mcpAttention > 0} />
+        <PhoneNav tab={phoneTab} onTab={setPhoneTab} needYou={perBoard.get(profile.slug) ?? 0} unreadChats={chats.unread}
+          onMore={() => setMoreOpen(true)} moreAlert={mcpAttention > 0 || scheduleFails > 0} />
       )}
-      {moreOpen && <MoreSheet items={menuItems.filter((i) => i.label !== "Schedules" && i.label !== "Keyboard shortcuts")} footer={menuFooter} onClose={() => setMoreOpen(false)}
+      {moreOpen && <MoreSheet items={menuItems.filter((i) => i.label !== "Keyboard shortcuts")} footer={menuFooter} onClose={() => setMoreOpen(false)}
         top={<UsageBox state={usage} />} />}
       {phoneAccess && <PhoneAccessDialog onClose={() => setPhoneAccess(false)} />}
       {notifications && <NotificationsDialog profile={profile?.slug ?? null} onClose={() => setNotifications(false)} />}

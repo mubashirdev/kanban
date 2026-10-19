@@ -109,8 +109,8 @@
 .swipe-action.danger { background: var(--err); }
 .swipe-content { position: relative; transition: transform 0.2s ease; touch-action: pan-y; }
 .swipe-content.dragging { transition: none; }
-.chat-pane { flex: 1; min-width: 0; display: flex; }
-.chat-pane-new { flex: 1; max-width: 720px; margin: 0 auto; padding: 48px 32px; display: flex; flex-direction: column; gap: 16px; }
+.chat-pane { flex: 1; min-width: 0; min-height: 0; display: flex; }
+.chat-pane-new { overflow-y: auto; flex: 1; max-width: 720px; margin: 0 auto; padding: 48px 32px; display: flex; flex-direction: column; gap: 16px; }
 .chat-pane-new h2 { margin: 0; font-size: 20px; }
 .chat-starter { display: flex; flex-direction: column; gap: 10px; padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); }
 .chat-starter:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
@@ -140,9 +140,6 @@
 .terminal-session-log { max-height: 60vh; }
 .terminal-session-tools { margin: 2px 0 4px; padding-left: 18px; }
 .terminal-session-actions { justify-content: space-between; }
-.phone-bell { position: relative; }
-.phone-bell .pn-badge { top: -4px; right: -4px; }
-.bell-now .now { overflow: visible; padding: 0; }
 @media (max-width: 720px) {
   .chat-wrap .panel { width: 100%; }
   .chat-panel-bar { padding: 6px 12px; }
@@ -150,5 +147,116 @@
   .chat-row { min-height: 64px; }
   .starter-foot .segmented button { min-height: 40px; }
   .starter-foot .btn.primary { min-height: 40px; flex-basis: 100%; }
-  .sheet .bell-now { max-height: 60vh; overflow-y: auto; }
+}
+
+/* Phone popups. Dialogs with forms, lists or tabs open full screen: the title and close button stay at the top under the
+   status bar, the content scrolls and the main buttons stay at the bottom above the home bar. Small ones (confirm,
+   "Bug reported", keyboard shortcuts) and the command bar stay as sheets that clear the home bar. */
+@media (max-width: 720px) {
+  .overlay { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+  .overlay:not(.confirm-overlay, .cmdbar-overlay) > .modal:not(:has(.bug-link, .shortcuts)) {
+    position: fixed; inset: 0; max-width: none; max-height: none; border: 0; border-radius: 0; box-shadow: none;
+    display: flex; flex-direction: column; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain;
+  }
+  .modal:not(:has(.bug-link, .shortcuts)) > .modal-head {
+    position: sticky; top: 0; z-index: 5; flex: none; background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: calc(6px + var(--pwa-top)) 6px 6px max(18px, env(safe-area-inset-left));
+  }
+  .modal-head .icon-btn { width: 44px; height: 44px; }
+  /* The dialog scrolls, not the lists inside it. */
+  .modal .form.mcp { max-height: none; overflow: visible; }
+  /* The form fills the screen, so its buttons sit at the bottom even when it is short. Snippets: the list sits above the editor. */
+  .modal > .snippets { flex: 1 0 auto; margin-top: 0; border-top: 0; }
+  .modal > .phone-access { padding-top: 12px; }
+  .modal:not(:has(.bug-link, .shortcuts)) > :is(.form, .phone-access), .modal > .snippets > .form { flex: 1 0 auto; padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
+  .modal:not(:has(.bug-link, .shortcuts)) :is(.form, .phone-access) > .form-actions {
+    position: sticky; bottom: 0; z-index: 4; margin: auto -18px 0;
+    padding: 10px 18px calc(10px + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--border);
+  }
+  .modal:not(:has(.bug-link, .shortcuts)) :is(.form, .phone-access) > .form-actions:last-child { margin-bottom: calc(-18px - env(safe-area-inset-bottom)); }
+  .modal .form-actions .btn { min-height: 44px; }
+}
+
+/* iPhone zooms the page in when a text box under 16px gets focus. Leo's 16px phone rule loses to more specific
+   ones (.desc-editor textarea, .snippet-editor textarea, .bug-form textarea, ...), so force it here. */
+@media (max-width: 720px) {
+  input, select, textarea, [contenteditable="true"] { font-size: 16px !important; }
+}
+
+/* Phone audit fixes (Leo's 720px phone layout). A few general rules instead of one patch per button:
+   tap targets at least 36px, small labels at least 12px, wide content scrolls inside its box. */
+@media (max-width: 720px) {
+  .btn.small, .select-trigger, .segmented button, .help-btn, .tag-add, .modal .link-btn, .output-bar .btn { min-height: 36px; }
+  .icon-btn:not(.tiny) { min-width: 36px; min-height: 36px; }
+  .icon-btn.tiny { width: 32px; height: 32px; }
+  .tag-chip { min-height: 32px; display: inline-flex; align-items: center; }
+  .col-jump .chip { flex: none; min-height: 36px; }
+  .search-clear, .star-toggle { min-height: 36px; min-width: 36px; }
+  .modal summary { min-height: 36px; display: flex; align-items: center; }
+  .modal input[type="checkbox"], .modal input[type="radio"] { width: 20px; height: 20px; flex: none; }
+  .share-dots { width: 36px; height: 36px; opacity: 1; }
+
+  .pn-label, .menu-hint, .menu-value, .menu-heading, .sched-heading, .your-turn .yt-label, .tab-count, .chip-count,
+  .badge, .need-chip, .output-meta, .output-hint, .inbox-board, .pill, .tag-chip, .count, .details-desc h4, .term-copy,
+  .diff-st { font-size: 12px; }
+  .pn-badge { font-size: 12px; line-height: 18px; }
+  .roster-table .pill, .board-switcher-item .need-chip, .term-copy { font-size: 12px; }
+  .conv-tools summary { padding-top: 8px; padding-bottom: 8px; }
+
+  /* Message box while a reply runs: Stop joins the row, so Photo shows only its icon and Send stays on screen. */
+  .composer-actions:has(.btn.danger) .image-pick-label { display: none; }
+
+  /* Tables in chat and files keep whole words and scroll sideways instead of breaking "Browser" into letters. */
+  .md :is(th, td) { min-width: 72px; overflow-wrap: normal; word-break: normal; }
+
+  /* Changes: the file list above the diff, not a squeezed column beside it. */
+  .changes-body { flex-direction: column; }
+  .changes-side { width: auto; max-height: 38%; border-right: 0; border-bottom: 1px solid var(--border); }
+  .changes-file, .changes-dir { min-height: 40px; }
+
+  /* Huddle roster: the table scrolls sideways instead of wrapping a role note into a narrow column. */
+  .roster-table { min-width: 460px; }
+  .roster-table td:first-child { min-width: 150px; }
+
+  /* Terminal and files: a full screen page above the bottom bar, with its close button under the status bar. */
+  .dock {
+    position: fixed; inset: 0; z-index: 50; height: auto !important; border-top: 0;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  .dock-resize { display: none; }
+  .dock-head { min-height: 48px; }
+  .dock-path { display: none; }
+}
+
+/* Phone on its side (wide but short, touch): Leo's computer layout, made to fit. The top bar scrolls sideways
+   instead of cutting off its right end, the notch keeps clear and text boxes are 16px so iOS doesn't zoom. */
+@media (pointer: coarse) and (max-height: 500px) and (min-width: 721px) {
+  input, select, textarea, [contenteditable="true"] { font-size: 16px !important; }
+  .app, .overlay, .panel { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+  .topbar { overflow-x: auto; scrollbar-width: none; }
+  .topbar > * { flex-shrink: 0; }
+  .topbar .profile-select { min-width: max-content; }
+  .topbar :is(.btn, .pill, .inbox-pill, .segmented button) { min-height: 36px; }
+  .panel-main .composer { margin-bottom: max(16px, env(safe-area-inset-bottom)); }
+  .chat-pane-new { padding: 16px 24px; }
+  .panel-details { max-height: 25vh; }
+  .panel-main .composer > textarea { min-height: 0; }
+  .panel-main .composer-hint { display: none; }
+  .modal { max-height: calc(100dvh - 24px); overflow-y: auto; }
+}
+
+/* iPhone keyboard: Safari doesn't shrink the page when the keyboard opens, so the message box, Send and Save end up
+   under it. pwa-shell.js sets data-keyboard, --keyboard-h (the height left above the keyboard) and --keyboard-top (where
+   Safari moved the visible area); the app, the ticket and full-screen dialogs then fit that space, and the bottom bar and sticky dialog buttons step aside. */
+@media (max-width: 720px) {
+  :root[data-keyboard] .app { position: relative; top: var(--keyboard-top); height: var(--keyboard-h); }
+  :root[data-keyboard] :is(.drawer-wrap, .dock, .overlay:not(.confirm-overlay, .cmdbar-overlay) > .modal) {
+    top: var(--keyboard-top); bottom: auto; height: var(--keyboard-h) !important;
+  }
+  :root[data-keyboard] .phone-nav { display: none; }
+  :root[data-keyboard] .modal :is(.form, .phone-access) > .form-actions { position: static; }
+  :root[data-keyboard] .chat .composer { margin-bottom: 0; }
+  /* Typing in a ticket: the head keeps only its title row, and the description editor may shrink. */
+  :root[data-keyboard] :is(.panel-head .your-turn.inline, .panel-head .badge, .panel-tags) { display: none; }
+  :root[data-keyboard] .desc-editor.fill textarea { min-height: 60px; }
 }
