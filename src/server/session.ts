@@ -118,7 +118,7 @@ export interface SessionEntry {
   /** Claude offered to branch this ticket (rendered with a Branch button). */
   branch?: { reason: string };
   /** Claude proposed a huddle roster (propose_huddle; rendered with a Start button). */
-  huddle?: { roster: RosterEntry[]; reason: string; template?: string };
+  huddle?: { roster: RosterEntry[]; reason: string; template?: string; brief?: string };
   /** Claude asked to delete tickets (propose_delete; rendered with Cancel / Delete buttons). */
   deletion?: { ids: string[]; reason: string };
   /** Claude proposed a teammate (propose_teammate; rendered with Save teammate / Edit first / Dismiss). */
@@ -439,7 +439,8 @@ function cardEntry(block: any): Pick<SessionEntry, "questions" | "proposal" | "n
     const roster = template && block.input?.roster === undefined ? [] : block.input?.roster;
     if (!(template && Array.isArray(roster) && !roster.length) && rosterError(roster)) return null;
     const reason = typeof block.input?.reason === "string" ? block.input.reason.trim() : "";
-    return { huddle: { roster, reason, ...(template ? { template } : {}) } };
+    const brief = typeof block.input?.brief === "string" ? block.input.brief.trim() : "";
+    return { huddle: { roster, reason, ...(template ? { template } : {}), ...(brief ? { brief } : {}) } };
   }
   return null;
 }

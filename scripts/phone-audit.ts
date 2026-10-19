@@ -232,8 +232,6 @@ try {
     const open = async (p: Page, id: string) => { await p.goto(`${BASE}/#/audit/${id}`); await p.reload(); };
     const showChats = (p: Page) => (phone ? p.locator(".tabbar button").nth(1) : p.locator(".mode-switch button").nth(1)).click();
     await page.goto(`${BASE}/#/audit`);
-    await page.evaluate(() => sessionStorage.setItem("ck-inbox-landed", "1"));
-    await page.reload();
     await page.waitForSelector(".topbar");
     if (phone) for (const lane of ["backlog", "planning", "review"]) await check(`board ${lane}`, (p) => p.locator(`button[data-column="${lane}"]`).click());
     else await check("board", async () => {});

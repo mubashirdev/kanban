@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { extractFinalText, summarizeEvent } from "../src/server/activity";
-import { chatPrompt, firstRunPrompt, freshSessionPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumeCommand, resumePrompt } from "../src/server/prompts";
+import { chatPrompt, chatRules, firstRunPrompt, freshSessionPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumeCommand, resumePrompt } from "../src/server/prompts";
 import { parseResult } from "../src/server/result";
 import type { Ticket } from "../src/server/types";
 
@@ -312,4 +312,16 @@ test("work in the project folder on a git repo: commit to the current branch, no
     expect(c).toContain("don't create or switch branches");
     expect(c).not.toContain("push new commits");
   }
+});
+
+test("asking for a huddle shows the card: chats and planning chats propose it, runs propose it before the work", () => {
+  for (const p of [chatRules(ticket, "refine", "/out"), chatRules(ticket, "act", "/out")]) {
+    expect(p).toContain("Huddle on request");
+    expect(p).toContain("a bug: bug-hunt");
+  }
+  expect(chatRules(ticket, "refine", "/out")).toContain('template "plan-check"');
+  const run = firstRunPrompt({ ...ticket, mode: "auto" } as Ticket, { repo: "plain" as const, outputDir: "/out" });
+  expect(run).toContain("Huddle on request");
+  expect(run).toContain('do it before the work: don\'t start the work, end with status "questions"');
+  expect(resumePrompt(ticket, [], "/out")).toContain("Huddle on request");
 });

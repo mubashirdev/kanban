@@ -947,7 +947,7 @@ export class Huddles {
    */
   create(
     slug: string, hostId: string, roster: RosterEntry[],
-    opts: { maxParticipants?: number; maxCostUsd?: number; template?: string; auto?: { reason: string; askedCostUsd?: number } } = {},
+    opts: { maxParticipants?: number; maxCostUsd?: number; template?: string; brief?: string; auto?: { reason: string; askedCostUsd?: number } } = {},
   ): Huddle {
     const host = this.store.getTicket(slug, hostId);
     if (!host) throw new HuddleError(404, `ticket ${hostId} not found`);
@@ -972,11 +972,12 @@ export class Huddles {
     if (err) throw new HuddleError(400, err);
     const at = nowIso();
     const main = presets.get(MAIN_PRESET)!;
+    const briefText = [tpl ? templateBrief(tpl, maxCostUsd) : "", opts.brief?.trim() ?? ""].filter(Boolean).join("\n\n").slice(0, BRIEF_MAX);
     const base = { prompt: "", focus: undefined, sessionId: null, status: "idle" as const, cursor: 0, joinedAt: at, workspace: "shared" as const, preset: null };
     const h: Huddle = {
       id: `h_${newId()}`, hostTicket: hostId, status: "live", maxParticipants: max, findings: [], invited: [], seq: 0,
       maxCostUsd, maxMessages: DEFAULT_MAX_MESSAGES, posts: 0, sinceUser: 0, stopReason: null, createdAt: at, updatedAt: at,
-      template: tpl?.name ?? null, brief: tpl ? { text: templateBrief(tpl, maxCostUsd), by: USER_HANDLE, at } : null,
+      template: tpl?.name ?? null, brief: briefText ? { text: briefText, by: USER_HANDLE, at } : null,
       ...(opts.auto ? { auto: { reason: opts.auto.reason } } : {}),
       participants: [
         { ...base, handle: USER_HANDLE, role: "User", model: null, mode: "monitor", lead: true, canEdit: false, kind: "human" },

@@ -37,7 +37,8 @@ export const BUILTIN_PRESETS: HuddlePreset[] = [
   },
   {
     name: "reviewer", role: "Code reviewer", model: null, mode: "tagged", lead: false, canEdit: false, workspace: "shared",
-    prompt: "Review the host ticket's changes (git diff against its base branch) for correctness bugs, risky edge cases, security problems and missing tests. " +
+    prompt: "Review the host ticket's changes (git diff against its base when the folder has version history, else the changed files the ticket lists) " +
+      "for correctness bugs, risky edge cases, security problems and missing tests. " +
       "Report concrete findings with file:line and why each one matters; skip style nits.",
   },
   {
@@ -53,7 +54,13 @@ export const BUILTIN_PRESETS: HuddlePreset[] = [
   },
   {
     name: "engineer", role: "Engineer", model: null, mode: "tagged", lead: false, canEdit: true, workspace: "own",
-    prompt: "Implement the part of the work you are given in your own worktree and branch, with tests. Commit there and tell @main the branch and what changed.",
+    prompt: "Implement the part of the work you are given in your own copy of the folder, with tests. Save your work there (commit if the folder uses version history) " +
+      "and tell @main what changed and where.",
+  },
+  {
+    name: "planner", role: "Planner", model: null, mode: "tagged", lead: false, canEdit: false, workspace: "shared",
+    prompt: "Turn the goal into a plan anyone can follow: open questions and the assumptions you make, 2-3 options with trade-offs and the one you pick, " +
+      "main risks, then ordered steps, each with how to tell it is done. Fit the plan to the work, which may not be code. Keep it short.",
   },
   {
     name: "security", role: "Security reviewer", model: null, mode: "tagged", lead: false, canEdit: false, workspace: "shared",
@@ -65,9 +72,9 @@ export const BUILTIN_PRESETS: HuddlePreset[] = [
       "No opinions on our product unless asked. Write long reports to your outputs folder and post the path.",
   },
   {
-    name: "ux-critic", role: "Solo-dev UX critic", model: null, mode: "tagged", lead: false, canEdit: false, workspace: "shared",
-    prompt: "Critique the user experience as a friction filter for one developer who uses the tool every day: can they tell at a glance who is doing what, " +
-      "what needs them, what it costs and when it is done? Flag extra clicks, settings, jargon and anything built for teams that a solo user doesn't need. " +
+    name: "ux-critic", role: "UX critic", model: null, mode: "tagged", lead: false, canEdit: false, workspace: "shared",
+    prompt: "Critique the user experience for the product's real users (from the brief or ticket; ask @main if unclear): can they tell what to do next, " +
+      "what happened and what went wrong? Flag extra steps, confusing words, missing feedback and anything those users don't need. " +
       "Propose concrete changes (what, where, why), ranked by user impact; prefer removing over adding.",
   },
   {

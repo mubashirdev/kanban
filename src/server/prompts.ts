@@ -44,6 +44,14 @@ If the user asks you here to manage, run, control or take over tickets (existing
 If the user only asked to create or adopt tickets, don't start the plan. You can also move, update, chat with, comment on, stop or release (update_ticket release: true) this ticket's own children; every other ticket is refused.`;
 
 /** How a ticket chat offers to branch the ticket; the user's click on the card does the branching. */
+/** The user asked for a huddle on the ticket: show the card with the template that fits. */
+export const HUDDLE_ASK_RULE = `Huddle on request: when the user asks for a huddle on this ticket (in the ticket, a note or a message, e.g. "let's do a huddle on this"), show it with the \`propose_huddle\` tool ${TOOL_NOTE}. Pick the template that fits: a plan: plan-check; a feature or design: design-review; finished work to review: auto-review; a bug: bug-hunt. Give a one-line reason and a brief with what the huddle must know (under 1500 characters). Say in one line that nothing runs until they press Start, and the budget.`;
+/** Runs: the same, before the work. */
+const HUDDLE_ASK_RUN = `${HUDDLE_ASK_RULE} In this run, do it before the work: don't start the work, end with status "questions" and a summary saying the huddle card waits for Start; the huddle's result comes back to you.`;
+
+/** Planning chats: check a big plan with the plan-check huddle before it is split into tickets. */
+export const PLAN_CHECK_RULE = `Plan check: when the plan you are about to propose is big (3 or more tickets, or it touches data, security, payments, migrations or many screens at once) and this ticket had no plan check yet, check it first. Call the \`propose_huddle\` tool ${TOOL_NOTE} with template "plan-check", a one-line reason and brief: the draft plan (goal, approach, the tickets you would make), under 1500 characters. Say in one line that it costs up to $10, then end your turn; nothing runs until the user presses Start. Small or clear plans never get one, and don't propose it again if the user dismissed it. When the skeptic's blockers arrive, ask them with the ask_questions tool (one question per blocker, with its options), fix the plan from the answers, then propose the tickets. "No blockers": propose the tickets straight away.`;
+
 export const TEAMMATE_FORMAT = `When the user wants a teammate (a huddle role) that no existing one covers (e.g. "a teammate that watches X"), or one should change, check \`list_huddle_presets\`, then call the \`propose_teammate\` tool ${TOOL_NOTE} with name, role, prompt, mode, workspace, canEdit, lead, model and a one-line why. An existing name proposes a change to that teammate. The board shows a card and the user saves it with one click (for all boards or this board); you can't save teammates yourself (save_huddle_preset saves nothing here). Don't propose one the user didn't ask for unless the gap is clear.`;
 
 export const BRANCH_FORMAT = `If the user asks to branch this ticket (fork the conversation, try another direction in parallel without losing this one), call the \`propose_branch\` tool ${TOOL_NOTE} with a one-line reason. The board shows a Branch button; the user's click creates "Branch: <title>" in Planning with a copy of this conversation and its own git branch off this ticket's branch (committed work only). Don't create tickets or start the other direction yourself; after the call, end your turn.`;
@@ -259,6 +267,7 @@ ${interview ? `${INTERVIEW}\n\n` : ""}# Rules
 - ${landRule(ctx.repo, inPlace, false, ctx.home)}
 - A missing git repository, remote or \`gh\` is never a reason to stop or report "blocked": work with what the folder has.
 - If it is a non-code task (research, writing, analysis, file organisation), no PR is needed.
+- ${HUDDLE_ASK_RUN}
 - ${PLAIN_WORDS}${autoSection(t, ctx.autoHuddles, ctx.repo)}
 
 ${CHROME_RULE}
@@ -277,7 +286,7 @@ export function resumePrompt(t: Ticket, newComments: Comment[], outputDir: strin
 # User feedback since last run
 ${feedback}
 
-${t.mode === "interview" ? `${t.interviewed ? AFTER_ANSWERS : INTERVIEW.replace("In this first run:", "Before continuing, in this run:")}\n\n` : ""}Continue working on the ticket, addressing the feedback. ${repo === "remote" && !inPlace ? "If a pull request already exists, push new commits to the same branch to update it." : landRule(repo, inPlace || !canCommit(repo), false, home)} Update deliverables in ${outputDir} rather than creating duplicates. ${PLAIN_WORDS}${autoSection(t, autoHuddles, repo)}
+${t.mode === "interview" ? `${t.interviewed ? AFTER_ANSWERS : INTERVIEW.replace("In this first run:", "Before continuing, in this run:")}\n\n` : ""}Continue working on the ticket, addressing the feedback. ${repo === "remote" && !inPlace ? "If a pull request already exists, push new commits to the same branch to update it." : landRule(repo, inPlace || !canCommit(repo), false, home)} Update deliverables in ${outputDir} rather than creating duplicates. ${PLAIN_WORDS} ${HUDDLE_ASK_RUN}${autoSection(t, autoHuddles, repo)}
 
 ${targetDesignRule(outputDir)}${CHROME_RULE}${artifactRule(artifacts)}
 
@@ -332,6 +341,7 @@ ${t.mode === "interview" && !t.interviewed ? `${INTERVIEW.replace("In this first
 - You are working in the main checkout of this project (not an isolated worktree): use a feature branch, never commit directly to the default branch.` : ""}
 - A missing git repository, remote or \`gh\` is never a reason to stop or report "blocked": work with what the folder has.
 - Update deliverables in ${ctx.outputDir} rather than creating duplicates.
+- ${HUDDLE_ASK_RUN}
 - ${PLAIN_WORDS}${autoSection(t, ctx.autoHuddles, ctx.repo)}
 
 ${CHROME_RULE}
@@ -428,12 +438,17 @@ ${TICKETS_FORMAT}
 
 ${BRANCH_FORMAT}
 
-${TEAMMATE_FORMAT}`;
+${TEAMMATE_FORMAT}
+
+${HUDDLE_ASK_RULE}
+
+${PLAN_CHECK_RULE}`;
   }
   return `(Sent from the kanban board's ticket chat for "${t.title}". The user reads your reply there, not in a terminal.)
 Act on the message as you would in an interactive session. ${inPlace && canCommit(repo) ? "You work in the project folder on its current branch: don't create or switch branches, commit only the files you change with a clear message, leave uncommitted changes you didn't make alone, and don't push unless the project's CLAUDE.md says to." : repo === "remote" ? "If a pull request already exists, push new commits to the same branch." : canCommit(repo) ? "This repo has no remote: commit locally and don't push; then merge this branch into the base branch in the project folder when that folder is clean and on it (as in your earlier instructions)." : "This folder has no version history yet: edit files in place and say which ones you changed."} Save research/writing deliverables in ${outputDir}. ${PLAIN_WORDS}
 If the message only asks you to plan, audit, review, list ideas, propose or discuss, and no changes are wanted yet (e.g. "don't change anything yet"): do not modify any files, answer, and end your reply with <ckanban-move to="planning"/> on its own line. The board then moves the ticket to Planning, where the next steps get shaped before any work.
 If you need decisions from the user, ask with the ask_questions tool.
+${HUDDLE_ASK_RULE}
 ${bugReportRule(t)}
 
 If the message asks for new or follow-up tickets from this ticket: do not modify any files or start that work. Write each description from what you know here (files, decisions, what shipped), so the new ticket's Claude needs no other context. ${TICKETS_FORMAT}

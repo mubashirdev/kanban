@@ -27,8 +27,11 @@ export type HuddleTemplateView = Layered<HuddleTemplate>;
 const MAX_TEXT = 4000;
 const MAX_ROUNDS = 20;
 
-const DESIGN_REVIEW_READ =
-  "Read the code you review without changing the checkout (git show <ref>:<path>, git grep); never edit, checkout or reset. ";
+const DESIGN_REVIEW_READ = "Read what you review without changing the files; never edit, checkout or reset. ";
+
+/** The template a planning chat proposes before splitting a big plan into tickets (see PLAN_CHECK_RULE in prompts.ts). */
+export const PLAN_CHECK = "plan-check";
+const READ_ONLY = "Read the code and docs you need without changing the files; never edit, checkout or reset. ";
 
 /** The templates an unattended run starts by itself with start_huddle (auto huddles). */
 export const AUTO_REVIEW = "auto-review";
@@ -55,7 +58,7 @@ export const BUILTIN_TEMPLATES: HuddleTemplate[] = [
     roster: [
       {
         handle: "architect", role: "Architect", preset: "reviewer",
-        prompt: DESIGN_REVIEW_READ + "Review the core design and engine code: routing bugs, races, recovery after restarts, cost leaks, missing tests.",
+        prompt: DESIGN_REVIEW_READ + "Review the core design: flaws, failure and recovery paths, data and cost risks, missing tests.",
       },
       {
         handle: "ux", preset: "ux-critic",
@@ -63,21 +66,62 @@ export const BUILTIN_TEMPLATES: HuddleTemplate[] = [
       },
       {
         handle: "safety", role: "Safety reviewer", preset: "security",
-        prompt: DESIGN_REVIEW_READ + "For each risk give a realistic scenario, the current mitigation (or none) and a proportionate fix; this is a single-user local tool, so avoid enterprise overkill.",
-      },
-      {
-        handle: "agentx", role: "Agent ergonomics tester",
-        prompt: DESIGN_REVIEW_READ + "Review the feature from an agent's point of view: prompts, tool descriptions, message formats. " +
-          "Use this very huddle as evidence: note anything confusing you hit yourself while taking part.",
+        prompt: DESIGN_REVIEW_READ + "For each risk give a realistic scenario, the current mitigation (or none) and a fix that matches the project's size; avoid overkill.",
       },
       {
         handle: "research", role: "Product researcher", preset: "researcher",
-        prompt: "Compare the design with how other products and multi-agent frameworks solve the same problem. " +
+        prompt: "Compare the design with how similar products solve the same problem. " +
           "Keep to ideas that fit the project's scale; report the top 5 with effort and benefit.",
       },
       {
         handle: "facilitator", preset: "facilitator",
         prompt: "Run the rounds the brief sets; when they are over, send @main the final ranked list.",
+      },
+    ],
+  },
+  {
+    name: PLAN_CHECK,
+    label: "Plan check",
+    description: "Before a big plan is split into tickets: a skeptic, a researcher and a Codex reviewer challenge it, and the skeptic sends @main at most 5 blockers.",
+    rounds: 1,
+    maxCostUsd: 10,
+    report: "The draft plan is in this brief. At most 5 blockers, most important first, no nits. Each: the problem in one line, why it matters, " +
+      "and one question for the user with 2-4 short options (mark one recommended). Nothing blocks: say \"No blockers\". " +
+      "Workers report to @skeptic, who sends @main one list.",
+    roster: [
+      {
+        handle: "skeptic", role: "Skeptic", lead: true,
+        prompt: READ_ONLY + "Challenge the plan: wrong assumptions, too much at once, missing steps, risks and cheaper options. " +
+          "Collect @research's and @codex's points too (go on without one that failed), drop duplicates and nits, " +
+          "send @main the blockers in the brief's format, then mark done.",
+      },
+      {
+        handle: "research", preset: "researcher",
+        prompt: "Check the facts the plan depends on: numbers, APIs, limits, what already exists in the code. Report only what is wrong or unknown, to @skeptic.",
+      },
+      {
+        handle: "codex", role: "Codex reviewer", agent: "codex",
+        prompt: READ_ONLY + "Check the plan on your own: wrong assumptions, too much at once, missing steps, cheaper options. Report to @skeptic.",
+      },
+    ],
+  },
+  {
+    name: "bug-hunt",
+    label: "Bug hunt",
+    description: "One tester reproduces the bug, one finds its root cause, and a lead sends @main one fix plan.",
+    rounds: 1,
+    maxCostUsd: 10,
+    report: "Workers report to @lead, not @main. The fix plan: steps to reproduce (expected, actual), the root cause with file:line evidence, " +
+      "the smallest fix, a test that would catch it, and risks. Can't reproduce: say what was tried.",
+    roster: [
+      { handle: "repro", preset: "qa", prompt: READ_ONLY + "Reproduce the bug with exact steps and find the smallest case that shows it." },
+      {
+        handle: "root-cause", role: "Root cause finder",
+        prompt: READ_ONLY + "Trace the bug from the symptom to the code that causes it. Give file:line evidence and why it happens, not only where.",
+      },
+      {
+        handle: "lead", role: "Bug lead", lead: true,
+        prompt: "Combine what @repro and @root-cause find (go on without one that failed), challenge weak evidence, send @main one fix plan in the brief's format, then mark done.",
       },
     ],
   },

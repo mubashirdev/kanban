@@ -134,11 +134,21 @@ export function webhookRequest(s: Pick<NotifySettings, "webhookUrl" | "format">,
   };
 }
 
-/** macOS notification; silently nothing elsewhere or when osascript fails. */
-export function macBanner(title: string, body: string): void {
+/**
+ * macOS notification; silently nothing elsewhere. Uses terminal-notifier when installed, so a click opens `url`
+ * (an osascript banner belongs to Script Editor, and clicking it opens Script Editor). Falls back to osascript
+ * when terminal-notifier is missing or not allowed to notify.
+ */
+export async function macBanner(title: string, body: string, url?: string): Promise<void> {
   if (process.platform !== "darwin") return;
-  const q = (s: string) => JSON.stringify(s.replace(/\s+/g, " ").slice(0, 240));
-  runCmd(["osascript", "-e", `display notification ${q(body)} with title ${q(title)}`], homedir()).catch(() => {});
+  const flat = (s: string) => s.replace(/\s+/g, " ").slice(0, 240);
+  const notifier = Bun.which("terminal-notifier") ?? ["/opt/homebrew/bin/terminal-notifier", "/usr/local/bin/terminal-notifier"].find(existsSync);
+  if (notifier) {
+    const r = await runCmd([notifier, "-title", flat(title), "-message", flat(body), ...(url ? ["-open", url] : [])], homedir());
+    if (r.code === 0) return;
+  }
+  const q = (s: string) => JSON.stringify(flat(s));
+  await runCmd(["osascript", "-e", `display notification ${q(body)} with title ${q(title)}`], homedir());
 }
 
 /**
@@ -193,7 +203,7 @@ export interface NotifierOptions {
   debounceMs?: number;
   tickMs?: number;
   fetch?: (url: string, init: RequestInit) => Promise<Response>;
-  banner?: (title: string, body: string) => void;
+  banner?: (title: string, body: string, url?: string) => void;
   now?: () => number;
 }
 
@@ -203,7 +213,7 @@ export class Notifier {
   private lastSentAt: string | null = null;
   private lastError: string | null = null;
   private fetch: (url: string, init: RequestInit) => Promise<Response>;
-  private banner: (title: string, body: string) => void;
+  private banner: (title: string, body: string, url?: string) => void;
   private now: () => number;
 
   constructor(private store: Store, private bus: Bus, private o: NotifierOptions) {
@@ -288,7 +298,7 @@ export class Notifier {
 
   /** Banner and webhook as configured. Resolves with the webhook error, or null. */
   async send(settings: NotifySettings, m: NotifyMessage): Promise<string | null> {
-    if (settings.mac) this.banner(`${m.label}: ${m.title}`, m.boardName);
+    if (settings.mac) this.banner(`${m.label}: ${m.title}`, m.boardName, m.url);
     if (!settings.webhookUrl) return null;
     const { url, init } = webhookRequest(settings, m);
     let error: string | null = null;

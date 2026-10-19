@@ -899,6 +899,7 @@ const HUDDLE_TOOLS: Tool[] = [
         roster: { type: "array", minItems: 1, items: ROSTER_ENTRY, description: "The participants. Optional with a template (its roster is used)." },
         template: { type: "string", description: "Template name, e.g. design-review: its roster (unless you give one), budget and rules." },
         reason: { type: "string", description: "One line: what the huddle is for." },
+        brief: { type: "string", description: "Optional: what every participant must read first, pinned at Start (e.g. the draft plan to check). Under 1500 characters." },
       },
     },
     annotations: { readOnlyHint: true },

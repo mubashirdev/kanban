@@ -234,7 +234,6 @@ export function App() {
   // Tickets already on screen count as seen, so only later changes buzz.
   useEffect(() => { for (const t of tickets) if (!attentionSeen.current.has(t.id)) attentionSeen.current.set(t.id, t.attention?.kind ?? null); }, [tickets]);
   // "#/<board>/<ticket>": a shared or reloaded ticket link should not be covered by the inbox.
-  const startedOnTicket = useRef(!!openId);
   // The installed app's icon badge shows how many tickets and sessions wait on you.
   useEffect(() => {
     const nav = navigator as Navigator & { setAppBadge?: (count: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
@@ -833,61 +832,28 @@ export function App() {
           </button>
         )}
         <div className="spacer" />
-        <Inbox items={inbox} snoozed={snoozed} landOnInbox={narrow && !startedOnTicket.current} openRequest={inboxRequest} onPick={(i) => openFrom(i.profile, i.id)}
+        <Inbox items={inbox} snoozed={snoozed} openRequest={inboxRequest} onPick={(i) => openFrom(i.profile, i.id)}
           onMarkDone={(i) => void inboxDone(i)} onSnooze={(i, on) => void inboxSnooze(i, on)} />
-        {profile && !compact && (
-          <button className={`btn ghost icon-label${dockOpen && !chatOpen ? " on" : ""}`}
-            onClick={() => (chatOpen ? openDockOn("terminal") : setDockOpen((o) => !o))}
-            aria-pressed={dockOpen && !chatOpen} title="Terminal and files for this folder (Ctrl+`)" aria-label="Terminal and files">
-            <TerminalIcon /><span className="label">Terminal & files</span>
-          </button>
-        )}
-        {profile && !compact && (
-          <button className={`btn ghost icon-label${chatOpen ? " on" : ""}`}
-            onClick={() => (chatOpen ? setDockOpen(false) : openDockOn("claude"))}
-            aria-pressed={chatOpen} title="Quick chat with Claude in this folder, no ticket needed (C)" aria-label="Quick Claude chat">
-            <ChatIcon /><span className="label">Claude</span><KeyHint keys="C" />
-          </button>
-        )}
-        {profile && !compact && (
-          <button className="btn ghost icon-label" onClick={() => setSchedulesOpen(true)} aria-label="Schedules"
-            title={scheduleErrors ? `${scheduleErrors} schedule${scheduleErrors === 1 ? "" : "s"} could not start their last run` : "Recurring tickets on a cron schedule"}>
-            <ClockIcon /><span className="label">Schedules</span>
-            {schedules && schedules.length > 0 && !scheduleErrors && <span className="muted small">{schedules.filter((s) => s.enabled).length}</span>}
-            {scheduleErrors > 0 && <span className="need-chip">{scheduleErrors}</span>}
-          </button>
-        )}
-        {!compact && <button className="btn ghost icon-label" onClick={() => setConnections(true)} aria-label="Connections"
-          title={mcpAttention ? `${mcpAttention} MCP server${mcpAttention === 1 ? "" : "s"} failed or need you to log in again` : "Claude Code MCP servers"}>
-          <PlugIcon /><span className="label">Connections</span>
-          {mcpAttention > 0 && <span className="need-chip">{mcpAttention}</span>}
-        </button>}
-        {profile && !compact && (
-          <button className={`btn ghost icon-label${teamOpen ? " on" : ""}`} onClick={toggleTeam}
-            aria-pressed={teamOpen} title="Teammates, templates and notes (T)" aria-label="Team">
-            <TeamIcon /><span className="label">Team</span>
-          </button>
-        )}
         {profile && !compact && (
           <button className="btn primary new-ticket-btn" onClick={() => (mode === "chats" ? (wideChats ? closeTicket() : setNewSession(true)) : setNewTicket(true))}
             title={mode === "chats" ? "New chat" : "New ticket (N)"} aria-label={mode === "chats" ? "New chat" : "New ticket"}>
             <PlusIcon size={21} className="icon new-ticket-symbol" /><span className="new-ticket-label">{mode === "chats" ? "New chat" : "New ticket"}</span>
           </button>
         )}
-        <HeaderMenu alert={compact && (scheduleErrors > 0 || mcpAttention > 0)} items={withSections({
+        <HeaderMenu alert={scheduleErrors > 0 || mcpAttention > 0} items={withSections({
           "Needs you": [
-            ...(compact && scheduleErrors ? [{ label: `${scheduleErrors} schedule${scheduleErrors === 1 ? "" : "s"} could not start`, icon: <RefreshIcon />, onSelect: () => setSchedulesOpen(true) }] : []),
-            ...(compact && mcpAttention ? [{ label: connectionsReason(mcp!.servers), icon: <PlugIcon />, onSelect: () => setConnections(true) }] : []),
+            ...(scheduleErrors ? [{ label: `${scheduleErrors} schedule${scheduleErrors === 1 ? "" : "s"} could not start`, icon: <RefreshIcon />, onSelect: () => setSchedulesOpen(true) }] : []),
+            ...(mcpAttention ? [{ label: connectionsReason(mcp!.servers), icon: <PlugIcon />, onSelect: () => setConnections(true) }] : []),
             ...(pwa.waiting ? [{ label: "Reload app update", icon: <CheckIcon />, onSelect: pwa.update }] : []),
           ],
           Tools: [
-            ...(compact && profile ? [
+            ...(profile ? [
               { label: "Terminal & files", icon: <TerminalIcon />, onSelect: () => openDockOn("terminal") },
-              { label: "Quick Claude chat", icon: <ChatIcon />, onSelect: () => openDockOn("claude") },
-              { label: "Team", icon: <TeamIcon />, onSelect: () => openDockOn("team") },
+              { label: "Quick Claude chat", hint: "C", icon: <ChatIcon />, onSelect: () => openDockOn("claude") },
+              { label: "Team", hint: "T", icon: <TeamIcon />, onSelect: () => openDockOn("team") },
               ...(!scheduleErrors ? [{ label: "Schedules", icon: <RefreshIcon />, onSelect: () => setSchedulesOpen(true) }] : []),
             ] : []),
-            ...(compact && !mcpAttention ? [{ label: "Connections", icon: <PlugIcon />, onSelect: () => setConnections(true) }] : []),
+            ...(!mcpAttention ? [{ label: "Connections", icon: <PlugIcon />, onSelect: () => setConnections(true) }] : []),
             ...(profile ? [
               { label: "Search tickets & chats", icon: <SearchIcon />, onSelect: () => setFullSearch(true) },
               { label: "Snippets", icon: <AtIcon />, onSelect: () => setSnippetsOpen(true), title: "Reusable prompt text: type @name in a ticket to insert it" },
@@ -924,7 +890,7 @@ export function App() {
             { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
             ...(!pwa.installed ? [{ label: "Install Muba AI", icon: <CopyIcon />, onSelect: pwa.install }] : []),
           ],
-        })} footer={narrow && profile ? `${running}/${profile.maxParallel} running` : version && version.version !== "dev" ? `Muba AI v${version.version}` : null} />
+        })} footer={narrow && profile ? `${running.runs}/${profile.maxParallel} running` : version && version.version !== "dev" ? `Muba AI v${version.version}` : null} />
       </header>
 
 

@@ -1452,6 +1452,7 @@ export function createServer(deps: ServerDeps) {
           maxParticipants: Number(b.maxParticipants) || undefined,
           maxCostUsd: b.maxCostUsd === undefined || b.maxCostUsd === null ? undefined : Number(b.maxCostUsd),
           template: typeof b.template === "string" && b.template.trim() ? b.template : undefined,
+          brief: typeof b.brief === "string" ? b.brief : undefined,
         });
         return json(huddles.view(slug, h), 201);
       }

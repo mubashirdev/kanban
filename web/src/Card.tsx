@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { type CSSProperties, useEffect, useState } from "react";
 import { newestArtifact, safeHref, waitsForSlot, type SessionMessage, type Status, type Ticket } from "./api";
 import { AgentMark } from "./AgentMark";
 import { type CardHuddleBadge, digestPreview } from "./huddleText";
@@ -95,6 +95,13 @@ const QUICK_ACTIONS: Partial<Record<Status, { label: string; to: Status }>> = {
   review: { label: "Done", to: "done" },
 };
 
+/** The same label always gets the same color, on every card. */
+function labelColor(name: string): CSSProperties {
+  let hue = 0;
+  for (const ch of name.toLowerCase()) hue = (hue * 31 + ch.charCodeAt(0)) % 360;
+  return { "--hue": hue } as CSSProperties;
+}
+
 /**
  * queued: 1-based place in the queue for a free run slot (status `ready`, or a reply waiting for one). held: a pending daemon restart holds it.
  * huddle: what the card says about huddles; onOpenHuddle opens a ticket's Huddle tab.
@@ -137,7 +144,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
     <article
       className={`card ${dragging ? "dragging" : ""} ${queued && !working ? "is-queued" : ""} ${working ? "is-running" : ""} ${att ? `needs-you att-${att.kind}` : ""}`}
       onClick={onClick}>
-      {(ticket.kind && ticket.kind !== "task" || ticket.priority && !["normal","none"].includes(ticket.priority) || ticket.labels?.length) && <div className="card-properties">{ticket.kind && ticket.kind !== "task" && <span className="ticket-label">{ticket.kind}</span>}{ticket.priority && !["normal","none"].includes(ticket.priority) && <span className={`priority-tag priority-${ticket.priority}`}>{ticket.priority}</span>}{ticket.labels?.slice(0,3).map(label=><span key={label} className="ticket-label">{label}</span>)}{(ticket.labels?.length ?? 0)>3 && <span className="muted small">+{ticket.labels!.length-3}</span>}</div>}
+      {(ticket.kind && ticket.kind !== "task" || ticket.priority && !["normal","none"].includes(ticket.priority) || ticket.labels?.length) && <div className="card-properties">{ticket.kind && ticket.kind !== "task" && <span className="ticket-label" style={labelColor(ticket.kind)}>{ticket.kind}</span>}{ticket.priority && !["normal","none"].includes(ticket.priority) && <span className={`priority-tag priority-${ticket.priority}`}>{ticket.priority}</span>}{ticket.labels?.slice(0,3).map(label=><span key={label} className="ticket-label" style={labelColor(label)}>{label}</span>)}{(ticket.labels?.length ?? 0)>3 && <span className="muted small">+{ticket.labels!.length-3}</span>}</div>}
       <div className="kc-head">
         <div className="kc-title" title={ticket.title}>{ticket.important && <ImportantStar />}{ticket.title}</div>
         {quickButton}

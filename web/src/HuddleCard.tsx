@@ -8,7 +8,7 @@ import { usePersistentState } from "./usePersistentState";
  * Claude proposed a huddle (propose_huddle). The roster is editable until Start; nothing runs before that.
  * `huddle`: the ticket's current huddle, to tell whether this proposal was started.
  */
-export function HuddleCard({ slug, ticket, tickets, uuid, at, roster, reason, template, huddle, old, onOpen, onError }: {
+export function HuddleCard({ slug, ticket, tickets, uuid, at, roster, reason, template, brief, huddle, old, onOpen, onError }: {
   slug: string;
   ticket: Ticket;
   tickets: Ticket[];
@@ -18,6 +18,8 @@ export function HuddleCard({ slug, ticket, tickets, uuid, at, roster, reason, te
   reason: string;
   /** Template Claude proposed (its roster when `roster` is empty, its budget and rules). */
   template?: string;
+  /** What Claude wants pinned at Start (e.g. the draft plan to check). */
+  brief?: string;
   huddle: Huddle | null;
   /** Copied history of a branched ticket: read-only. */
   old?: boolean;
@@ -42,7 +44,7 @@ export function HuddleCard({ slug, ticket, tickets, uuid, at, roster, reason, te
     if (busy || err || started || otherOpen) return;
     setBusy(true);
     try {
-      await startFromDraft(slug, ticket.id, draft);
+      await startFromDraft(slug, ticket.id, draft, brief);
       onOpen();
     } catch (e) {
       onError((e as Error).message);

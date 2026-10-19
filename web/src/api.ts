@@ -411,7 +411,7 @@ export interface SessionEntry {
   /** Claude offered to branch this ticket (Branch button). */
   branch?: { reason: string };
   /** Claude proposed a huddle (propose_huddle): the roster card with Start. */
-  huddle?: { roster: RosterEntry[]; reason: string; template?: string };
+  huddle?: { roster: RosterEntry[]; reason: string; template?: string; brief?: string };
   /** Claude asked to delete tickets (propose_delete): the card with Cancel / Delete. */
   deletion?: { ids: string[]; reason: string };
   /** Claude proposed a teammate (propose_teammate): the card with Save teammate / Edit first / Dismiss. */
@@ -1005,8 +1005,8 @@ export const api = {
     req<{ huddle: Huddle; you: string; messages: HuddleMessage[]; hasMore: boolean }>("GET",
       `${hud(slug, id)}${query(q)}`),
   /** template: a template's name (its roster when `roster` is empty, its budget unless given, its rules as the brief). */
-  startHuddle: (slug: string, ticketId: string, roster: RosterEntry[], maxParticipants?: number, maxCostUsd?: number, template?: string) =>
-    req<Huddle>("POST", hud(slug), { ticketId, roster, maxParticipants, maxCostUsd, template }),
+  startHuddle: (slug: string, ticketId: string, roster: RosterEntry[], maxParticipants?: number, maxCostUsd?: number, template?: string, brief?: string) =>
+    req<Huddle>("POST", hud(slug), { ticketId, roster, maxParticipants, maxCostUsd, template, brief }),
   setHuddleBrief: (slug: string, id: string, text: string) => req<Huddle>("PUT", `${hud(slug, id)}/brief`, { text }),
   huddleTemplates: (slug: string) => req<HuddleTemplate[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/huddle-templates`),
   saveHuddleTemplate: (slug: string, t: Omit<HuddleTemplate, keyof LayerInfo>, scope: Level) =>

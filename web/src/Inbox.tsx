@@ -16,27 +16,17 @@ const keyOf = (i: InboxItem) => `${i.profile}/${i.id}`;
  * Each entry opens its ticket (Answer/Open), marks it done or snoozes it for a day; snoozed ones sit in a collapsed
  * section with time left and Unsnooze. ↑↓ move, Enter opens, d marks done, s snoozes (or unsnoozes), Esc closes.
  */
-export function Inbox({ items, snoozed = [], onPick, onMarkDone, onSnooze, landOnInbox = false, openRequest }: {
+export function Inbox({ items, snoozed = [], onPick, onMarkDone, onSnooze, openRequest }: {
   items: InboxItem[];
   snoozed?: InboxItem[];
   onPick: (i: InboxItem) => void;
   onMarkDone: (i: InboxItem) => void;
   onSnooze: (i: InboxItem, on: boolean) => void;
-  /** Phones open straight onto what is waiting for you, once per browser session. */
-  landOnInbox?: boolean;
   openRequest?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [showSnoozed, setShowSnoozed] = useState(false);
   const phone = useMediaQuery(PHONE);
-  useEffect(() => {
-    if (!landOnInbox || !items.length) return;
-    try {
-      if (sessionStorage.getItem("ck-inbox-landed")) return;
-      sessionStorage.setItem("ck-inbox-landed", "1");
-    } catch { return; }
-    setOpen(true);
-  }, [landOnInbox, items.length]);
   const root = useRef<HTMLDivElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const pill = useRef<HTMLButtonElement>(null);

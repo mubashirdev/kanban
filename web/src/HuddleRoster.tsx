@@ -53,9 +53,10 @@ export function useTemplates(slug: string): HuddleTemplate[] | null {
 }
 
 /** Start the huddle a draft describes: create it (with its template's rules), invite the tickets, set @main's mode. */
-export async function startFromDraft(slug: string, ticketId: string, d: RosterDraft): Promise<Huddle> {
+/** `brief`: pinned at Start, e.g. the draft plan Claude proposed the huddle to check. */
+export async function startFromDraft(slug: string, ticketId: string, d: RosterDraft, brief?: string): Promise<Huddle> {
   const roster = d.rows.map(({ key: _k, ...e }) => ({ ...e, ...(e.focus?.trim() ? { focus: e.focus.trim() } : { focus: undefined }) }));
-  let h = await api.startHuddle(slug, ticketId, roster, undefined, d.maxCostUsd, d.template ?? undefined);
+  let h = await api.startHuddle(slug, ticketId, roster, undefined, d.maxCostUsd, d.template ?? undefined, brief);
   for (const t of d.invites) await api.inviteToHuddle(slug, h.id, t);
   const main = h.participants.find((p) => p.handle === "main");
   if (d.mainMode && main && main.mode !== d.mainMode) h = await api.setHuddleMode(slug, h.id, "main", d.mainMode);

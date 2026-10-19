@@ -1432,7 +1432,7 @@ test("templates: built-ins merge with the board's own; overriding, resetting and
   expect(over.template.roster).toEqual(BUILTIN_TEMPLATES[0].roster);
   const merged = mergeTemplates([], over.list);
   expect(merged.map((t) => [t.name, t.source, t.base])).toEqual([
-    ["design-review", "board", "builtin"], ["auto-review", "builtin", null], ["auto-review-important", "builtin", null], ["bug-bash", "board", null],
+    ["design-review", "board", "builtin"], ["plan-check", "builtin", null], ["bug-hunt", "builtin", null], ["auto-review", "builtin", null], ["auto-review-important", "builtin", null], ["bug-bash", "board", null],
   ]);
   expect(deleteTemplate(over.list, "design-review").reset).toBe(true);
   expect(() => deleteTemplate([], "design-review")).toThrow("built-in");
@@ -1450,7 +1450,7 @@ test("templates: saved and listed over HTTP (the user only), and listed for Clau
     { name: "bug-bash", label: "Bug bash", description: "", roster: [{ preset: "qa", count: 2 }], rounds: 1, maxCostUsd: 8, report: "" },
   ]);
   const list = (await (await api("/huddle-templates")).json()) as { name: string }[];
-  expect(list.map((x) => x.name)).toEqual(["design-review", "auto-review", "auto-review-important", "bug-bash"]);
+  expect(list.map((x) => x.name)).toEqual(["design-review", "plan-check", "bug-hunt", "auto-review", "auto-review-important", "bug-bash"]);
   // A run can read them but not change them.
   expect((await postJson("/huddle-templates", { name: "sneaky", roster: [{ preset: "qa" }] }, { "x-ckanban-run": `p/${t.id}` })).status).toBe(403);
   expect((await postJson("/huddle-templates", { name: "bad", roster: [{ preset: "nope" }] })).status).toBe(400);
@@ -1476,7 +1476,7 @@ test("starting from a template: its roster, budget and rules (as the pinned brie
   const r = await postJson("/huddles", { ticketId: t.id, roster: [], template: "design-review" });
   expect(r.status).toBe(201);
   const h = (await r.json()) as Huddle;
-  expect(h.participants.map((p) => p.handle)).toEqual(["you", "main", "architect", "ux", "safety", "agentx", "research", "facilitator"]);
+  expect(h.participants.map((p) => p.handle)).toEqual(["you", "main", "architect", "ux", "safety", "research", "facilitator"]);
   expect(participant(h, "facilitator")).toMatchObject({ lead: true, role: "Facilitator" });
   expect(participant(h, "safety")).toMatchObject({ preset: "security", role: "Safety reviewer" });
   expect(participant(h, "architect").prompt).toContain("Review the host ticket's changes");
@@ -1497,6 +1497,14 @@ test("starting from a template: its roster, budget and rules (as the pinned brie
   await huddles.stopAll("p", h2.id);
   await idle();
   huddles.close("p", h2.id);
+  // A proposal's brief (e.g. the draft plan to check) is pinned under the template's rules.
+  const h3 = huddles.create("p", t.id, [], { template: "plan-check", brief: "Draft plan: split into 4 tickets" });
+  expect(h3.participants.map((p) => p.handle)).toEqual(["you", "main", "skeptic", "research", "codex"]);
+  expect(h3.brief!.text).toContain("Plan check (template plan-check)");
+  expect(h3.brief!.text).toEndWith("Draft plan: split into 4 tickets");
+  await huddles.stopAll("p", h3.id);
+  await idle();
+  huddles.close("p", h3.id);
   expect(() => huddles.create("p", t.id, [], { template: "nope" })).toThrow('no huddle template "nope"');
 }, 30000);
 
