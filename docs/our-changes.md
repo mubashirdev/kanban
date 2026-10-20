@@ -113,6 +113,11 @@ A board schedule, "Leo's updates (weekly)", does the steps above every Monday at
 - Clean merge and all checks pass: the ticket stops in Review with a plain list of what Leo changed. Reply "land it" in the ticket chat and it lands the merge commit on main and restarts the board.
 - Conflicts or failing checks: the ticket lists each place (file:line), matched to a hook in the table above, tries a fix in its own copy and re-runs the checks. It never lands by itself; say what to do in the ticket chat.
 
+### What we leave out of Leo's updates
+
+- **Buy Me a Coffee:** each merge deletes `.github/FUNDING.yml` and the Buy Me a Coffee blocks in `README.md` (links to buymeacoffee.com/leoawesome).
+- **Keep this Mac awake:** we take his code but keep the switch off. Every board's settings have `"keepAwake": false` (set on 2026-10-20 for all boards). A new board starts with it on: turn it off in its settings. The weekly check turns it off again on any board where it isn't.
+
 We merge, never rebase or squash our commits or Leo's. The schedule's text is the run's whole prompt: change it in Schedules (or with `update_schedule`) when these steps change.
 
 ## Our features not in Leo's version yet
